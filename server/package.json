@@ -1,0 +1,15 @@
+{
+  "name": "pest-tma-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "DEV_AUTH=1 node --watch src/index.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}
