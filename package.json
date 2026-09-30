@@ -1,0 +1,12 @@
+{
+  "name": "pest-tma",
+  "private": true,
+  "description": "Telegram Mini App для дезинсекторов: учёт обслуживания ловушек с синхронизацией amoCRM",
+  "scripts": {
+    "build": "npm install --prefix web --include=dev && npm run build --prefix web && npm install --prefix server --omit=dev",
+    "start": "node server/src/index.js",
+    "dev:server": "npm run dev --prefix server",
+    "dev:web": "npm run dev --prefix web"
+  },
+  "engines": { "node": ">=22.5" }
+}

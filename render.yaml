@@ -1,0 +1,66 @@
+# Render Blueprint: New → Blueprint → выберите этот репозиторий.
+services:
+  - type: web
+    name: pest-tma
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pest-db
+          property: connectionString
+      - key: REPORT_SECRET
+        generateValue: true
+      - key: BOT_TOKEN        # токен бота от @BotFather
+        sync: false
+      - key: AMO_DOMAIN       # например mycompany.amocrm.ru
+        sync: false
+      - key: AMO_TOKEN        # долгосрочный токен приватной интеграции amoCRM
+        sync: false
+      - key: AMO_PIPELINE_ID          # ID воронки заявок
+        sync: false
+      - key: AMO_STATUS_ASSIGNED      # ID этапа «Назначено технику»
+        sync: false
+      - key: AMO_STATUS_IN_PROGRESS   # ID этапа «В работе» (необязательно)
+        sync: false
+      - key: AMO_STATUS_DONE          # ID этапа «Выполнено» (142 = «Успешно реализовано»)
+        sync: false
+      - key: AMO_LEAD_ADDRESS_FIELD   # ID поля сделки «Адрес объекта» (необязательно)
+        sync: false
+      - key: AMO_LEAD_PROCEDURE_FIELD # ID поля сделки «Процедура» (необязательно)
+        sync: false
+      - key: AMO_LEAD_DATE_FIELD      # ID поля сделки «Дата выезда» (необязательно)
+        sync: false
+      - key: TECH_MAP                 # Telegram ID → ID пользователя amoCRM: "123456:7890,234567:8901"
+        sync: false
+      - key: COMPANY_NAME             # название компании в шапке PDF-акта (необязательно)
+        sync: false
+      - key: ADMIN_TG_IDS             # Telegram ID администраторов (пусто = первый вошедший)
+        sync: false
+      - key: ALLOWED_TG_IDS           # ID, подтверждаемые автоматически (необязательно)
+        sync: false
+      - key: TMA_LINK         # необязательно: https://t.me/<bot>/<app> — тогда QR открывает приложение и обычной камерой
+        sync: false
+      # необязательно: хранилище больших файлов (Cloudflare R2 / S3) — видео и файлы до MAX_UPLOAD_MB вместо 50 МБ
+      - key: S3_ENDPOINT              # https://<account_id>.r2.cloudflarestorage.com
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: MAX_UPLOAD_MB            # по умолчанию 2048
+        sync: false
+
+databases:
+  - name: pest-db
+    plan: free
+    databaseName: pest
+    user: pest
