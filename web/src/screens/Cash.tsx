@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Banknote, HandCoins, Wallet } from 'lucide-react';
+import { Banknote, HandCoins, Pencil, Wallet } from 'lucide-react';
 import { api } from '../api';
 import { haptic } from '../telegram';
 import type { CashMe, CashOverview } from '../types';
@@ -23,7 +23,6 @@ export function CashWidget() {
   useEffect(() => { load(); }, [load]);
 
   if (!d) return null;
-  if (!d.balance && !d.pending && !d.pending_withdrawals.length) return null; // нечего показывать — не захламляем главную
 
   return (
     <div className="mb-4 rounded-[22px] border-2 border-line bg-card p-4">
@@ -40,9 +39,11 @@ export function CashWidget() {
       {d.pending_withdrawals.map((w) => (
         <div key={w.id} className="mt-2 rounded-xl bg-fill px-3.5 py-2.5 text-[13px] leading-snug">⏳ Запрос на {lei(w.amount)} — «{w.reason}» — ждёт решения администратора.</div>
       ))}
-      {!d.pending && d.balance > 0 && (
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <Button variant="secondary" className="text-[14px]" onClick={() => { haptic.tap(); setSheet('handover'); }} icon={<Banknote size={17} strokeWidth={1.75} />}>Сдать кассу</Button>
+      {!d.pending && (
+        <div className={cx('mt-3 grid gap-2', d.balance > 0 ? 'grid-cols-2' : 'grid-cols-1')}>
+          {d.balance > 0 && (
+            <Button variant="secondary" className="text-[14px]" onClick={() => { haptic.tap(); setSheet('handover'); }} icon={<Banknote size={17} strokeWidth={1.75} />}>Сдать кассу</Button>
+          )}
           <Button variant="secondary" className="text-[14px]" onClick={() => { haptic.tap(); setSheet('withdraw'); }} icon={<HandCoins size={17} strokeWidth={1.75} />}>Взять из кассы</Button>
         </div>
       )}
@@ -102,6 +103,7 @@ export function CashPanel() {
   const toast = useToast();
   const [d, setD] = useState<CashOverview | null>(null);
   const [confirmId, setConfirmId] = useState<{ id: string; name: string; expected: number } | null>(null);
+  const [adjustTarget, setAdjustTarget] = useState<{ tg: string; name: string; balance: number } | null>(null);
   const load = useCallback(() => { api.cashOverview().then(setD).catch((e: Error) => toast(e.message, 'error')); }, [toast]);
   useEffect(() => { load(); }, [load]);
 
@@ -111,7 +113,7 @@ export function CashPanel() {
     <div>
       <SectionTitle>Наличные на руках</SectionTitle>
       {d.items.length === 0 ? (
-        <Empty icon={<Wallet size={44} strokeWidth={1.25} />} title="Пока пусто" text="Как только сотрудник примет оплату наличными, здесь появится его касса." />
+        <Empty icon={<Wallet size={44} strokeWidth={1.25} />} title="Пока пусто" text="Здесь появятся сотрудники, у которых есть касса." />
       ) : (
         <Group>
           {d.items.map((it) => (
@@ -122,9 +124,18 @@ export function CashPanel() {
                 it.pending_handover ? `⏳ хочет сдать ${lei(it.pending_handover.expected_amount)}` : '',
                 it.pending_withdrawals ? `⏳ запросов на выдачу: ${it.pending_withdrawals}` : '',
               ].filter(Boolean).join(' · ')}
-              right={it.pending_handover
-                ? <Button className="h-9 px-3 text-[13px]" onClick={() => setConfirmId({ id: it.pending_handover!.id, name: it.name, expected: it.pending_handover!.expected_amount })}>Принять</Button>
-                : undefined}
+              right={
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setAdjustTarget({ tg: it.tg_id, name: it.name, balance: it.balance })}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-fill text-muted"
+                    aria-label="Изменить сумму"
+                  ><Pencil size={15} strokeWidth={1.75} /></button>
+                  {it.pending_handover && (
+                    <Button className="h-9 px-3 text-[13px]" onClick={() => setConfirmId({ id: it.pending_handover!.id, name: it.name, expected: it.pending_handover!.expected_amount })}>Принять</Button>
+                  )}
+                </div>
+              }
               chevron={false}
             />
           ))}
@@ -150,7 +161,41 @@ export function CashPanel() {
           id={confirmId.id}
         />
       )}
+      {adjustTarget && (
+        <AdjustSheet
+          tg={adjustTarget.tg} name={adjustTarget.name} balance={adjustTarget.balance}
+          onClose={() => setAdjustTarget(null)}
+          onDone={() => { setAdjustTarget(null); load(); }}
+        />
+      )}
     </div>
+  );
+}
+
+function AdjustSheet({ tg, name, balance, onClose, onDone }: { tg: string; name: string; balance: number; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const [amount, setAmount] = useState(String(balance).replace('.', ','));
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const valid = Number(amount.replace(',', '.')) >= 0 && reason.trim().length >= 3;
+  async function submit() {
+    setBusy(true);
+    try {
+      await api.cashAdjust(tg, amount.replace(',', '.'), reason.trim());
+      haptic.success();
+      toast('Сумма изменена');
+      onDone();
+    } catch (e) { toast((e as Error).message, 'error'); setBusy(false); }
+  }
+  return (
+    <Sheet open onClose={onClose} title={`Изменить кассу · ${name}`}>
+      <p className="-mt-3 mb-5 text-[14.5px] leading-relaxed text-muted">Сейчас на руках: <b className="text-ink dark:text-white">{lei(balance)}</b>. Укажите фактическую сумму и причину правки (например, сверка или исправление ошибки).</p>
+      <div className="space-y-4">
+        <Field label="Сумма на руках, лей"><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
+        <Field label="Причина"><Input placeholder="Например: сверка наличных" value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+      </div>
+      <Button className="mt-6" disabled={!valid} loading={busy} onClick={submit}>Сохранить</Button>
+    </Sheet>
   );
 }
 

@@ -259,6 +259,7 @@ export const api = {
   cashOverview: () => request<CashOverview>('GET', '/api/admin/cash'),
   cashConfirm: (id: string, received_amount: string) => request<{ ok: true; status: 'ok' | 'short'; shortfall: number }>('POST', `/api/admin/cash/handover/${id}/confirm`, { received_amount }),
   cashDecideWithdraw: (id: string, ok: boolean) => request<{ ok: true }>('POST', `/api/admin/cash/withdraw/${id}/decide`, { ok }),
+  cashAdjust: (tg: string, balance: string, reason: string) => request<{ ok: true; balance: number }>('POST', '/api/admin/cash/adjust', { tg, balance, reason }),
 };
 
 /** Загрузка видео/фото «как есть» (без JSON), с прогрессом. */
