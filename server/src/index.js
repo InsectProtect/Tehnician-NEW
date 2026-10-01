@@ -19,6 +19,7 @@ import { journalPdf } from './journal.js';
 import { initSales } from './sales.js';
 import { initCar } from './car.js';
 import { initCrm } from './crm.js';
+import { initCash } from './cash.js';
 import { PREMISES, REENTRY, reentryDefault } from './premises.js';
 import { reverseGeocode, forwardGeocode } from './geo.js';
 import { qrSvg } from './qr.js';
@@ -299,7 +300,7 @@ async function ensureActSeq(v) {
   return { ...v, act_seq: seq };
 }
 
-const visitDocs = (v) => { try { const d = JSON.parse(v.docs || ''); return { proces: d.proces !== false, anexa: d.anexa !== false }; } catch { return { proces: true, anexa: true }; } };
+const visitDocs = (v) => { try { const d = JSON.parse(v.docs || ''); return { proces: d.proces !== false, anexa: d.anexa !== false, obs: d.obs !== false, traps: d.traps !== false }; } catch { return { proces: true, anexa: true, obs: true, traps: true }; } };
 const b64buf = (s) => { const m = String(s || '').match(/^data:image\/jpeg;base64,(.+)$/); return m ? Buffer.from(m[1], 'base64') : null; };
 async function stampImage() {
   const custom = await getSetting('stamp');
@@ -574,7 +575,7 @@ route('DELETE', '/api/admin/users/:id', async ({ params, user }) => {
 // ---------- права менеджера (администратор с ограничениями) ----------
 const PERM_LABEL = {
   tasks: 'заявки', jobs: 'поручения', media: 'фото и видео', kpi: 'KPI, план и баллы', reports: 'акты и отчёты',
-  staff: 'сотрудники', settings: 'настройки', audit: 'журнал',
+  staff: 'сотрудники', settings: 'настройки', audit: 'журнал', cash: 'касса',
 };
 const PERM_RULES = [
   // поручения: право «jobs» (или «tasks» — у менеджеров, настроенных до появления «jobs»)
@@ -585,6 +586,7 @@ const PERM_RULES = [
   ['reports', /^\/api\/(admin\/(stats|done|visits|pests-stats|tasks-stats|remarks|export)|visits\/[^/]+\/(reopen|approve|annul\/reject))/],
   ['staff', /^\/api\/admin\/(users|invites)/],
   ['audit', /^\/api\/admin\/audit/],
+  ['cash', /^\/api\/admin\/cash/],
 ];
 function permFor(method, path) {
   // «Автопарк»: смотреть машины и подтверждать фото может любой менеджер (настройки — по праву kpi)
@@ -3640,7 +3642,9 @@ route('POST', '/api/visits/:id/finish', async ({ params, body, req, user }) => {
     }
   }
   // какие документы отправлять в офис и подпись клиента (рисуется в приложении)
-  const docs = quick ? { proces: true, anexa: false } : { proces: body.docs?.proces !== false, anexa: body.docs?.anexa !== false };
+  const docs = quick
+    ? { proces: true, anexa: false, obs: body.docs?.obs !== false, traps: body.docs?.traps !== false }
+    : { proces: body.docs?.proces !== false, anexa: body.docs?.anexa !== false };
   const sign = String(body.signature || '');
   must(!sign || (/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(sign) && sign.length < 600000), 400, 'Некорректная подпись');
   await db.query('UPDATE visits SET docs = $1, client_signature = $2 WHERE id = $3', [JSON.stringify(docs), sign || null, v.id]);
@@ -3974,7 +3978,9 @@ async function sendToOffice(visitId, req) {
   if (rows.length) L.push(`Ловушки: ${checked.length}/${rows.length}, с активностью ${activity.length}`);
   if (obsCount) L.push(`Замечаний: ${obsCount}, фото: ${photoCount}`);
   if (paymentText(v)) L.push(`<b>${escHtml(paymentText(v))}</b>`);
-  L.push(`📎 ${Number(v.quick) === 1 ? 'Быстрый акт' : [parts.proces && 'Proces-verbal', parts.anexa && 'Anexa'].filter(Boolean).join(' + ')}${v.client_signature ? ' · ✍️ подпись клиента' : ''}`);
+  L.push(`📎 ${Number(v.quick) === 1
+    ? ['Быстрый акт', parts.obs && obsCount && 'замечания с фото', parts.traps && rows.length && 'журнал ловушек'].filter(Boolean).join(' + ')
+    : [parts.proces && 'Proces-verbal', parts.anexa && 'Anexa'].filter(Boolean).join(' + ')}${v.client_signature ? ' · ✍️ подпись клиента' : ''}`);
   const pdf = await buildVisitPdf(v, parts);
   const sent = await sendDocument(chat.id, pdf, pdfName(v), L.join('\n'), chat.thread_id);
   if (sent?.message_id) await db.query('UPDATE visits SET office_msg_id = $1 WHERE id = $2', [String(sent.message_id), v.id]);
@@ -3984,7 +3990,7 @@ async function sendToOffice(visitId, req) {
 }
 
 /** Документы для клиента: те, что специалист выбрал при завершении (если «никакие» — оба). */
-const clientDocs = (v) => { const p = visitDocs(v); return p.proces || p.anexa ? p : { proces: true, anexa: true }; };
+const clientDocs = (v) => { const p = visitDocs(v); return p.proces || p.anexa ? p : { proces: true, anexa: true, obs: true, traps: true }; };
 const clientPath = (visitId) => `/r/act/${visitId}.pdf?${signLink(`act:${visitId}`, 3600 * 24 * 90)}`;
 
 /** Поделиться актом с клиентом: ссылка на PDF (живёт 90 дней) + номер клиента; via=bot — PDF приходит специалисту в личку для пересылки. */
@@ -4125,6 +4131,8 @@ const sales = initSales({ db, route, must, str, uid, now, getSetting, setSetting
 // «Мой авто»: машина, заправки, ТО, фотопроверки с ИИ — server/src/car.js
 const car = initCar({ db, route, must, str, uid, now, getSetting, setSetting, audit, awardXp, publicBase, TZN, addNotification });
 const crm = initCrm({ route, must, str, getSetting, setSetting, audit, notifyAdmins });
+// Касса: наличные на руках у сотрудника, сдача кассы и выдача под отчёт — server/src/cash.js
+const cash = initCash({ db, route, must, str, uid, now, audit, notifyTech, escHtml });
 
 // Привязка заявки к лиду CRM (например, ID сделки amoCRM) — необязательное поле, задаёт менеджер/администратор.
 route('PUT', '/api/tasks/:id/crm-lead', async ({ params, body, user }) => {

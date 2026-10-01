@@ -69,7 +69,7 @@ export async function resolveUser(db, identity) {
   return { user: shape(u), row: u, created: true, invited: inv };
 }
 
-export const ALL_PERMS = ['tasks', 'jobs', 'media', 'kpi', 'reports', 'staff', 'settings', 'audit'];
+export const ALL_PERMS = ['tasks', 'jobs', 'media', 'kpi', 'reports', 'staff', 'settings', 'audit', 'cash'];
 export const DEFAULT_MANAGER_PERMS = ['tasks', 'jobs', 'media', 'reports'];
 export function parsePerms(v) {
   if (v == null || v === '') return DEFAULT_MANAGER_PERMS;

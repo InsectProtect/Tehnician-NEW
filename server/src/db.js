@@ -472,6 +472,11 @@ const MIGRATIONS = [
   // v51: предупреждения (страйки) менеджерам — эскалирующий штраф к бонусной части KPI
   "CREATE TABLE IF NOT EXISTS mgr_strikes (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, month TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '')",
   'CREATE INDEX IF NOT EXISTS mgr_strikes_user_idx ON mgr_strikes (tg_id, month)',
+  // v52: касса — наличные на руках у сотрудника (из выездов), сдача кассы и выдача из кассы под отчёт
+  "CREATE TABLE IF NOT EXISTS cash_handovers (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, expected_amount REAL NOT NULL DEFAULT 0, received_amount REAL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT NOT NULL DEFAULT '')",
+  'CREATE INDEX IF NOT EXISTS cash_handovers_user_idx ON cash_handovers (tg_id, created_at)',
+  "CREATE TABLE IF NOT EXISTS cash_withdrawals (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT NOT NULL DEFAULT '')",
+  'CREATE INDEX IF NOT EXISTS cash_withdrawals_user_idx ON cash_withdrawals (tg_id, created_at)',
 ];
 
 async function migrate(run) {

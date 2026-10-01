@@ -85,6 +85,51 @@ export function actRoPdf({ visit, client = {}, company, products = [], rows = []
     d.y += size + 7;
   };
 
+  /** Замечания с фото — используется и в Anexa nr. 1 полного акта, и в приложении к быстрому акту. */
+  const renderObsBlock = () => {
+    heading('Constatări și fotografii', 11);
+    const gap = 6;
+    const pw = (CW - gap * 2) / 3;
+    const ph = pw * 0.75;
+    for (const o of observations) {
+      const title = roCategory(o.category);
+      const commentH = o.comment ? d.measure(o.comment, { w: CW - 20, size: 8.5, lh: 1.4 }) : 0;
+      const blockH = 26 + commentH + (o.photos.length ? ph + gap : 0);
+      d.ensure(Math.min(blockH, 360));
+      const top = d.y;
+      d.rect(M, top, CW, 22 + commentH + (o.comment ? 4 : 0), { fill: C.soft, stroke: null });
+      d.rect(M, top, 3, 22 + commentH + (o.comment ? 4 : 0), { fill: C.accent, stroke: null });
+      d.text(title, M + 10, top + 7, { size: 9, font: 'B' });
+      d.textRight(dmyhm(o.created_at), M + CW - 8, top + 8, { size: 7, color: C.muted });
+      d.y = top + 22;
+      if (o.comment) d.para(o.comment, { x: M + 10, w: CW - 20, size: 8.5, lh: 1.4, color: C.ink });
+      d.y += 6;
+      for (let i = 0; i < o.photos.length; i += 3) {
+        d.ensure(ph + gap);
+        o.photos.slice(i, i + 3).forEach((buf, j) => d.image(buf, M + j * (pw + gap), d.y, pw, ph, 2));
+        d.y += ph + gap;
+      }
+      d.y += 8;
+    }
+  };
+
+  /** Простая таблица ловушек (когда нет полного журнала истории) — тоже общая для обоих актов. */
+  const renderTrapRows = () => {
+    heading('Capcane și stații de monitorizare', 11);
+    table(
+      [
+        { w: 26, label: 'Nr.', align: 'center' }, { w: 128, label: 'Tip' }, { w: 120, label: 'Locație' },
+        { w: 84, label: 'Stare' }, { w: 90, label: 'Dăunător / nr.' }, { w: CW - 26 - 128 - 120 - 84 - 90, label: 'Momeală' },
+      ],
+      rows.map((r) => [
+        String(r.number), roTrapKind(r.kind), r.location || '—', r.status ? roTrapStatus(r.status) : 'Neverificată',
+        r.status === 'activity' ? `${roPest(r.pest || '') || '—'}${Number(r.count) ? ` × ${r.count}` : ''}` : '',
+        Number(r.bait_replaced) ? 'Înlocuită' : '',
+      ]),
+      { head: true, size: 7.2, pad: 5 },
+    );
+  };
+
   // ================= Быстрый акт: одна страница — адрес, вредители, подписи =================
   if (quick) {
     d.footer = (n, total) => {
@@ -126,6 +171,23 @@ export function actRoPdf({ visit, client = {}, company, products = [], rows = []
     d.line(M + half + 22, d.y, M + CW, d.y, '#9A9A9A', 0.6);
     d.text(`Prestator: ${company.name || ''} · ${visit.tech_name}`, M, d.y + 4, { size: 6.8, color: C.muted });
     d.text(`Beneficiar: ${visit.client_rep || ''}`, M + half + 22, d.y + 4, { size: 6.8, color: C.muted });
+
+    // Приложение к быстрому акту: замечания с фото и/или журнал ловушек, если они были и не отключены специалистом
+    const wantObs = parts.obs !== false && observations.length > 0;
+    const wantTrapsTable = parts.traps !== false && rows.length > 0 && !journal;
+    const wantJournal = parts.traps !== false && Boolean(journal);
+    if (wantObs || wantTrapsTable) {
+      d.addPage();
+      if (LOGO) d.image(LOGO, M, d.y, 74, 32, 0, 'contain');
+      d.textRight('ANEXĂ', M + CW, d.y + 2, { size: 11, font: 'B' });
+      d.textRight(`la actul nr. ${no} din ${date}`, M + CW, d.y + 18, { size: 8, color: C.muted });
+      d.y += 44;
+      d.line(M, d.y, M + CW, d.y, C.accent, 1.4);
+      d.y += 12;
+      if (wantObs) renderObsBlock();
+      if (wantTrapsTable) renderTrapRows();
+    }
+    if (wantJournal) renderJournal(d, { visit, rows, history: journal, annexTitle: wantObs || wantTrapsTable ? 'ANEXA NR. 2' : 'ANEXA NR. 1' });
     return d.toBuffer();
   }
 
@@ -269,49 +331,10 @@ export function actRoPdf({ visit, client = {}, company, products = [], rows = []
   table([{ w: 130, bold: true }, { w: CW - 130 }], info, { size: 8 });
 
   // Замечания и фото
-  if (observations.length) {
-    heading('Constatări și fotografii', 11);
-    const gap = 6;
-    const pw = (CW - gap * 2) / 3;
-    const ph = pw * 0.75;
-    for (const o of observations) {
-      const title = roCategory(o.category);
-      const commentH = o.comment ? d.measure(o.comment, { w: CW - 20, size: 8.5, lh: 1.4 }) : 0;
-      const blockH = 26 + commentH + (o.photos.length ? ph + gap : 0);
-      d.ensure(Math.min(blockH, 360));
-      const top = d.y;
-      d.rect(M, top, CW, 22 + commentH + (o.comment ? 4 : 0), { fill: C.soft, stroke: null });
-      d.rect(M, top, 3, 22 + commentH + (o.comment ? 4 : 0), { fill: C.accent, stroke: null });
-      d.text(title, M + 10, top + 7, { size: 9, font: 'B' });
-      d.textRight(dmyhm(o.created_at), M + CW - 8, top + 8, { size: 7, color: C.muted });
-      d.y = top + 22;
-      if (o.comment) d.para(o.comment, { x: M + 10, w: CW - 20, size: 8.5, lh: 1.4, color: C.ink });
-      d.y += 6;
-      for (let i = 0; i < o.photos.length; i += 3) {
-        d.ensure(ph + gap);
-        o.photos.slice(i, i + 3).forEach((buf, j) => d.image(buf, M + j * (pw + gap), d.y, pw, ph, 2));
-        d.y += ph + gap;
-      }
-      d.y += 8;
-    }
-  }
+  if (observations.length) renderObsBlock();
 
   // Ловушки (если ведётся журнал станций — он идёт отдельным приложением)
-  if (rows.length && !journal) {
-    heading('Capcane și stații de monitorizare', 11);
-    table(
-      [
-        { w: 26, label: 'Nr.', align: 'center' }, { w: 128, label: 'Tip' }, { w: 120, label: 'Locație' },
-        { w: 84, label: 'Stare' }, { w: 90, label: 'Dăunător / nr.' }, { w: CW - 26 - 128 - 120 - 84 - 90, label: 'Momeală' },
-      ],
-      rows.map((r) => [
-        String(r.number), roTrapKind(r.kind), r.location || '—', r.status ? roTrapStatus(r.status) : 'Neverificată',
-        r.status === 'activity' ? `${roPest(r.pest || '') || '—'}${Number(r.count) ? ` × ${r.count}` : ''}` : '',
-        Number(r.bait_replaced) ? 'Înlocuită' : '',
-      ]),
-      { head: true, size: 7.2, pad: 5 },
-    );
-  }
+  if (rows.length && !journal) renderTrapRows();
 
   // Рекомендации
   if (recs.length) {
