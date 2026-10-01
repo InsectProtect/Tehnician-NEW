@@ -437,18 +437,20 @@ export type GeoSettings = { from_hour: number; to_hour: number; max_hours: numbe
 export interface SalesKpi { id: string; label: string; unit: string; dir: 'up' | 'down'; src: 'auto' | 'manual'; weight: number; target: number; value: number | null; manual: boolean; ratio: number; score: number; lost: number }
 export interface SalesSuper { id: string; label: string; count: number; amount: number; total: number; note: string }
 export interface SalesPenaltyHit { id: string; label: string; count: number; amount: number; total: number }
+export interface SalesStrikes { on: boolean; count: number; tier: number; pct: number; cut: number; label: string }
 export interface SalesCalc {
   month: string; plan: number; revenue: number; pct: number; kkpi: number; k: number; below_cutoff: boolean; critical: boolean;
-  premium: number; bonus: number; supers: SalesSuper[]; supers_total: number; fine: number; penalties: SalesPenaltyHit[]; salary: number; total: number; kpis: SalesKpi[];
+  premium: number; bonus: number; supers: SalesSuper[]; supers_total: number; fine: number; penalties: SalesPenaltyHit[]; strikes: SalesStrikes; salary: number; total: number; kpis: SalesKpi[];
   structure: { id: string; label: string; share: number; plan: number }[];
   auto: { revenue: number; revenue_b2c: number; revenue_b2b: number; done: number; calls: number; reached: number; deals: number; subs: number; b2b_new: number; tasks: number; tasks_bad: number; pings: number };
 }
+export interface SalesStrikeEntry { id: string; note: string; created_at: string; created_by: string }
 export interface SalesWhatIf { pct: number; revenue: number; need: number; premium: number; bonus: number; total: number; reached: boolean }
 export interface SalesTip { kpi: string; title: string; text: string }
 export interface SalesGap { task_id: string; task_no: number; fields: string[]; first_at: string; pings: number; company: string; address: string; phone: string; planned_at: string | null; has_time: boolean; price: number | null; procedure: string; point_cat: string }
 export interface SalesCfgShort { preset: string; base_plan: number; rate: number; salary: number; cutoff: number; ladder: [number, number][]; bonus: { from: number; amount: number }; crit: { below: number; cut: number }; gap_fine: number; supers: { id: string; label: string; amount: number; param: number | null; hint: string }[]; penalties: { id: string; label: string; amount: number; param: number | null; hint: string }[] }
 export interface SalesFull {
-  month: string; month_label: string; calc: SalesCalc; what_if: SalesWhatIf[]; tips: SalesTip[]; gaps: SalesGap[];
+  month: string; month_label: string; calc: SalesCalc; what_if: SalesWhatIf[]; tips: SalesTip[]; gaps: SalesGap[]; strikes_list: SalesStrikeEntry[];
   manual: Record<string, number | string>; manual_at: string | null; manual_by: string; cfg: SalesCfgShort;
 }
 export interface MgrGame {
@@ -471,8 +473,9 @@ export interface SalesSettings {
   gaps: { on: boolean; fields: string[]; every_min: number; grace_min: number; max_pings: number; from_hour: number; to_hour: number; admins_too: boolean };
   coach: { on: boolean; hour: number; weekdays: boolean };
   game: { calls_day: number; reached_day: number; deals_day: number };
+  strikes: { on: boolean; pct: number[] };
 }
-export interface SalesListItem { tg_id: string; name: string; preset: string; plan: number; revenue: number; pct: number; kkpi: number; k: number; premium: number; bonus: number; supers: number; fine: number; total: number; gaps: number; calls: number; deals: number; weak: string }
+export interface SalesListItem { tg_id: string; name: string; preset: string; plan: number; revenue: number; pct: number; kkpi: number; k: number; premium: number; bonus: number; supers: number; fine: number; total: number; gaps: number; calls: number; deals: number; weak: string; strikes: number }
 export interface SalesList {
   month: string; items: SalesListItem[]; settings: SalesSettings;
   catalog: Record<string, { label: string; unit: string; dir: 'up' | 'down'; target: number; src: 'auto' | 'manual' }>;

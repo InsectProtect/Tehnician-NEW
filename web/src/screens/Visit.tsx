@@ -15,6 +15,7 @@ import { ActData, type ActPatch } from './ActData';
 import { ShareSheet } from '../components/ShareSheet';
 import { MediaCard } from '../components/MediaUpload';
 import { FinishSheet, InspectSheet, ManualSheet, MessageSheet, ObservationSheet, RegisterSheet, RemarkSheet } from './VisitSheets';
+import { playSound } from '../sounds';
 
 type SheetState =
   | null
@@ -60,6 +61,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
     try {
       const r = await api.scan(id, text);
       haptic.success();
+      if (r.state === 'found' || r.state === 'new') playSound('qr');
       if (r.state === 'found') setSheet({ type: 'inspect', trap: r.trap });
       else if (r.state === 'new') setSheet({ type: 'register', code: r.code, next: r.next_number });
       else if (r.state === 'other_object')
@@ -851,7 +853,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           onClose={() => setSheet(null)}
           onFinished={(r) => {
             setSheet(null);
-            if (r) setReward(r);
+            if (r) { setReward(r); playSound('deal'); }
             load();
           }}
         />

@@ -6,6 +6,7 @@ import { haptic } from '../telegram';
 import type { CallOutcome, MgrGame, MgrMe, SalesCfg, SalesCfgKpi, SalesDetail, SalesFull, SalesGap, SalesList, SalesSettings } from '../types';
 import { Button, Chips, Collapse, Field, Input, Label, Segmented, Sheet, Spinner, Toggle, cx, useToast } from '../components/ui';
 import { FatBar, GameButton, Segments, XpChip } from '../components/game';
+import { playOnce } from '../sounds';
 
 /* ================================================================================================
  * «Продажи»: KPI менеджеров как в таблице «KPI менеджера» + игра «Звонилка» + бот-коуч.
@@ -64,12 +65,18 @@ function PayoutCard({ d, title = 'К выплате за месяц' }: { d: Sal
   for (const s of c.supers) lines.push([`🏆 ${s.label}${s.count > 1 ? ` × ${s.count}` : ''}`, s.total, s.note]);
   if (d.cfg.gap_fine > 0 && c.auto.tasks_bad > 0) lines.push(['Штраф: незаполненные заявки', -(d.cfg.gap_fine * c.auto.tasks_bad), `${c.auto.tasks_bad} шт.`]);
   for (const p of c.penalties) lines.push([`Штраф: ${p.label}`, -p.total, `${p.count} шт. × ${lei(p.amount)}`]);
+  if (c.strikes.cut > 0) lines.push([`⚠️ ${c.strikes.label}`, -c.strikes.cut, `списано ${c.strikes.pct}% с бонусной части`]);
   return (
     <Card>
       <Eyebrow right={<span className={cx('font-mono text-[11px]', pctTone(c.pct))}>{pctS(c.pct)} плана</span>}>{title}</Eyebrow>
+      {c.strikes.count > 0 && (
+        <div className={cx('mb-2 rounded-xl px-3 py-2 text-[13px] font-semibold', c.strikes.tier >= 5 ? cx('bg-[#FF453A]/15', red) : 'bg-[#FF9F0A]/15 text-[#C93400] dark:text-[#FF9F0A]')}>
+          ⚠️ {c.strikes.label} ({c.strikes.count}/5){c.strikes.pct > 0 ? ` — списание ${c.strikes.pct}%` : ''}
+        </div>
+      )}
       <div className="font-dot whitespace-nowrap text-[34px] leading-none">{lei(c.total)}</div>
       <div className="mt-1 text-[13.5px] text-muted">
-        бонусная часть <b className="text-ink dark:text-white">{lei(c.premium + c.bonus + c.supers_total - c.fine)}</b>
+        бонусная часть <b className="text-ink dark:text-white">{lei(Math.max(0, c.premium + c.bonus + c.supers_total - c.fine - c.strikes.cut))}</b>
       </div>
       <div className="mt-4 divide-y divide-dashed divide-line">
         {lines.map(([l, v, hint]) => (
@@ -539,6 +546,9 @@ export function MySales({ focus }: { focus?: string }) {
 export function MgrHero({ onOpen }: { onOpen: (focus?: string) => void }) {
   const [d, setD] = useState<MgrMe | null>(null);
   useEffect(() => { api.mgrMe().then(setD).catch(() => {}); }, []);
+  useEffect(() => {
+    if (d && d.calc.pct >= 100) playOnce(`kpi_done_${d.month}`, 'kpi');
+  }, [d]);
   if (!d) return null;
   const c = d.calc;
   const q = d.game.quests[0];
@@ -548,9 +558,12 @@ export function MgrHero({ onOpen }: { onOpen: (focus?: string) => void }) {
         <div>
           <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">Получу за {MONTHS[Number(d.month.slice(5)) - 1]}</div>
           <div className="font-dot mt-1 whitespace-nowrap text-[30px] leading-none">{lei(c.total)}</div>
-          <div className="mt-1 text-[13px] text-muted">бонус {lei(c.premium + c.bonus + c.supers_total - c.fine)} · план <b className={pctTone(c.pct)}>{pctS(c.pct)}</b></div>
+          <div className="mt-1 text-[13px] text-muted">бонус {lei(Math.max(0, c.premium + c.bonus + c.supers_total - c.fine - c.strikes.cut))} · план <b className={pctTone(c.pct)}>{pctS(c.pct)}</b></div>
         </div>
-        {d.gaps.length > 0 && <span className="shrink-0 whitespace-nowrap rounded-full bg-[#FF9F0A]/15 px-2.5 py-1 text-[12.5px] font-bold text-[#C93400] dark:text-[#FF9F0A]">🚨 {d.gaps.length}</span>}
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          {d.gaps.length > 0 && <span className="whitespace-nowrap rounded-full bg-[#FF9F0A]/15 px-2.5 py-1 text-[12.5px] font-bold text-[#C93400] dark:text-[#FF9F0A]">🚨 {d.gaps.length}</span>}
+          {c.strikes.count > 0 && <span className="whitespace-nowrap rounded-full bg-[#FF453A]/15 px-2.5 py-1 text-[12.5px] font-bold text-[#D70015] dark:text-[#FF453A]">⚠️ {c.strikes.count}/5</span>}
+        </div>
       </div>
       <div className="mt-3"><FatBar pct={(c.pct / 130) * 100} color={c.pct >= 100 ? 'bg-[#34C759]' : 'bg-accent'} /></div>
       {q && <div className="mb-3 text-[13px] text-muted">Квест дня: {q.title} — {Math.min(q.have, q.need)}/{q.need}</div>}
@@ -610,7 +623,7 @@ function AdminSales() {
                   <div><div className="text-muted">Итого</div><b>{lei(m.total)}</b></div>
                 </div>
                 <div className="mt-2 text-[12.5px] text-muted">
-                  звонков {m.calls} · сделок {m.deals}{m.supers ? ` · супербонусы ${lei(m.supers)}` : ''}{m.gaps ? <span className={orange}> · ⚠ незаполн. {m.gaps}</span> : ''}{m.weak ? ` · слабое место: ${m.weak}` : ''}
+                  звонков {m.calls} · сделок {m.deals}{m.supers ? ` · супербонусы ${lei(m.supers)}` : ''}{m.gaps ? <span className={orange}> · ⚠ незаполн. {m.gaps}</span> : ''}{m.strikes ? <span className={red}> · ⚠️ предупреждений {m.strikes}/5</span> : ''}{m.weak ? ` · слабое место: ${m.weak}` : ''}
                 </div>
               </button>
             ))}
@@ -667,8 +680,69 @@ function SalesSettingsCard({ list, onSaved }: { list: SalesList; onSaved: () => 
           <div className="flex items-center gap-2">Сделок {numIn(s.game.deals_day, (n) => setS({ ...s, game: { ...s.game, deals_day: n } }))}</div>
         </div>
       </Collapse>
+      <Collapse id="sales-strikes" title="⚠️ Предупреждения менеджерам" hint={s.strikes.on ? `5 ступеней: ${s.strikes.pct.join(' / ')}%` : 'выключены'}>
+        <div className="flex flex-col gap-3">
+          <Toggle label="Включить списание с бонусной части по ступеням" checked={s.strikes.on} onChange={(v) => setS({ ...s, strikes: { ...s.strikes, on: v } })} />
+          <div className="text-[13px] text-muted">За каждое выданное предупреждение в этом месяце со следующей ступени списывается указанный % бонусной части (премия + бонус + супербонусы). Первое предупреждение — по умолчанию 0% (просто предупреждение).</div>
+          <div className="grid grid-cols-5 gap-2">
+            {s.strikes.pct.map((p, i) => (
+              <div key={i} className="text-center">
+                <div className="mb-1 text-[11px] text-muted">{i + 1}-е</div>
+                {numIn(p, (n) => setS({ ...s, strikes: { ...s.strikes, pct: s.strikes.pct.map((x, j) => (j === i ? Math.min(100, n) : x)) } }), 'w-full')}
+                <div className="mt-0.5 text-[10px] text-muted">%</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Collapse>
       <div className="mt-3"><Button onClick={save} loading={busy} variant="secondary">Сохранить общие настройки</Button></div>
     </>
+  );
+}
+
+function StrikesPanel({ tg, d, onSaved }: { tg: string; d: SalesDetail; onSaved: () => void }) {
+  const toast = useToast();
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const c = d.calc.strikes;
+  async function issue() {
+    setBusy(true);
+    try {
+      const r = await api.addStrike(tg, note, d.month);
+      haptic.success();
+      toast(r.pct > 0 ? `Выдано: ${r.tier}-е предупреждение, −${r.pct}% бонуса` : `Выдано: ${r.tier}-е предупреждение`, 'ok');
+      setNote('');
+      onSaved();
+    } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(false); }
+  }
+  async function remove(id: string) {
+    try { await api.removeStrike(tg, id); haptic.success(); toast('Снято', 'ok'); onSaved(); } catch (e) { toast((e as Error).message, 'error'); }
+  }
+  return (
+    <Card>
+      <Eyebrow>Предупреждения за {monthName(d.month)}</Eyebrow>
+      {c.count > 0 ? (
+        <div className={cx('mb-3 rounded-xl px-3 py-2 text-[13px] font-semibold', c.tier >= 5 ? cx('bg-[#FF453A]/15', red) : 'bg-[#FF9F0A]/15 text-[#C93400] dark:text-[#FF9F0A]')}>
+          {c.label} ({c.count}/5){c.pct > 0 ? ` — списание ${c.pct}% с бонусной части` : ''}
+        </div>
+      ) : <div className="mb-3 text-[14px] text-muted">В этом месяце предупреждений нет.</div>}
+      <div className="space-y-2">
+        {d.strikes_list.map((s, i) => (
+          <div key={s.id} className="flex items-start justify-between gap-3 rounded-2xl bg-fill px-3 py-2.5">
+            <div className="min-w-0">
+              <div className="text-[14px] font-semibold">{i + 1}-е предупреждение</div>
+              {s.note && <div className="text-[13px] text-muted">{s.note}</div>}
+              <div className="text-[11.5px] text-muted">{new Date(s.created_at).toLocaleString('ru-RU')} · {s.created_by}</div>
+            </div>
+            <button onClick={() => remove(s.id)} className="shrink-0 rounded-full bg-card p-2 text-muted ring-1 ring-inset ring-line active:opacity-60"><Trash2 size={16} /></button>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4">
+        <Field label="Причина (необязательно)"><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="например: опоздал с отправкой заявки технику" /></Field>
+        <Button className="mt-2" onClick={issue} loading={busy} variant="secondary">Выдать предупреждение</Button>
+      </div>
+    </Card>
   );
 }
 
@@ -676,7 +750,7 @@ function ManagerDetail({ tg, month: m0, list, onBack }: { tg: string; month: str
   const toast = useToast();
   const [month, setMonth] = useState(m0);
   const [d, setD] = useState<SalesDetail | null>(null);
-  const [tab, setTab] = useState<'month' | 'year' | 'facts' | 'cfg'>('month');
+  const [tab, setTab] = useState<'month' | 'year' | 'facts' | 'cfg' | 'strikes'>('month');
   const load = useCallback(() => api.adminSalesOne(tg, month).then(setD).catch((e: Error) => toast(e.message, 'error')), [tg, month, toast]);
   useEffect(() => { load(); }, [load]);
   return (
@@ -688,7 +762,7 @@ function ManagerDetail({ tg, month: m0, list, onBack }: { tg: string; month: str
             <div className="text-[22px] font-semibold">{d.user.name}</div>
             <MonthPicker value={month} onChange={setMonth} />
           </div>
-          <Segmented options={[{ id: 'month', label: 'Месяц' }, { id: 'year', label: 'Итоги года' }, { id: 'facts', label: 'Факты' }, { id: 'cfg', label: 'Настройка KPI' }]} value={tab} onChange={setTab} />
+          <Segmented options={[{ id: 'month', label: 'Месяц' }, { id: 'year', label: 'Итоги года' }, { id: 'facts', label: 'Факты' }, { id: 'cfg', label: 'Настройка KPI' }, { id: 'strikes', label: `⚠️ Предупреждения${d.calc.strikes.count ? ` · ${d.calc.strikes.count}` : ''}` }]} value={tab} onChange={setTab} />
           {tab === 'month' && (
             <div className="md:grid md:grid-cols-2 md:gap-4">
               <div><PayoutCard d={d} /><PlanCard d={d} /><WhatIfCard d={d} /></div>
@@ -698,6 +772,7 @@ function ManagerDetail({ tg, month: m0, list, onBack }: { tg: string; month: str
           {tab === 'year' && <YearView d={d} />}
           {tab === 'facts' && <FactsForm d={d} month={month} onSaved={load} />}
           {tab === 'cfg' && <ConfigEditor tg={tg} d={d} list={list} onSaved={load} />}
+          {tab === 'strikes' && <StrikesPanel tg={tg} d={d} onSaved={load} />}
         </>
       )}
     </>

@@ -229,6 +229,8 @@ export const api = {
   saveSalesConfig: (tg: string, d: { cfg?: Partial<SalesCfg>; preset?: string; all?: boolean }) => request<{ ok: true; cfg: SalesCfg }>('PUT', `/api/admin/sales/${tg}/config`, d),
   saveSalesFacts: (tg: string, month: string, data: Record<string, string | number>) => request<{ ok: true }>('PUT', `/api/admin/sales/${tg}/facts/${month}`, { data }),
   saveSalesSettings: (s: Partial<SalesSettings>) => request<{ ok: true; settings: SalesSettings }>('PUT', '/api/admin/sales-settings', s),
+  addStrike: (tg: string, note: string, month?: string) => request<{ ok: true; id: string; tier: number; pct: number }>('POST', `/api/admin/sales/${tg}/strike`, { note, month }),
+  removeStrike: (tg: string, id: string) => request<{ ok: true }>('DELETE', `/api/admin/sales/${tg}/strike/${id}`),
   // v47: комнаты, «Мой авто»
   roomsError: (visitId: string, rooms: number, note: string) => request<{ ok: true }>('POST', `/api/visits/${visitId}/rooms-error`, { rooms, note }),
   roomsDisputes: () => request<{ items: RoomsDispute[] }>('GET', '/api/rooms-disputes'),

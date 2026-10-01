@@ -15,6 +15,7 @@ import { AppLogoutButtons } from './AppLogin';
 import { JobSheet } from './Jobs';
 import { TaskSheet } from './Tasks';
 import { makeT } from '../i18n';
+import { playSound } from '../sounds';
 
 /*
  * Сотрудник: вкладки «Сегодня / Входящие / Лига / Профиль», игровой слой (опыт, уровни, квесты, значки),
@@ -364,7 +365,12 @@ export function AlertOverlay({ onOpenVisit }: { onOpenVisit: (id: string) => voi
     // при первом открытии — только срочное; дальше — любое новое, что пришло
     const cand = inbox.new.find((i) => !shown.has(i.key) && (!first.current || i.urgent || i.type === 'call' || i.type === 'task'));
     if (first.current) { inbox.new.forEach((i) => { if (!(i.urgent || i.type === 'call' || i.type === 'task')) shown.add(i.key); }); first.current = false; }
-    if (cand) { shown.add(cand.key); setCur(cand); haptic.success(); }
+    if (cand) {
+      shown.add(cand.key);
+      setCur(cand);
+      haptic.success();
+      playSound(cand.type === 'job' ? 'job' : 'task');
+    }
   }, [inbox, cur]);
   const c = cur ? COLORS[cur.color] || COLORS.blue : COLORS.blue;
   return (
