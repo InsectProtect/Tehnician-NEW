@@ -71,7 +71,11 @@ const DEFAULT_SETTINGS = {
   gaps: { on: true, fields: ['phone', 'address', 'date', 'time'], every_min: 5, grace_min: 15, max_pings: 100, from_hour: 8, to_hour: 20, admins_too: false },
   coach: { on: true, hour: 10, weekdays: true },
   game: { calls_day: 40, reached_day: 20, deals_day: 3 },
+  strikes: { on: true, pct: [0, 25, 50, 75, 100] },
 };
+
+/** Подписи ступеней лестницы предупреждений (пояснение к проценту списания с бонусной части KPI). */
+const STRIKE_LABELS = ['Предупреждение', 'Второе предупреждение', 'Третье предупреждение', 'Четвёртое предупреждение', 'Пятое предупреждение — лишение премии'];
 
 export const GAP_FIELDS = {
   phone: 'телефон', address: 'адрес', date: 'дата', time: 'время', price: 'цена', procedure: 'процедура/вредитель', point_cat: 'тип помещения', company: 'клиент (фирма/имя)',
@@ -108,7 +112,14 @@ export function initSales(ctx) {
   async function store() { return (await getSetting('mgr_kpi')) || {}; }
   async function settings() {
     const s = await store();
-    return { gaps: { ...DEFAULT_SETTINGS.gaps, ...(s.gaps || {}) }, coach: { ...DEFAULT_SETTINGS.coach, ...(s.coach || {}) }, game: { ...DEFAULT_SETTINGS.game, ...(s.game || {}) } };
+    const st = s.strikes || {};
+    return {
+      gaps: { ...DEFAULT_SETTINGS.gaps, ...(s.gaps || {}) }, coach: { ...DEFAULT_SETTINGS.coach, ...(s.coach || {}) }, game: { ...DEFAULT_SETTINGS.game, ...(s.game || {}) },
+      strikes: {
+        on: st.on !== undefined ? Boolean(st.on) : DEFAULT_SETTINGS.strikes.on,
+        pct: Array.isArray(st.pct) && st.pct.length === 5 ? st.pct.map((p) => clamp(Math.round(num(p)), 0, 100)) : DEFAULT_SETTINGS.strikes.pct,
+      },
+    };
   }
   function normCfg(c = {}) {
     const d = DEFAULT_CFG;
@@ -183,6 +194,7 @@ export function initSales(ctx) {
       const [row] = await db.query('SELECT COUNT(*) AS n FROM mgr_penalties WHERE tg_id = $1 AND penalty_id = $2 AND created_at >= $3 AND created_at < $4', [tg, id, from, to]);
       penaltyCounts[id] = Number(row?.n) || 0;
     }
+    const [strikeRow] = await db.query('SELECT COUNT(*) AS n FROM mgr_strikes WHERE tg_id = $1 AND month = $2', [tg, ym]);
     return {
       revenue, revenue_b2c: b2c, revenue_b2b: revenue - b2c, done: done.length,
       avg_check: done.length ? revenue / done.length : null,
@@ -196,6 +208,7 @@ export function initSales(ctx) {
       crm: created.length ? ((created.length - bad) / created.length) * 100 : null,
       call_days: byDay,
       penalty_counts: penaltyCounts,
+      strikes_count: Number(strikeRow?.n) || 0,
     };
   }
 
@@ -258,11 +271,19 @@ export function initSales(ctx) {
       fine += total;
       penalties.push({ id, label: PENALTIES[id]?.label || id, count: n, amount: p.amount, total });
     }
-    const total = cfg.salary + premium + bonus + supers - fine;
+    // предупреждения (страйки): 1-е — только предупреждение, 2..5-е списывают растущий % с бонусной части KPI
+    const strikesCfg = extra.strikes || DEFAULT_SETTINGS.strikes;
+    const strikeCount = auto.strikes_count || 0;
+    const strikeTier = Math.min(strikeCount, strikesCfg.pct.length);
+    const strikePct = strikesCfg.on && strikeTier > 0 ? strikesCfg.pct[strikeTier - 1] : 0;
+    const kpiPay = premium + bonus + supers;
+    const strikeCut = Math.round((kpiPay * strikePct) / 100);
+    const strikes = { on: strikesCfg.on, count: strikeCount, tier: strikeTier, pct: strikePct, cut: strikeCut, label: strikeTier > 0 ? STRIKE_LABELS[strikeTier - 1] : '' };
+    const total = Math.max(0, cfg.salary + kpiPay - fine - strikeCut);
     const structure = cfg.structure.map((s) => ({ ...s, plan: Math.round((plan * s.share) / 100) }));
     return {
       month: ym, plan, revenue: Math.round(revenue), pct: r2(pct), kkpi: r2(kkpi), k: kLadder, below_cutoff: pct < cfg.cutoff, critical,
-      kkpi_exact: kkpi, premium: Math.round(premium), bonus, supers: sup, supers_total: supers, fine: Math.round(fine), penalties, salary: cfg.salary, total: Math.round(total), kpis, structure,
+      kkpi_exact: kkpi, premium: Math.round(premium), bonus, supers: sup, supers_total: supers, fine: Math.round(fine), penalties, strikes, salary: cfg.salary, total: Math.round(total), kpis, structure,
       auto: { revenue: Math.round(auto.revenue), revenue_b2c: Math.round(auto.revenue_b2c), revenue_b2b: Math.round(auto.revenue_b2b), done: auto.done, calls: auto.calls, reached: auto.reached, deals: auto.deals, subs: auto.subs, b2b_new: auto.b2b_new, tasks: auto.tasks, tasks_bad: auto.tasks_bad, pings: auto.pings },
     };
   }
@@ -275,7 +296,9 @@ export function initSales(ctx) {
       const k = cfg.ladder.reduce((acc, [lp2, kk]) => (p >= lp2 ? kk : acc), 0);
       const premium = p < cfg.cutoff ? 0 : revenue * (cfg.rate / 100) * (c.kkpi_exact ?? c.kkpi) * k;
       const bonus = cfg.bonus.amount > 0 && p >= cfg.bonus.from ? cfg.bonus.amount : 0;
-      return { pct: p, revenue: Math.round(revenue), need: Math.max(0, Math.round(revenue - c.revenue)), premium: Math.round(premium), bonus, total: Math.round(cfg.salary + premium + bonus + c.supers_total - c.fine), reached: c.pct >= p };
+      const kpiPay = premium + bonus + c.supers_total;
+      const strikeCut = Math.round((kpiPay * (c.strikes?.pct || 0)) / 100);
+      return { pct: p, revenue: Math.round(revenue), need: Math.max(0, Math.round(revenue - c.revenue)), premium: Math.round(premium), bonus, total: Math.max(0, Math.round(cfg.salary + kpiPay - c.fine - strikeCut)), reached: c.pct >= p };
     });
   }
 
@@ -297,7 +320,7 @@ export function initSales(ctx) {
         record = best > 0 && cur > best;
       }
     }
-    const c = calc(cfg, ym, auto, man.data, { record, calls_day: s.game.calls_day });
+    const c = calc(cfg, ym, auto, man.data, { record, calls_day: s.game.calls_day, strikes: s.strikes });
     return { cfg, c, manual: man, auto };
   }
 
@@ -583,11 +606,16 @@ export function initSales(ctx) {
     return out.sort((a, b) => b.pct - a.pct || b.xp - a.xp);
   }
 
+  async function strikesList(tg, ym) {
+    return db.query('SELECT id, note, created_at, created_by FROM mgr_strikes WHERE tg_id = $1 AND month = $2 ORDER BY created_at', [String(tg), ym]);
+  }
+
   async function full(tg, ym) {
     const { cfg, c, manual } = await monthCalc(tg, ym);
     const gaps = await openGaps(tg);
     return {
       month: ym, month_label: `${MONTHS_FULL[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`, calc: c, what_if: whatIf(cfg, c), tips: coachTips(cfg, c, ym, gaps.length), gaps,
+      strikes_list: await strikesList(tg, ym),
       manual: manual.data, manual_at: manual.updated_at, manual_by: manual.updated_by,
       cfg: { preset: cfg.preset, base_plan: cfg.base_plan, rate: cfg.rate, salary: cfg.salary, cutoff: cfg.cutoff, ladder: cfg.ladder, bonus: cfg.bonus, crit: cfg.crit, gap_fine: cfg.gap_fine,
         supers: Object.entries(cfg.supers).filter(([, v]) => v.on).map(([id, v]) => ({ id, label: SUPERS[id].label, amount: v.amount, param: v.param, hint: SUPERS[id].hint })),
@@ -706,7 +734,7 @@ export function initSales(ctx) {
       const [gp] = await db.query('SELECT COUNT(*) AS n FROM task_gaps WHERE author_id = $1 AND fixed_at IS NULL', [m.tg_id]);
       const cfg = await cfgFor(m.tg_id);
       items.push({ tg_id: m.tg_id, name: m.name, preset: cfg.preset, plan: c.plan, revenue: c.revenue, pct: c.pct, kkpi: c.kkpi, k: c.k, premium: c.premium, bonus: c.bonus, supers: c.supers_total, fine: c.fine, total: c.total, gaps: Number(gp?.n) || 0,
-        calls: c.auto.calls, deals: c.auto.deals, weak: [...c.kpis].sort((a, b) => b.lost - a.lost)[0]?.label || '' });
+        calls: c.auto.calls, deals: c.auto.deals, weak: [...c.kpis].sort((a, b) => b.lost - a.lost)[0]?.label || '', strikes: c.strikes.count });
     }
     return { month: ym, items, settings: await settings(), catalog: KPI_CATALOG, presets: Object.fromEntries(Object.entries(PRESETS).map(([k, v]) => [k, v.label])), supers: SUPERS, penalties: PENALTIES, gap_fields: GAP_FIELDS };
   });
@@ -755,6 +783,32 @@ export function initSales(ctx) {
     return { ok: true, cfg };
   });
 
+  route('POST', '/api/admin/sales/:tg/strike', async ({ user, params, body }) => {
+    ownerOnly(user);
+    const [u] = await db.query("SELECT tg_id, name FROM users WHERE tg_id = $1 AND role = 'manager'", [params.tg]);
+    must(u, 404, 'Менеджер не найден');
+    const ym = validMonth(body.month) ? body.month : lp().month;
+    const note = str(body.note, 300);
+    const id = uid();
+    await db.query('INSERT INTO mgr_strikes (id, tg_id, month, note, created_at, created_by) VALUES ($1,$2,$3,$4,$5,$6)', [id, String(params.tg), ym, note, now(), user.name || '']);
+    const [row] = await db.query('SELECT COUNT(*) AS n FROM mgr_strikes WHERE tg_id = $1 AND month = $2', [String(params.tg), ym]);
+    const tier = Math.min(Number(row?.n) || 1, STRIKE_LABELS.length);
+    const st = await settings();
+    const pct = st.strikes.pct[tier - 1] || 0;
+    await audit(user, 'KPI менеджера: предупреждение', u.name, `${tier}-е · ${note || 'без причины'}`);
+    notifyTech(u.tg_id, `⚠️ <b>${escHtml(STRIKE_LABELS[tier - 1])}</b> (${tier}/5)\n${note ? `${escHtml(note)}\n` : ''}${pct > 0 ? `С бонусной части KPI за ${MONTHS_FULL[Number(ym.slice(5)) - 1]} спишется ${pct}%.` : 'Пока без вычета — но при повторе будет штраф к KPI.'}`, { kind: 'mgr_strike' });
+    return { ok: true, id, tier, pct };
+  });
+
+  route('DELETE', '/api/admin/sales/:tg/strike/:id', async ({ user, params }) => {
+    ownerOnly(user);
+    const [s] = await db.query('SELECT * FROM mgr_strikes WHERE id = $1 AND tg_id = $2', [params.id, params.tg]);
+    must(s, 404, 'Предупреждение не найдено');
+    await db.query('DELETE FROM mgr_strikes WHERE id = $1', [s.id]);
+    await audit(user, 'KPI менеджера: предупреждение снято', params.tg, s.note || '');
+    return { ok: true };
+  });
+
   route('PUT', '/api/admin/sales/:tg/facts/:month', async ({ user, params, body }) => {
     ownerOnly(user);
     must(validMonth(params.month), 400, 'Некорректный месяц');
@@ -777,7 +831,7 @@ export function initSales(ctx) {
   route('PUT', '/api/admin/sales-settings', async ({ user, body }) => {
     ownerOnly(user);
     const s = await store();
-    const g = body.gaps || {}; const c = body.coach || {}; const gm = body.game || {};
+    const g = body.gaps || {}; const c = body.coach || {}; const gm = body.game || {}; const st = body.strikes || {};
     const cur = await settings();
     s.gaps = {
       on: g.on !== undefined ? Boolean(g.on) : cur.gaps.on,
@@ -788,6 +842,10 @@ export function initSales(ctx) {
     };
     s.coach = { on: c.on !== undefined ? Boolean(c.on) : cur.coach.on, hour: clamp(Math.round(num(c.hour, cur.coach.hour)), 0, 23), weekdays: c.weekdays !== undefined ? Boolean(c.weekdays) : cur.coach.weekdays };
     s.game = { calls_day: clamp(Math.round(num(gm.calls_day, cur.game.calls_day)), 1, 500), reached_day: clamp(Math.round(num(gm.reached_day, cur.game.reached_day)), 1, 500), deals_day: clamp(Math.round(num(gm.deals_day, cur.game.deals_day)), 1, 100) };
+    s.strikes = {
+      on: st.on !== undefined ? Boolean(st.on) : cur.strikes.on,
+      pct: Array.isArray(st.pct) && st.pct.length === 5 ? st.pct.map((p, i) => clamp(Math.round(num(p, cur.strikes.pct[i])), 0, 100)) : cur.strikes.pct,
+    };
     await setSetting('mgr_kpi', s);
     await audit(user, 'KPI менеджеров: общие настройки', '', `напоминания ${s.gaps.on ? `каждые ${s.gaps.every_min} мин` : 'выкл'} · коуч ${s.coach.on ? `${s.coach.hour}:00` : 'выкл'}`);
     return { ok: true, settings: await settings() };

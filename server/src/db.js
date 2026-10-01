@@ -469,6 +469,9 @@ const MIGRATIONS = [
   'CREATE UNIQUE INDEX IF NOT EXISTS mgr_penalties_task_idx ON mgr_penalties (task_id, penalty_id)',
   'CREATE INDEX IF NOT EXISTS mgr_penalties_user_idx ON mgr_penalties (tg_id, created_at)',
   "ALTER TABLE tasks ADD COLUMN crm_lead_id TEXT NOT NULL DEFAULT ''",
+  // v51: предупреждения (страйки) менеджерам — эскалирующий штраф к бонусной части KPI
+  "CREATE TABLE IF NOT EXISTS mgr_strikes (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, month TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '')",
+  'CREATE INDEX IF NOT EXISTS mgr_strikes_user_idx ON mgr_strikes (tg_id, month)',
 ];
 
 async function migrate(run) {
