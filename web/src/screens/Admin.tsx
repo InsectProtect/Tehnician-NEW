@@ -33,14 +33,16 @@ import { KpiPanel } from './Kpi';
 import { MgrHero, SalesPanel, setSalesFocus } from './Sales';
 import { RoomsDisputesWidget } from './Rooms';
 import { CarsPanel } from './Car';
+import { CashPanel } from './Cash';
 
-export type AdminTab = 'overview' | 'sales' | 'cars' | 'jobs' | 'specialists' | 'media' | 'tasks' | 'plan' | 'kpi' | 'pests' | 'acts' | 'remarks' | 'staff' | 'audit' | 'settings';
+export type AdminTab = 'overview' | 'sales' | 'cars' | 'cash' | 'jobs' | 'specialists' | 'media' | 'tasks' | 'plan' | 'kpi' | 'pests' | 'acts' | 'remarks' | 'staff' | 'audit' | 'settings';
 type Period = '7' | '30' | '90';
 
 const TABS: { id: AdminTab; label: string }[] = [
   { id: 'overview', label: 'Обзор' },
   { id: 'sales', label: 'Продажи' },
   { id: 'cars', label: 'Автопарк' },
+  { id: 'cash', label: 'Касса' },
   { id: 'jobs', label: 'Поручения' },
   { id: 'specialists', label: 'Специалисты' },
   { id: 'media', label: 'Фото / видео' },
@@ -89,6 +91,7 @@ export function Admin({ tab, onTab, onBack, onOpen, onConfigChanged }: {
       {tab === 'overview' && <Overview period={period} setPeriod={setPeriod} onOpen={onOpen} onActs={() => onTab('acts')} onSettings={() => onTab('settings')} onTab={onTab} />}
       {tab === 'sales' && <SalesPanel />}
       {tab === 'cars' && <CarsPanel />}
+      {tab === 'cash' && <CashPanel />}
       {tab === 'tasks' && <TasksDash {...range(period)} />}
       {tab === 'specialists' && <SpecialistsPanel onOpen={onOpen} />}
       {tab === 'media' && <MediaGallery />}
@@ -610,7 +613,7 @@ function StampSheet({ onClose }: { onClose: () => void }) {
 const LOCKED_TABS: AdminTab[] = ['overview', 'settings'];
 /** Какое право нужно менеджеру для вкладки (главному администратору доступно всё). */
 const TAB_PERM: Partial<Record<AdminTab, string>> = {
-  jobs: 'jobs|tasks', specialists: 'kpi', media: 'media', tasks: 'reports', plan: 'kpi', kpi: 'kpi', pests: 'reports', acts: 'reports', remarks: 'reports', staff: 'staff', audit: 'audit',
+  jobs: 'jobs|tasks', specialists: 'kpi', media: 'media', tasks: 'reports', plan: 'kpi', kpi: 'kpi', pests: 'reports', acts: 'reports', remarks: 'reports', staff: 'staff', audit: 'audit', cash: 'cash',
 };
 const tabAllowed = (id: AdminTab, perms?: string[]) => !TAB_PERM[id] || !perms || TAB_PERM[id]!.split('|').some((p) => perms.includes(p));
 const can = (cfg: { user: { perms?: string[]; isOwner?: boolean } }, perm: string) => Boolean(cfg.user.isOwner) || perm.split('|').some((p) => (cfg.user.perms || []).includes(p));

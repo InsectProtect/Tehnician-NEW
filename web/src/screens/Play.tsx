@@ -16,6 +16,7 @@ import { JobSheet } from './Jobs';
 import { TaskSheet } from './Tasks';
 import { makeT } from '../i18n';
 import { playSound } from '../sounds';
+import { CashWidget } from './Cash';
 
 /*
  * Сотрудник: вкладки «Сегодня / Входящие / Лига / Профиль», игровой слой (опыт, уровни, квесты, значки),
@@ -309,6 +310,7 @@ export function GameTop({ onOpenVisit }: { onOpenVisit: (id: string) => void }) 
     <>
       <LevelStrip />
       <ShiftCard />
+      <CashWidget />
       <InboxPreview onOpen={open} />
       <QuestsCard />
       <PlanBoss />

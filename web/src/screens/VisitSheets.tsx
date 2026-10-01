@@ -225,7 +225,7 @@ export function FinishSheet({ visitId, traps, visit, observations, fromLead, onC
   const toast = useToast();
   const [comment, setComment] = useState(visit.comment || '');
   const [busy, setBusy] = useState(false);
-  const [docs, setDocs] = useState({ proces: true, anexa: true });
+  const [docs, setDocs] = useState({ proces: true, anexa: true, obs: true, traps: true });
   const [signature, setSignature] = useState('');
   const [signing, setSigning] = useState(false);
   const [pay, setPay] = useState<PayState>(() => {
@@ -234,6 +234,7 @@ export function FinishSheet({ visitId, traps, visit, observations, fromLead, onC
   });
   const payRef = useRef<HTMLDivElement>(null);
   const unchecked = traps.filter((t) => !t.inspection);
+  const checkedTraps = traps.filter((t) => t.inspection);
   const pestOptions = cfg.pestsByProcedure?.[visit.procedure] ?? [];
   const missingAssessment = visit.needs_assessment && (!visit.infestation || !visit.preparation || (pestOptions.length > 0 && !visit.pests.length));
   const photoCount = observations.reduce((n, o) => n + o.photos.length, 0);
@@ -310,7 +311,40 @@ export function FinishSheet({ visitId, traps, visit, observations, fromLead, onC
         <TextArea rows={4} placeholder="Например: рекомендована заделка технологических отверстий" value={comment} onChange={(e) => setComment(e.target.value)} />
       </Field>
       {visit.quick && (
-        <div className="mt-4 rounded-2xl bg-accent/[0.08] px-4 py-3 text-[13.5px] leading-snug">⚡ Быстрый акт: клиент и офис получат одну страницу — адрес, вредители, подписи и печать.</div>
+        <div className="mt-4 space-y-3">
+          <div className="rounded-2xl bg-accent/[0.08] px-4 py-3 text-[13.5px] leading-snug">
+            ⚡ Быстрый акт: клиент и офис получат страницу с адресом, вредителями, подписью и печатью.
+            {(observations.length > 0 || checkedTraps.length > 0) && ' Ниже можно добавить приложения к акту.'}
+          </div>
+          {(observations.length > 0 || checkedTraps.length > 0) && (
+            <Field label="Что приложить к акту">
+              <div className="grid grid-cols-1 gap-2">
+                {observations.length > 0 && (
+                  <button onClick={() => { haptic.tap(); setDocs((d) => ({ ...d, obs: !d.obs })); }}
+                    className={cx('relative rounded-2xl p-3.5 text-left transition', docs.obs ? 'bg-ink text-card' : 'bg-card ring-1 ring-inset ring-line')}>
+                    <span className={cx('absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-md text-[12px]',
+                      docs.obs ? 'bg-accent text-black' : 'ring-1 ring-inset ring-line')}>{docs.obs ? '✓' : ''}</span>
+                    <div className="pr-6 text-[15px] font-semibold">Замечания с фото</div>
+                    <div className={cx('mt-0.5 text-[12px] leading-snug', docs.obs ? 'opacity-70' : 'text-muted')}>
+                      {observations.length} {plural(observations.length, ['замечание', 'замечания', 'замечаний'])} · {photoCount} фото
+                    </div>
+                  </button>
+                )}
+                {checkedTraps.length > 0 && (
+                  <button onClick={() => { haptic.tap(); setDocs((d) => ({ ...d, traps: !d.traps })); }}
+                    className={cx('relative rounded-2xl p-3.5 text-left transition', docs.traps ? 'bg-ink text-card' : 'bg-card ring-1 ring-inset ring-line')}>
+                    <span className={cx('absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-md text-[12px]',
+                      docs.traps ? 'bg-accent text-black' : 'ring-1 ring-inset ring-line')}>{docs.traps ? '✓' : ''}</span>
+                    <div className="pr-6 text-[15px] font-semibold">Журнал ловушек</div>
+                    <div className={cx('mt-0.5 text-[12px] leading-snug', docs.traps ? 'opacity-70' : 'text-muted')}>
+                      Проверено {checkedTraps.length} из {traps.length}
+                    </div>
+                  </button>
+                )}
+              </div>
+            </Field>
+          )}
+        </div>
       )}
       {visit.office_configured && !visit.quick && (
         <div className="mt-6">

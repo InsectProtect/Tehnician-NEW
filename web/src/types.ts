@@ -511,3 +511,14 @@ export interface CarDetail extends CarRes { user: { tg_id: string; name: string 
 
 /* ---------- v49: CRM-коннектор ---------- */
 export interface CrmSettings { provider: 'amocrm' | null; enabled: boolean; amocrm: { domain: string; token_set: boolean; token_masked: string } }
+
+/* ---------- v52: Касса ---------- */
+export interface CashHandover { id: string; expected_amount: number; created_at: string }
+export interface CashHandoverDone { id: string; expected_amount: number; received_amount: number | null; status: 'ok' | 'short'; created_at: string; decided_at: string | null }
+export interface CashWithdrawal { id: string; amount: number; reason: string; status?: 'pending' | 'approved' | 'rejected'; created_at: string; decided_at?: string | null }
+export interface CashMe {
+  balance: number; pending: CashHandover | null; pending_withdrawals: CashWithdrawal[]; withdrawals: CashWithdrawal[]; history: CashHandoverDone[];
+}
+export interface CashOverviewItem { tg_id: string; name: string; balance: number; pending_handover: CashHandover | null; pending_withdrawals: number }
+export interface CashWithdrawalReq extends CashWithdrawal { tg_id: string; name: string }
+export interface CashOverview { items: CashOverviewItem[]; withdrawals: CashWithdrawalReq[] }

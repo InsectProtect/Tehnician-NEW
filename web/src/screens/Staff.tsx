@@ -34,6 +34,7 @@ export const PERMS: { id: string; label: string; hint: string }[] = [
   { id: 'staff', label: 'Сотрудники', hint: 'приглашать, блокировать, менять роли (кроме админов)' },
   { id: 'settings', label: 'Настройки', hint: 'реквизиты, печать, чат офиса, типы замечаний' },
   { id: 'audit', label: 'Журнал', hint: 'история действий' },
+  { id: 'cash', label: 'Касса', hint: 'принимать сдачу кассы, одобрять выдачу наличных под отчёт' },
 ];
 type UserPatch = { status?: string; role?: string; name?: string; reset_pin?: boolean; perms?: string[] };
 

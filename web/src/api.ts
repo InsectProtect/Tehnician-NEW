@@ -1,7 +1,7 @@
 import { authHeader, setAppToken } from './telegram';
 import type {
   AdminStats, AdminVisit, BotStatus, KpiRes, MonthSummary, NotificationsRes, RemarksRes, TasksStats, PestsStats, AuditItem, Bootstrap, CompanySettings, Task, BootstrapPartial, Company, ImportStats, Invite, Lead, Observation, OfficeChat,
-  RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary,
+  RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview,
 } from './types';
 
 // Сессия после ввода PIN хранится только в памяти: закрыли приложение — PIN спросят снова.
@@ -172,7 +172,7 @@ export const api = {
   cancelledCount: () => request<{ week: number; month: number }>('GET', '/api/admin/cancelled/count'),
   resetCancelled: (period: 'week' | 'month') => request<{ ok: true; count: number }>('POST', '/api/admin/cancelled/reset', { period }),
   setMonitoring: (visitId: string, enabled: boolean) => request<{ ok: true }>('POST', `/api/visits/${visitId}/monitoring`, { enabled }),
-  finish: (visitId: string, comment: string, extra: { docs?: { proces: boolean; anexa: boolean }; signature?: string; payment?: Payment; pay_amount?: string; pay_note?: string } = {}) =>
+  finish: (visitId: string, comment: string, extra: { docs?: { proces: boolean; anexa: boolean; obs?: boolean; traps?: boolean }; signature?: string; payment?: Payment; pay_amount?: string; pay_note?: string } = {}) =>
     request<{ ok: true; report_url: string; amo_error: string | null; office_sent: boolean; office_error: string | null; office_none?: boolean; reward?: Reward | null }>('POST', `/api/visits/${visitId}/finish`, { comment, ...extra }),
   stamp: () => request<{ mode: 'default' | 'custom' | 'off'; image: string | null }>('GET', '/api/admin/stamp'),
   setStamp: (data: { mode: 'default' | 'custom' | 'off'; image?: string }) => request<{ ok: true }>('PUT', '/api/admin/stamp', data),
@@ -253,6 +253,12 @@ export const api = {
   saveCrm: (d: { provider?: 'amocrm' | null; enabled?: boolean; amocrm?: { domain?: string; access_token?: string } }) => request<{ ok: true }>('PUT', '/api/admin/crm', d),
   disconnectCrm: () => request<{ ok: true }>('POST', '/api/admin/crm/disconnect'),
   setTaskCrmLead: (id: string, crm_lead_id: string) => request<{ ok: true; crm_lead_id: string }>('PUT', `/api/tasks/${id}/crm-lead`, { crm_lead_id }),
+  cashMe: () => request<CashMe>('GET', '/api/cash/me'),
+  cashHandover: () => request<{ ok: true; id: string; expected: number }>('POST', '/api/cash/handover'),
+  cashWithdraw: (amount: string, reason: string) => request<{ ok: true; id: string }>('POST', '/api/cash/withdraw', { amount, reason }),
+  cashOverview: () => request<CashOverview>('GET', '/api/admin/cash'),
+  cashConfirm: (id: string, received_amount: string) => request<{ ok: true; status: 'ok' | 'short'; shortfall: number }>('POST', `/api/admin/cash/handover/${id}/confirm`, { received_amount }),
+  cashDecideWithdraw: (id: string, ok: boolean) => request<{ ok: true }>('POST', `/api/admin/cash/withdraw/${id}/decide`, { ok }),
 };
 
 /** Загрузка видео/фото «как есть» (без JSON), с прогрессом. */

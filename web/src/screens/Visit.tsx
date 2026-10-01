@@ -159,7 +159,8 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
   const q = Boolean(visit.quick); // быстрый акт: только адрес и вредители
   const askMonitoring = !q && isOpen && visit.is_company && visit.monitoring === null && !traps.some((t) => t.inspection);
   const trapFocus = visit.is_company ? monitoringOn : visit.procedure === 'Дератизация' || traps.length > 0;
-  const showTraps = !q && (visit.is_company ? monitoringOn : trapFocus || isOpen);
+  // в быстром акте станции показываем только если на объекте они уже были — отдельный акт с ловушками соберётся в приложении
+  const showTraps = (!q || traps.length > 0) && (visit.is_company ? monitoringOn : trapFocus || isOpen);
   const targetLabel = (id: string) => cfg.stationTargets.find((x) => x.id === id)?.label ?? '';
   const baitLabel = (id: string) => cfg.baitLevels.find((x) => x.id === id)?.label ?? '';
   const trapResult = (t: Trap) => {
@@ -619,8 +620,10 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       {/* Данные для бланка акта */}
       <SectionTitle>Данные для акта</SectionTitle>
       <ActData key={`${visit.id}-${visit.status}`} visit={visit} editable={isOpen} onPatch={patchAct} />
+      </>
+      )}
 
-      {/* Замечания с фото */}
+      {/* Замечания с фото — доступны и в быстром акте: попадут отдельным приложением */}
       <SectionTitle>Замечания и фото{observations.length ? ` · ${observations.length}` : ''}</SectionTitle>
       {observations.length > 0 && (
         <div className="space-y-2.5">
@@ -667,9 +670,6 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
         </>
       )}
       {!isOpen && observations.length === 0 && <p className="px-1 text-[15px] text-muted">Замечаний нет</p>}
-
-      </>
-      )}
 
       {/* Ловушки */}
       {showTraps && (
