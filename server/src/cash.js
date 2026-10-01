@@ -22,7 +22,7 @@ export function initCash(ctx) {
     return r?.created_at || null;
   }
 
-  /** Сколько наличных сейчас на руках: оплаты cash по завершённым выездам минус одобренные выдачи из кассы, с момента последней сдачи. */
+  /** Сколько наличных сейчас на руках: оплаты cash по завершённым выездам минус одобренные выдачи, плюс ручные правки администратора, с момента последней сдачи. */
   async function balanceOf(tg) {
     const since = await settledAt(tg);
     const [v] = await db.query(
@@ -33,7 +33,11 @@ export function initCash(ctx) {
       `SELECT COALESCE(SUM(amount), 0) AS s FROM cash_withdrawals WHERE tg_id = $1 AND status = 'approved'${since ? ' AND created_at > $2' : ''}`,
       since ? [String(tg), since] : [String(tg)],
     );
-    return r2(Number(v?.s || 0) - Number(w?.s || 0));
+    const [a] = await db.query(
+      `SELECT COALESCE(SUM(amount), 0) AS s FROM cash_adjustments WHERE tg_id = $1${since ? ' AND created_at > $2' : ''}`,
+      since ? [String(tg), since] : [String(tg)],
+    );
+    return r2(Number(v?.s || 0) - Number(w?.s || 0) + Number(a?.s || 0));
   }
 
   async function pendingHandover(tg) {
@@ -48,12 +52,14 @@ export function initCash(ctx) {
     const pending = await pendingHandover(user.id);
     const withdrawals = await db.query("SELECT id, amount, reason, status, created_at, decided_at FROM cash_withdrawals WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 10", [user.id]);
     const history = await db.query("SELECT id, expected_amount, received_amount, status, created_at, decided_at FROM cash_handovers WHERE tg_id = $1 AND status != 'pending' ORDER BY created_at DESC LIMIT 10", [user.id]);
+    const adjustments = await db.query("SELECT id, amount, reason, created_at, created_by FROM cash_adjustments WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 10", [user.id]);
     return {
       balance,
       pending: pending ? { id: pending.id, expected_amount: Number(pending.expected_amount), created_at: pending.created_at } : null,
       pending_withdrawals: withdrawals.filter((w) => w.status === 'pending').map((w) => ({ id: w.id, amount: Number(w.amount), reason: w.reason, created_at: w.created_at })),
       withdrawals: withdrawals.map((w) => ({ id: w.id, amount: Number(w.amount), reason: w.reason, status: w.status, created_at: w.created_at, decided_at: w.decided_at })),
       history: history.map((h) => ({ id: h.id, expected_amount: Number(h.expected_amount), received_amount: h.received_amount == null ? null : Number(h.received_amount), status: h.status, created_at: h.created_at, decided_at: h.decided_at })),
+      adjustments: adjustments.map((a) => ({ id: a.id, amount: Number(a.amount), reason: a.reason, created_at: a.created_at, created_by: a.created_by })),
     };
   });
 
@@ -93,9 +99,7 @@ export function initCash(ctx) {
       const balance = await balanceOf(t.tg_id);
       const pending = await pendingHandover(t.tg_id);
       const [{ n: wn }] = await db.query("SELECT COUNT(*) AS n FROM cash_withdrawals WHERE tg_id = $1 AND status = 'pending'", [t.tg_id]);
-      if (balance > 0 || pending || Number(wn) > 0) {
-        items.push({ tg_id: t.tg_id, name: t.name, balance, pending_handover: pending ? { id: pending.id, expected_amount: Number(pending.expected_amount), created_at: pending.created_at } : null, pending_withdrawals: Number(wn) || 0 });
-      }
+      items.push({ tg_id: t.tg_id, name: t.name, balance, pending_handover: pending ? { id: pending.id, expected_amount: Number(pending.expected_amount), created_at: pending.created_at } : null, pending_withdrawals: Number(wn) || 0 });
     }
     const withdrawals = await db.query(
       "SELECT w.*, u.name FROM cash_withdrawals w LEFT JOIN users u ON u.tg_id = w.tg_id WHERE w.status = 'pending' ORDER BY w.created_at",
@@ -138,6 +142,27 @@ export function initCash(ctx) {
       : `❌ Нельзя взять из кассы ${r.amount} лей (${escHtml(r.reason)}) — администратор отклонил запрос.`,
       { kind: 'cash' });
     return { ok: true };
+  }, { access: 'admin' });
+
+  route('POST', '/api/admin/cash/adjust', async ({ user, body }) => {
+    const tg = String(body.tg || '');
+    must(/^\d+$/.test(tg), 400, 'Не указан сотрудник');
+    const [t] = await db.query("SELECT tg_id, name FROM users WHERE tg_id = $1 AND status = 'active'", [tg]);
+    must(t, 404, 'Сотрудник не найден');
+    const target = num(body.balance);
+    must(Number.isFinite(target) && target >= 0 && target < 1000000, 400, 'Укажите сумму, которая должна быть на руках');
+    const reason = str(body.reason, 300);
+    must(reason.length >= 3, 400, 'Напишите причину правки');
+    const current = await balanceOf(tg);
+    const delta = r2(target - current);
+    must(Math.abs(delta) >= 0.01, 400, 'Сумма не отличается от текущей');
+    const id = uid();
+    await db.query('INSERT INTO cash_adjustments (id, tg_id, amount, reason, created_at, created_by) VALUES ($1,$2,$3,$4,$5,$6)', [id, tg, delta, reason, now(), user.name || '']);
+    await audit(user, 'Касса: ручная правка', t.name, `${current} → ${target} лей (${delta > 0 ? '+' : ''}${delta}) · ${reason}`);
+    if (/^\d+$/.test(tg)) {
+      notifyTech(tg, `✏️ Администратор изменил сумму кассы на руках: ${current} → ${target} лей — ${escHtml(reason)}.`, { kind: 'cash' });
+    }
+    return { ok: true, balance: target };
   }, { access: 'admin' });
 
   return { balanceOf };

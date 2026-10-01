@@ -477,6 +477,9 @@ const MIGRATIONS = [
   'CREATE INDEX IF NOT EXISTS cash_handovers_user_idx ON cash_handovers (tg_id, created_at)',
   "CREATE TABLE IF NOT EXISTS cash_withdrawals (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT NOT NULL DEFAULT '')",
   'CREATE INDEX IF NOT EXISTS cash_withdrawals_user_idx ON cash_withdrawals (tg_id, created_at)',
+  // v53: ручная правка кассы администратором (± к сумме «на руках», с причиной)
+  "CREATE TABLE IF NOT EXISTS cash_adjustments (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '')",
+  'CREATE INDEX IF NOT EXISTS cash_adjustments_user_idx ON cash_adjustments (tg_id, created_at)',
 ];
 
 async function migrate(run) {
