@@ -3327,11 +3327,12 @@ route('PATCH', '/api/visits/:id', async ({ params, body, user }) => {
 });
 
 // Замечание с фотографиями: { category, comment, photos: [base64 JPEG/PNG] }
+const ROD_OBS = 'Грызун в станции'; // категория для фото грызуна из осмотра станции (не зависит от OBS_CATEGORIES в ENV)
 route('POST', '/api/visits/:id/observations', async ({ params, body, user }) => {
   const v = await getWorkVisit(params.id, user);
   must(v.status === 'open', 409, 'Выезд уже завершён');
   const category = str(body.category, 100);
-  must(OBS_CATEGORIES.includes(category), 400, 'Выберите категорию');
+  must(OBS_CATEGORIES.includes(category) || category === ROD_OBS, 400, 'Выберите категорию');
   const comment = str(body.comment, 2000);
   const list = Array.isArray(body.photos) ? body.photos : [];
   must(list.length <= 10, 400, 'Не больше 10 фото за раз');
@@ -3499,6 +3500,35 @@ route('POST', '/api/visits/:id/scan', async ({ params, body, user }) => {
   const [row] = (await visitRows(v)).filter((r) => r.id === trap.id);
   if (!row) return { state: 'inactive', code };
   return { state: 'found', trap: shapeRow(row) };
+});
+
+// Скан QR с главной (вне выезда): чья ловушка и по каким моим заявкам можно начать обслуживание.
+route('POST', '/api/scan', async ({ body, user }) => {
+  const code = parseTrapCode(body.text);
+  must(code, 400, 'Это не QR-код ловушки');
+  const [trap] = await db.query('SELECT * FROM traps WHERE code = $1', [code]);
+  if (!trap) return { state: 'new', code, object: null, trap: null, task_ids: [], visit_id: null };
+  const [o] = await db.query('SELECT id, company_name, address FROM objects WHERE id = $1', [trap.object_id]);
+  const [openVisit] = await db.query(
+    "SELECT id FROM visits WHERE object_id = $1 AND tech_tg_id = $2 AND status = 'open' AND COALESCE(approval, '') = '' ORDER BY started_at DESC LIMIT 1",
+    [trap.object_id, user.id],
+  );
+  const mine = await db.query(
+    "SELECT id, company_name, address, visit_id FROM tasks WHERE status IN ('new', 'in_progress') AND (tech_tg_id = $1 OR team LIKE $2)",
+    [user.id, `%"${user.id}"%`],
+  );
+  const norm = (s) => String(s || '').toLowerCase().replace(/[«»"'`,.]/g, ' ').replace(/\s+/g, ' ').trim();
+  const same = (a, b) => a.length >= 4 && b.length >= 4 && (a === b || a.includes(b) || b.includes(a));
+  const oc = norm(o?.company_name);
+  const oa = norm(o?.address);
+  const task_ids = mine
+    .filter((t) => (t.visit_id && openVisit && t.visit_id === openVisit.id) || same(norm(t.address), oa) || same(norm(t.company_name), oc))
+    .map((t) => t.id);
+  return {
+    state: Number(trap.active) === 0 ? 'inactive' : 'found', code, object: o || null,
+    trap: { number: trap.number, kind: trap.kind, location: trap.location || '' },
+    task_ids, visit_id: openVisit?.id || null,
+  };
 });
 
 // Привязка новой (наклеенной) этикетки к объекту выезда.
