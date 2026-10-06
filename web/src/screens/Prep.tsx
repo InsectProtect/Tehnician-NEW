@@ -3,7 +3,7 @@ import { Keyboard, MapPin, PackagePlus, ScanLine, X } from 'lucide-react';
 import { api } from '../api';
 import { useConfig } from '../config';
 import { canScanQr, haptic, scanQr } from '../telegram';
-import type { PrepState, Task } from '../types';
+import type { PrepState, PrepTask, Task } from '../types';
 import { playSound } from '../sounds';
 import { GameButton } from '../components/game';
 import { Button, Chips, Field, Group, IconBadge, Input, Pill, Row, Sheet, cx, useToast } from '../components/ui';
@@ -19,15 +19,15 @@ import { ManualSheet } from './VisitSheets';
 export function PrepButton() {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [tasks, setTasks] = useState<PrepTask[] | null>(null);
   const [task, setTask] = useState<Task | null>(null);
 
   async function open() {
     haptic.tap();
     setBusy(true);
     try {
-      const r = await api.tasks();
-      setTasks(r.items.filter((t) => t.status === 'new' || t.status === 'in_progress'));
+      const r = await api.prepTasks();
+      setTasks(r.items);
     } catch (e) {
       toast((e as Error).message, 'error');
     } finally {
@@ -44,23 +44,37 @@ export function PrepButton() {
       {tasks && !task && (
         <Sheet open onClose={() => setTasks(null)} title="Подготовить ловушки">
           <p className="-mt-3 mb-4 text-[14.5px] leading-relaxed text-muted">
-            Выберите заявку — станции привяжутся к её объекту. На месте отсканируете каждую и отметите, где поставили.
+            Выберите заявку — станции привяжутся к её объекту. Можно готовить и для коллеги: на месте он отсканирует каждую и отметит, где поставил.
           </p>
           {tasks.length ? (
-            <Group>
-              {tasks.map((t) => (
-                <Row
-                  key={t.id}
-                  left={<IconBadge tone="blue"><span className="font-mono text-[13px]">№{t.task_no}</span></IconBadge>}
-                  title={t.company_name || t.address}
-                  subtitle={[t.company_name ? t.address : '', t.procedure, fmtTaskDate(t)].filter(Boolean).join(' · ')}
-                  onClick={() => { haptic.tap(); setTask(t); }}
-                />
-              ))}
-            </Group>
+            <>
+              {[{ title: 'Мои заявки', list: tasks.filter((t) => t.mine) }, { title: 'Заявки коллег', list: tasks.filter((t) => !t.mine) }]
+                .filter((g) => g.list.length)
+                .map((g, i) => (
+                  <div key={g.title} className={i ? 'mt-5' : undefined}>
+                    <div className="mb-2 px-1 font-mono text-[11px] uppercase tracking-[0.14em] text-muted">{g.title} · {g.list.length}</div>
+                    <Group>
+                      {g.list.map((t) => (
+                        <Row
+                          key={t.id}
+                          left={<IconBadge tone="blue"><span className="font-mono text-[13px]">№{t.task_no}</span></IconBadge>}
+                          title={t.company_name || t.address}
+                          subtitle={
+                            <>
+                              <div className="truncate">{[t.company_name ? t.address : '', fmtTaskDate(t)].filter(Boolean).join(' · ')}</div>
+                              <div className="mt-0.5 truncate">{[!t.mine && t.tech_name ? `👷 ${t.tech_name}` : '', t.prepared ? `📦 готово ${t.prepared}` : ''].filter(Boolean).join(' · ') || t.procedure}</div>
+                            </>
+                          }
+                          onClick={() => { haptic.tap(); setTask(t); }}
+                        />
+                      ))}
+                    </Group>
+                  </div>
+                ))}
+            </>
           ) : (
             <div className="rounded-2xl bg-card p-4 text-[14.5px] leading-relaxed text-muted">
-              В вашем списке нет открытых заявок. Сначала объект должен появиться в заявках — попросите офис добавить её, и ловушки можно будет подготовить.
+              Открытых заявок нет. Сначала объект должен появиться в заявках — попросите офис добавить её, и ловушки можно будет подготовить.
             </div>
           )}
           <Button variant="plain" className="mt-3" onClick={() => setTasks(null)}>Закрыть</Button>
@@ -195,6 +209,7 @@ function PrepSheet({ task, onClose, onBack }: { task: Task; onClose: () => void;
     <Sheet open onClose={onClose} title="Подготовка ловушек">
       <div className="-mt-3 mb-5 rounded-xl bg-card p-4">
         <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Заявка № {task.task_no} · {fmtTaskDate(task)}</div>
+        {task.tech_name && <div className="mt-1 text-[13.5px] text-muted">👷 Поедет: {task.tech_name}</div>}
         <div className="mt-1.5 text-[17px] font-semibold leading-snug">{st?.object.company_name || task.company_name || 'Объект'}</div>
         <div className="mt-1 flex items-start gap-1.5 text-[14.5px] leading-snug text-muted">
           <MapPin size={16} strokeWidth={1.75} className="mt-0.5 shrink-0" />{st?.object.address || task.address}
@@ -218,7 +233,7 @@ function PrepSheet({ task, onClose, onBack }: { task: Task; onClose: () => void;
                   key={t.id}
                   left={<IconBadge tone="gray"><span className="font-mono">{t.number}</span></IconBadge>}
                   title={t.kind}
-                  subtitle={[targetLabel(t.target), t.code].filter(Boolean).join(' · ')}
+                  subtitle={[targetLabel(t.target), t.code, t.prepared_by ? `готовил ${t.prepared_by}` : ''].filter(Boolean).join(' · ')}
                   right={confirmDel === t.id
                     ? <span className="rounded-full bg-[#FF3B30]/12 px-3 py-1 text-[13px] font-medium text-[#D70015] dark:text-[#FF453A]">Убрать?</span>
                     : <X size={18} strokeWidth={1.75} className="text-muted" />}

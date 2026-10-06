@@ -537,6 +537,8 @@ export interface ScanLookup {
 /** Подготовка ловушек к заявке (до выезда). */
 export interface PrepState {
   object: { id: string; company_name: string; address: string };
-  traps: { id: string; code: string; number: number; kind: string; target: string; location: string; prepared: boolean }[];
+  traps: { id: string; code: string; number: number; kind: string; target: string; location: string; prepared: boolean; prepared_by?: string }[];
   next_number: number;
 }
+/** Заявка в списке «Подготовить ловушки»: свои и коллег. */
+export type PrepTask = Task & { mine: boolean; prepared: number };

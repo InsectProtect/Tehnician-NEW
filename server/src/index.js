@@ -3570,10 +3570,12 @@ route('POST', '/api/visits/:id/traps', async ({ params, body, user }) => {
 // ---------- подготовка ловушек заранее (до выезда) ----------
 // Станции наклеивают/собирают в офисе: этикетка привязывается к объекту заявки как «подготовленная» (prepared = 1),
 // на объекте при скане специалист отмечает, где установил, — дальше обычное обслуживание.
+// Готовить может любой дезинсектор/специалист (не только тот, кто поедет) — экономия времени выезжающего.
+const canPrep = (user) => user.isAdmin || ['tech', 'specialist'].includes(user.role);
 async function prepTask(id, user) {
+  must(canPrep(user), 403, 'Готовить ловушки могут дезинсекторы и специалисты');
   const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [id]);
   must(t, 404, 'Заявка не найдена');
-  must(user.isAdmin || t.tech_tg_id === user.id || taskTeam(t).includes(String(user.id)), 403, 'Это заявка другого специалиста');
   must(['new', 'in_progress'].includes(t.status), 400, 'Заявка закрыта');
   return t;
 }
@@ -3591,14 +3593,33 @@ async function prepObject(t) {
 }
 async function prepState(o) {
   const traps = await db.query(
-    'SELECT id, code, number, kind, target, location, prepared, installed_at FROM traps WHERE object_id = $1 AND active = 1 ORDER BY number, created_at', [o.id],
+    'SELECT id, code, number, kind, target, location, prepared, prepared_by, installed_at FROM traps WHERE object_id = $1 AND active = 1 ORDER BY number, created_at', [o.id],
   );
+  await refreshUserNames();
   return {
     object: { id: o.id, company_name: o.company_name, address: o.address },
-    traps: traps.map((x) => ({ id: x.id, code: x.code, number: Number(x.number), kind: x.kind, target: x.target || '', location: x.location || '', prepared: Number(x.prepared) === 1 })),
+    traps: traps.map((x) => ({
+      id: x.id, code: x.code, number: Number(x.number), kind: x.kind, target: x.target || '', location: x.location || '', prepared: Number(x.prepared) === 1,
+      prepared_by: x.prepared_by ? (userNames[x.prepared_by] || '') : '',
+    })),
     next_number: await nextTrapNumber(o.id),
   };
 }
+
+// Все открытые заявки, к которым можно подготовить ловушки (свои — первыми)
+route('GET', '/api/prep/tasks', async ({ user }) => {
+  must(canPrep(user), 403, 'Готовить ловушки могут дезинсекторы и специалисты');
+  const rows = await db.query("SELECT * FROM tasks WHERE status IN ('new', 'in_progress') ORDER BY planned_at IS NULL, planned_at, task_no");
+  await refreshUserNames();
+  const counts = await db.query('SELECT object_id, COUNT(*) AS n FROM traps WHERE active = 1 AND prepared = 1 GROUP BY object_id');
+  const prep = Object.fromEntries(counts.map((r) => [r.object_id, Number(r.n)]));
+  const mine = (t) => t.tech_tg_id === user.id || taskTeam(t).includes(String(user.id));
+  const items = rows
+    .filter((t) => t.tech_tg_id) // «кто заберёт» без исполнителя — пропускаем
+    .map((t) => ({ ...shapeTask(t, userNames[t.tech_tg_id]), mine: mine(t), prepared: t.prep_object_id ? prep[t.prep_object_id] || 0 : 0 }));
+  items.sort((a, b) => Number(b.mine) - Number(a.mine));
+  return { items };
+});
 
 route('POST', '/api/tasks/:id/prep', async ({ params, user }) => {
   const t = await prepTask(params.id, user);
@@ -3622,9 +3643,17 @@ route('POST', '/api/tasks/:id/prep/traps', async ({ params, body, user }) => {
   const number = asked >= 1 ? asked : await nextTrapNumber(o.id);
   must(!taken.some((r) => Number(r.number) === number), 409, `Номер ${number} на этом объекте уже занят`);
   await db.query(
-    "INSERT INTO traps (id, code, object_id, number, kind, location, active, created_at, target, prepared) VALUES ($1,$2,$3,$4,$5,'',1,$6,$7,1)",
-    [uid(), code, o.id, number, kind, now(), target],
+    "INSERT INTO traps (id, code, object_id, number, kind, location, active, created_at, target, prepared, prepared_by) VALUES ($1,$2,$3,$4,$5,'',1,$6,$7,1,$8)",
+    [uid(), code, o.id, number, kind, now(), target, String(user.id)],
   );
+  // готовит не тот, кто поедет — один раз сообщаем исполнителю, чтобы знал, что станции уже собраны
+  if (t.tech_tg_id && t.tech_tg_id !== user.id) {
+    const [{ n }] = await db.query('SELECT COUNT(*) AS n FROM traps WHERE object_id = $1 AND prepared = 1 AND prepared_by = $2', [o.id, String(user.id)]);
+    if (Number(n) === 1) {
+      notifyTech(t.tech_tg_id, `📦 <b>${escHtml(user.name)}</b> готовит ловушки к вашей заявке № ${t.task_no}\n${escHtml(o.company_name)} · ${escHtml(o.address)}\nНа объекте сканируйте каждую станцию и отметьте, где поставили.`,
+        { kind: 'prep', task_id: t.id });
+    }
+  }
   return prepState(o);
 });
 
@@ -3635,9 +3664,7 @@ route('DELETE', '/api/prep/traps/:id', async ({ params, user }) => {
   must(Number(tr.prepared) === 1, 400, 'Станция уже установлена — снять её можно в выезде');
   const [ins] = await db.query('SELECT COUNT(*) AS n FROM inspections WHERE trap_id = $1', [tr.id]);
   must(!Number(ins?.n), 400, 'По станции уже есть осмотры');
-  const [own] = await db.query("SELECT id FROM tasks WHERE prep_object_id = $1 AND status IN ('new','in_progress') AND (tech_tg_id = $2 OR team LIKE $3) LIMIT 1",
-    [tr.object_id, user.id, `%"${user.id}"%`]);
-  must(user.isAdmin || own, 403, 'Нет доступа к этой станции');
+  must(canPrep(user), 403, 'Нет доступа к этой станции');
   await db.query('DELETE FROM traps WHERE id = $1', [tr.id]);
   const [o] = await db.query('SELECT * FROM objects WHERE id = $1', [tr.object_id]);
   return prepState(o);
