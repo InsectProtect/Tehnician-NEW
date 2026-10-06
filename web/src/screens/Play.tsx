@@ -18,6 +18,7 @@ import { makeT } from '../i18n';
 import { playSound } from '../sounds';
 import { CashWidget } from './Cash';
 import { ScanButton } from './ScanStart';
+import { PrepButton } from './Prep';
 
 /*
  * Сотрудник: вкладки «Сегодня / Входящие / Лига / Профиль», игровой слой (опыт, уровни, квесты, значки),
@@ -314,6 +315,7 @@ export function GameTop({ onOpenVisit }: { onOpenVisit: (id: string) => void }) 
       <CashWidget />
       <InboxPreview onOpen={open} />
       <ScanButton onOpenVisit={onOpenVisit} />
+      <PrepButton />
       <PlanBoss />
       <MoreWorkButton />
       {sheets}

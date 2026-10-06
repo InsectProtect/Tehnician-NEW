@@ -226,13 +226,15 @@ async function loadObservations(visitId) {
   }));
 }
 
-async function visitRows(visit) {
+/** Станции объекта для выезда. По умолчанию — только установленные (для актов, журнала и итогов);
+ *  { all: true } — вместе с подготовленными заранее, но ещё не установленными (экран выезда, скан). */
+async function visitRows(visit, { all = false } = {}) {
   return db.query(
-    `SELECT t.id, t.code, t.number, t.kind, t.location, t.target,
+    `SELECT t.id, t.code, t.number, t.kind, t.location, t.target, t.prepared,
             i.status, i.pest, i.count, i.bait_replaced, i.comment, i.created_at AS checked_at, i.condition, i.bait_eaten
        FROM traps t
        LEFT JOIN inspections i ON i.trap_id = t.id AND i.visit_id = $1
-      WHERE t.object_id = $2 AND t.active = 1
+      WHERE t.object_id = $2 AND t.active = 1${all ? '' : ' AND COALESCE(t.prepared, 0) = 0'}
       ORDER BY t.number, t.created_at`,
     [visit.id, visit.object_id],
   );
@@ -268,7 +270,7 @@ async function journalData(v) {
 
 function shapeRow(r) {
   return {
-    id: r.id, code: r.code, number: Number(r.number), kind: r.kind, location: r.location, target: r.target || '',
+    id: r.id, code: r.code, number: Number(r.number), kind: r.kind, location: r.location, target: r.target || '', prepared: Number(r.prepared) === 1,
     inspection: r.status
       ? {
         status: r.status, pest: r.pest, count: Number(r.count), bait_replaced: Boolean(Number(r.bait_replaced)), comment: r.comment, checked_at: r.checked_at,
@@ -2767,6 +2769,28 @@ route('POST', '/api/tasks/:id/ack', async ({ params, user }) => {
   return { ok: true };
 });
 
+/** Объект (юрлицо + адрес) для заявки: тот, к которому уже подготовили ловушки, иначе ищем клиента в базе по названию или создаём. */
+async function taskObject(t, address, bodyClientId = '') {
+  if (t.prep_object_id) {
+    const [o] = await db.query('SELECT * FROM objects WHERE id = $1', [t.prep_object_id]);
+    if (o) return o;
+  }
+  let clientId = bodyClientId;
+  // физлицо: без названия фирмы — «Persoană fizică» + телефон, чтобы повторные заявки попадали к тому же клиенту
+  const individual = !t.company_name;
+  let clientName = t.company_name || (t.phone ? `Persoană fizică · ${t.phone}` : 'Persoană fizică');
+  if (!clientId && !amoEnabled) {
+    const norm = (x) => String(x || '').toLowerCase().replace(/[«»"'`,.]/g, ' ').replace(/\s+/g, ' ').trim();
+    const all = await db.query('SELECT id, name FROM clients');
+    const n = norm(clientName);
+    const found = all.find((c) => norm(c.name) === n) || (n.length >= 4 ? all.find((c) => norm(c.name).includes(n) || n.includes(norm(c.name))) : null);
+    if (found && !(individual && !t.phone)) { clientId = found.id; clientName = found.name; }
+    else clientId = (await createClient(db, { name: clientName, phone: t.phone, legal_address: individual ? address : '', rep_function: individual ? '' : 'Administrator' })).id;
+  }
+  if (!clientId) clientId = `task-${t.id}`;
+  return ensureObject(clientId, clientName, address);
+}
+
 route('POST', '/api/tasks/:id/start', async ({ params, body, user }) => {
   const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [params.id]);
   must(t, 404, 'Заявка не найдена');
@@ -2793,22 +2817,9 @@ route('POST', '/api/tasks/:id/start', async ({ params, body, user }) => {
   const address = str(body.address) || t.address || t.company_name;
   must(address.length >= 3, 400, 'В заявке нет адреса — укажите его');
 
-  // клиент: ищем в базе по названию, иначе создаём
-  let clientId = str(body.client_id, 64);
-  // физлицо: без названия фирмы — «Persoană fizică» + телефон, чтобы повторные заявки попадали к тому же клиенту
   const individual = !t.company_name;
-  let clientName = t.company_name || (t.phone ? `Persoană fizică · ${t.phone}` : 'Persoană fizică');
-  if (!clientId && !amoEnabled) {
-    const norm = (x) => String(x || '').toLowerCase().replace(/[«»"'`,.]/g, ' ').replace(/\s+/g, ' ').trim();
-    const all = await db.query('SELECT id, name FROM clients');
-    const n = norm(clientName);
-    const found = all.find((c) => norm(c.name) === n) || (n.length >= 4 ? all.find((c) => norm(c.name).includes(n) || n.includes(norm(c.name))) : null);
-    if (found && !(individual && !t.phone)) { clientId = found.id; clientName = found.name; }
-    else clientId = (await createClient(db, { name: clientName, phone: t.phone, legal_address: individual ? address : '', rep_function: individual ? '' : 'Administrator' })).id;
-  }
-  if (!clientId) clientId = `task-${t.id}`;
-  const obj = await ensureObject(clientId, clientName, address);
-  const [cl] = await db.query('SELECT contact, rep_function FROM clients WHERE id = $1', [clientId]);
+  const obj = await taskObject(t, address, str(body.client_id, 64));
+  const [cl] = await db.query('SELECT contact, rep_function FROM clients WHERE id = $1', [obj.company_id]);
   const id = uid();
   await db.query(
     `INSERT INTO visits (id, object_id, company_id, company_name, address, procedure, tech_tg_id, tech_name, status, started_at, client_rep, client_rep_function, locality, pests, area, task_id, rooms, stage, price, location, premises)
@@ -2822,6 +2833,9 @@ route('POST', '/api/tasks/:id/start', async ({ params, body, user }) => {
   );
   await db.query("UPDATE tasks SET status = 'in_progress', visit_id = $1, updated_at = $2 WHERE id = $3", [id, now(), t.id]);
   if (t.mult != null) await db.query('UPDATE visits SET mult = $1 WHERE id = $2', [Number(t.mult), id]);
+  // ловушки подготовлены заранее — мониторинг на этом выезде точно нужен
+  const [prep] = await db.query('SELECT COUNT(*) AS n FROM traps WHERE object_id = $1 AND active = 1 AND prepared = 1', [obj.id]);
+  if (Number(prep?.n)) await db.query('UPDATE visits SET monitoring = 1 WHERE id = $1', [id]);
   if (taskTeam(t).length) await db.query('UPDATE visits SET team = $1 WHERE id = $2', [JSON.stringify(taskTeam(t)), id]);
   if (t.sotki != null) await db.query('UPDATE visits SET sotki = $1 WHERE id = $2', [Number(t.sotki), id]);
   if (t.point_cat) await db.query('UPDATE visits SET point_cat = $1, point_zone = $2, zone_src = $3 WHERE id = $4', [t.point_cat, t.point_zone || '', t.point_zone ? 'admin' : '', id]);
@@ -3182,7 +3196,7 @@ route('POST', '/api/visits', async ({ body, user }) => {
 
 route('GET', '/api/visits/:id', async ({ params, user }) => {
   const v = await getVisitFor(params.id, user);
-  const rows = await visitRows(v);
+  const rows = await visitRows(v, { all: v.status === 'open' });
   await refreshUserNames();
   const pts = calcPoints(v, await pointsConfig());
   return {
@@ -3497,7 +3511,7 @@ route('POST', '/api/visits/:id/scan', async ({ params, body, user }) => {
     const [o] = await db.query('SELECT company_name, address FROM objects WHERE id = $1', [trap.object_id]);
     return { state: 'other_object', code, object: o };
   }
-  const [row] = (await visitRows(v)).filter((r) => r.id === trap.id);
+  const [row] = (await visitRows(v, { all: true })).filter((r) => r.id === trap.id);
   if (!row) return { state: 'inactive', code };
   return { state: 'found', trap: shapeRow(row) };
 });
@@ -3526,7 +3540,7 @@ route('POST', '/api/scan', async ({ body, user }) => {
     .map((t) => t.id);
   return {
     state: Number(trap.active) === 0 ? 'inactive' : 'found', code, object: o || null,
-    trap: { number: trap.number, kind: trap.kind, location: trap.location || '' },
+    trap: { number: trap.number, kind: trap.kind, location: trap.location || '', prepared: Number(trap.prepared) === 1 },
     task_ids, visit_id: openVisit?.id || null,
   };
 });
@@ -3553,6 +3567,95 @@ route('POST', '/api/visits/:id/traps', async ({ params, body, user }) => {
   return { trap: { id, code, number, kind, location: str(body.location, 200), target, inspection: null } };
 });
 
+// ---------- подготовка ловушек заранее (до выезда) ----------
+// Станции наклеивают/собирают в офисе: этикетка привязывается к объекту заявки как «подготовленная» (prepared = 1),
+// на объекте при скане специалист отмечает, где установил, — дальше обычное обслуживание.
+async function prepTask(id, user) {
+  const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [id]);
+  must(t, 404, 'Заявка не найдена');
+  must(user.isAdmin || t.tech_tg_id === user.id || taskTeam(t).includes(String(user.id)), 403, 'Это заявка другого специалиста');
+  must(['new', 'in_progress'].includes(t.status), 400, 'Заявка закрыта');
+  return t;
+}
+async function prepObject(t) {
+  if (t.visit_id) {
+    const [v] = await db.query('SELECT object_id FROM visits WHERE id = $1', [t.visit_id]);
+    const [o] = v ? await db.query('SELECT * FROM objects WHERE id = $1', [v.object_id]) : [];
+    if (o) return o;
+  }
+  const address = t.address || t.company_name;
+  must(String(address || '').trim().length >= 3, 400, 'В заявке нет адреса — попросите офис дописать его');
+  const o = await taskObject(t, address);
+  if (t.prep_object_id !== o.id) await db.query('UPDATE tasks SET prep_object_id = $1 WHERE id = $2', [o.id, t.id]);
+  return o;
+}
+async function prepState(o) {
+  const traps = await db.query(
+    'SELECT id, code, number, kind, target, location, prepared, installed_at FROM traps WHERE object_id = $1 AND active = 1 ORDER BY number, created_at', [o.id],
+  );
+  return {
+    object: { id: o.id, company_name: o.company_name, address: o.address },
+    traps: traps.map((x) => ({ id: x.id, code: x.code, number: Number(x.number), kind: x.kind, target: x.target || '', location: x.location || '', prepared: Number(x.prepared) === 1 })),
+    next_number: await nextTrapNumber(o.id),
+  };
+}
+
+route('POST', '/api/tasks/:id/prep', async ({ params, user }) => {
+  const t = await prepTask(params.id, user);
+  return prepState(await prepObject(t));
+});
+
+route('POST', '/api/tasks/:id/prep/traps', async ({ params, body, user }) => {
+  const t = await prepTask(params.id, user);
+  const o = await prepObject(t);
+  const code = parseTrapCode(body.code);
+  must(code, 400, 'Это не QR-код ловушки');
+  const [exists] = await db.query('SELECT t.id, o.company_name, o.address FROM traps t LEFT JOIN objects o ON o.id = t.object_id WHERE t.code = $1', [code]);
+  must(!exists, 409, exists ? `Этикетка ${code} уже привязана: ${exists.company_name || ''}, ${exists.address || ''}` : '');
+  const kind = str(body.kind, 100);
+  const target = str(body.target, 20);
+  const tgt = STATION_TARGETS.find((x) => x.id === target);
+  must(tgt, 400, 'Выберите, против кого станция');
+  must(tgt.devices.includes(kind), 400, 'Выберите устройство');
+  const taken = await db.query('SELECT number FROM traps WHERE object_id = $1 AND active = 1', [o.id]);
+  const asked = Math.floor(Number(body.number));
+  const number = asked >= 1 ? asked : await nextTrapNumber(o.id);
+  must(!taken.some((r) => Number(r.number) === number), 409, `Номер ${number} на этом объекте уже занят`);
+  await db.query(
+    "INSERT INTO traps (id, code, object_id, number, kind, location, active, created_at, target, prepared) VALUES ($1,$2,$3,$4,$5,'',1,$6,$7,1)",
+    [uid(), code, o.id, number, kind, now(), target],
+  );
+  return prepState(o);
+});
+
+// Убрать подготовленную по ошибке станцию (пока не установлена и без осмотров)
+route('DELETE', '/api/prep/traps/:id', async ({ params, user }) => {
+  const [tr] = await db.query('SELECT * FROM traps WHERE id = $1', [params.id]);
+  must(tr, 404, 'Станция не найдена');
+  must(Number(tr.prepared) === 1, 400, 'Станция уже установлена — снять её можно в выезде');
+  const [ins] = await db.query('SELECT COUNT(*) AS n FROM inspections WHERE trap_id = $1', [tr.id]);
+  must(!Number(ins?.n), 400, 'По станции уже есть осмотры');
+  const [own] = await db.query("SELECT id FROM tasks WHERE prep_object_id = $1 AND status IN ('new','in_progress') AND (tech_tg_id = $2 OR team LIKE $3) LIMIT 1",
+    [tr.object_id, user.id, `%"${user.id}"%`]);
+  must(user.isAdmin || own, 403, 'Нет доступа к этой станции');
+  await db.query('DELETE FROM traps WHERE id = $1', [tr.id]);
+  const [o] = await db.query('SELECT * FROM objects WHERE id = $1', [tr.object_id]);
+  return prepState(o);
+});
+
+// На объекте: подготовленная станция поставлена — где именно
+route('POST', '/api/visits/:id/traps/:trapId/install', async ({ params, body, user }) => {
+  const v = await getWorkVisit(params.id, user);
+  must(v.status === 'open', 409, 'Выезд уже завершён');
+  const [tr] = await db.query('SELECT * FROM traps WHERE id = $1 AND object_id = $2', [params.trapId, v.object_id]);
+  must(tr, 404, 'Станция не относится к этому объекту');
+  const location = str(body.location, 200);
+  must(location.length >= 2, 400, 'Опишите, где установлена станция');
+  await db.query('UPDATE traps SET prepared = 0, location = $1, installed_at = $2 WHERE id = $3', [location, now(), tr.id]);
+  if (v.monitoring == null || Number(v.monitoring) === 0) await db.query('UPDATE visits SET monitoring = 1 WHERE id = $1', [v.id]);
+  return { trap: { id: tr.id, code: tr.code, number: Number(tr.number), kind: tr.kind, target: tr.target || '', location, prepared: false, inspection: null } };
+});
+
 route('PATCH', '/api/traps/:id', async ({ params, body }) => {
   const [t] = await db.query('SELECT * FROM traps WHERE id = $1', [params.id]);
   must(t, 404, 'Ловушка не найдена');
@@ -3573,6 +3676,7 @@ route('POST', '/api/visits/:id/inspections', async ({ params, body, user }) => {
   must(v.status === 'open', 409, 'Выезд уже завершён');
   const [trap] = await db.query('SELECT * FROM traps WHERE id = $1 AND object_id = $2', [str(body.trap_id, 64), v.object_id]);
   must(trap, 404, 'Ловушка не относится к этому объекту');
+  must(!Number(trap.prepared), 400, 'Сначала отметьте, где установлена станция');
   const count = Math.max(0, Math.min(9999, Math.floor(Number(body.count)) || 0));
   let status; let condition = ''; let bait = ''; let pest = ''; let caught = 0;
   if (body.condition !== undefined) {

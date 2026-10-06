@@ -24,6 +24,7 @@ type SheetState =
   | { type: 'scanned'; trap: Trap } // отсканирована станция этого объекта: пока не подтверждено «я на объекте» — спрашиваем
   | { type: 'service'; focusId?: string } // список всех станций объекта к обслуживанию
   | { type: 'register'; code: string; next: number }
+  | { type: 'install'; trap: Trap; back?: boolean } // подготовленная заранее станция: отметить, где установлена
   | { type: 'manual' }
   | { type: 'finish' }
   | { type: 'observation' }
@@ -67,7 +68,12 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       const r = await api.scan(id, text);
       haptic.success();
       if (r.state === 'found' || r.state === 'new') playSound('qr');
-      if (r.state === 'found') setSheet({ type: 'scanned', trap: r.trap });
+      if (r.state === 'found' && r.trap.prepared) {
+        // станцию готовили заранее — раз сканируют, её ставят прямо сейчас: значит, на объекте
+        setOnSiteOk(true);
+        try { localStorage.setItem(`onsite:${id}`, '1'); } catch { /* не критично */ }
+        setSheet({ type: 'install', trap: r.trap });
+      } else if (r.state === 'found') setSheet({ type: 'scanned', trap: r.trap });
       else if (r.state === 'new') setSheet({ type: 'register', code: r.code, next: r.next_number });
       else if (r.state === 'other_object')
         setSheet({ type: 'message', title: 'Ловушка другого объекта', text: `Этикетка ${r.code} привязана к адресу: ${r.object?.company_name ?? ''}, ${r.object?.address ?? ''}. Вы оформляете выезд по другому адресу — сверьте объект.` });
@@ -174,6 +180,9 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
   const trapFocus = visit.is_company ? monitoringOn : visit.procedure === 'Дератизация' || traps.length > 0;
   // в быстром акте станции показываем только если на объекте они уже были — отдельный акт с ловушками соберётся в приложении
   const showTraps = (!q || traps.length > 0) && (visit.is_company ? monitoringOn : trapFocus || isOpen);
+  // юрлицо ответило «Да» на станции — кнопка «Сканировать QR» сразу под вопросом, а не внизу экрана
+  const scanTop = isOpen && !q && visit.is_company && visit.monitoring === true;
+  const toInstall = traps.filter((t) => t.prepared).length;
   const targetLabel = (id: string) => cfg.stationTargets.find((x) => x.id === id)?.label ?? '';
   const baitLabel = (id: string) => cfg.baitLevels.find((x) => x.id === id)?.label ?? '';
   const trapResult = (t: Trap) => {
@@ -343,9 +352,9 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
               {trapResult(t) && <div className="mt-0.5 truncate text-ink">{trapResult(t)}</div>}
             </>
           }
-          right={t.inspection ? <Pill tone={statusTone(t.inspection.status)}>{statusLabel(t.inspection.status)}</Pill> : <Pill>Не проверена</Pill>}
+          right={t.prepared ? <Pill tone="blue">Установить</Pill> : t.inspection ? <Pill tone={statusTone(t.inspection.status)}>{statusLabel(t.inspection.status)}</Pill> : <Pill>Не проверена</Pill>}
           chevron={false}
-          onClick={isOpen ? () => (t.inspection ? setSheet({ type: 'inspect', trap: t }) : toast('Отсканируйте QR-код на станции')) : undefined}
+          onClick={isOpen ? () => (t.prepared ? setSheet({ type: 'install', trap: t }) : t.inspection ? setSheet({ type: 'inspect', trap: t }) : toast('Отсканируйте QR-код на станции')) : undefined}
         />
       ))}
     </Group>
@@ -425,6 +434,27 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           <span className="text-[14px] text-muted">Станции мониторинга не используются</span>
           <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-accent-ink">Включить</span>
         </button>
+      )}
+      {scanTop && (
+        <div className="mb-4 rounded-[22px] bg-card p-5">
+          <div className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-muted">
+            <span className="h-1.5 w-1.5 rounded-full bg-accent" />Станции мониторинга
+          </div>
+          <div className="mt-2 text-[17px] font-semibold leading-snug">
+            {traps.length ? `Проверено ${checked.length} из ${traps.length}` : 'Отсканируйте QR на первой станции'}
+          </div>
+          {toInstall > 0 && (
+            <div className="mt-1 text-[14px] leading-snug text-muted">
+              {toInstall} {plural(toInstall, ['станция подготовлена', 'станции подготовлены', 'станций подготовлено'])} заранее — сканируйте при установке и отметьте место.
+            </div>
+          )}
+          {scanButtons}
+          {checked.length === 0 && (
+            <button onClick={() => setMonitoring(false)} className="mt-2 w-full px-1 py-1 text-center font-mono text-[11px] uppercase tracking-[0.12em] text-muted">
+              ↩︎ Станции не нужны — выбрано по ошибке
+            </button>
+          )}
+        </div>
       )}
 
       {!isOpen && visit.annul_pending && (
@@ -721,7 +751,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           <SectionTitle>
             {traps.length ? `Станции · ${traps.length}` : 'Станции мониторинга'}
           </SectionTitle>
-          {isOpen && visit.is_company && visit.monitoring === true && checked.length === 0 && (
+          {isOpen && !scanTop && visit.is_company && visit.monitoring === true && checked.length === 0 && (
             <button onClick={() => setMonitoring(false)} className="-mt-1 mb-3 px-1 font-mono text-[11px] uppercase tracking-[0.12em] text-muted">
               ↩︎ Станции не нужны — выбрано по ошибке
             </button>
@@ -742,7 +772,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
             </div>
           )}
           {trapList}
-          {scanButtons}
+          {!scanTop && scanButtons}
         </>
       )}
 
@@ -876,9 +906,18 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           statusLabel={statusLabel}
           targetLabel={targetLabel}
           trapResult={trapResult}
-          onOpen={(t) => setSheet({ type: 'inspect', trap: t, back: true })}
+          onOpen={(t) => setSheet(t.prepared ? { type: 'install', trap: t, back: true } : { type: 'inspect', trap: t, back: true })}
           onScan={() => { setSheet(null); setTimeout(startScan, 250); }}
           onClose={() => setSheet(null)}
+        />
+      )}
+      {sheet?.type === 'install' && (
+        <InstallSheet
+          visitId={id}
+          trap={sheet.trap}
+          targetLabel={targetLabel}
+          onClose={() => setSheet(sheet.back ? { type: 'service', focusId: sheet.trap.id } : null)}
+          onInstalled={(trap) => { load(); setSheet({ type: 'inspect', trap, back: true }); }}
         />
       )}
       {sheet?.type === 'register' && (
@@ -1090,7 +1129,7 @@ function ServiceSheet({ traps, focusId, statusLabel, targetLabel, trapResult, on
                   {t.id === focusId && <div className="mt-0.5 text-accent-ink">📍 только что отсканирована</div>}
                 </>
               }
-              right={t.inspection ? <Pill tone={statusTone(t.inspection.status)}>{statusLabel(t.inspection.status)}</Pill> : <Pill>Проверить</Pill>}
+              right={t.prepared ? <Pill tone="blue">Установить</Pill> : t.inspection ? <Pill tone={statusTone(t.inspection.status)}>{statusLabel(t.inspection.status)}</Pill> : <Pill>Проверить</Pill>}
               chevron={false}
               onClick={() => onOpen(t)}
             />
@@ -1101,6 +1140,56 @@ function ServiceSheet({ traps, focusId, statusLabel, targetLabel, trapResult, on
         {left > 0 && <Button onClick={onScan} icon={<ScanLine size={20} strokeWidth={1.75} />}>Сканировать следующую</Button>}
         <Button variant={left > 0 ? 'plain' : 'primary'} onClick={onClose}>{left > 0 ? 'Закрыть' : 'Готово'}</Button>
       </div>
+    </Sheet>
+  );
+}
+
+/** Подготовленная заранее станция: на объекте отмечаем, где именно её поставили. */
+const PLACE_HINTS = ['Кухня', 'Склад', 'Подсобка', 'Вход', 'Подвал', 'Зал', 'Санузел', 'Коридор', 'Снаружи у стены', 'Под стеллажом'];
+
+function InstallSheet({ visitId, trap, targetLabel, onClose, onInstalled }: {
+  visitId: string; trap: Trap; targetLabel: (id: string) => string; onClose: () => void; onInstalled: (t: Trap) => void;
+}) {
+  const toast = useToast();
+  const [location, setLocation] = useState(trap.location || '');
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    setBusy(true);
+    try {
+      const r = await api.installTrap(visitId, trap.id, location.trim());
+      haptic.success();
+      onInstalled(r.trap);
+    } catch (e) {
+      haptic.error();
+      toast((e as Error).message, 'error');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet open onClose={onClose} title={`Установка станции № ${trap.number}`}>
+      <div className="-mt-3 mb-5 rounded-xl bg-card px-4 py-3.5">
+        <div className="text-[16px] font-semibold">{trap.kind}</div>
+        <div className="mt-0.5 text-[14px] text-muted">{[targetLabel(trap.target), trap.code].filter(Boolean).join(' · ')}</div>
+      </div>
+      <Field label="Где установлена">
+        <Input autoFocus placeholder="Например: кухня, под мойкой слева" value={location} onChange={(e) => setLocation(e.target.value)} />
+      </Field>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {PLACE_HINTS.map((h) => (
+          <button key={h} onClick={() => { haptic.tap(); setLocation((l) => (l.trim() ? `${l.trim()}, ${h.toLowerCase()}` : h)); }}
+            className="rounded-full bg-fill px-3.5 py-2 text-[14px] active:opacity-70">
+            {h}
+          </button>
+        ))}
+      </div>
+      <p className="mt-4 px-1 text-[13px] leading-snug text-muted">
+        Опишите точнее — помещение и ориентир. По этому описанию станцию найдут при следующем обслуживании, оно попадёт в журнал.
+      </p>
+      <Button className="mt-6" disabled={location.trim().length < 2} loading={busy} onClick={submit} icon={<CheckCircle2 size={19} strokeWidth={1.75} />}>
+        Установлена — записать осмотр
+      </Button>
     </Sheet>
   );
 }

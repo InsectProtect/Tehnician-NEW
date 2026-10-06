@@ -480,6 +480,10 @@ const MIGRATIONS = [
   // v53: ручная правка кассы администратором (± к сумме «на руках», с причиной)
   "CREATE TABLE IF NOT EXISTS cash_adjustments (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '')",
   'CREATE INDEX IF NOT EXISTS cash_adjustments_user_idx ON cash_adjustments (tg_id, created_at)',
+  // v58: подготовка ловушек заранее — станция привязана к объекту заявки, но ещё не установлена (prepared = 1)
+  'ALTER TABLE traps ADD COLUMN prepared INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE traps ADD COLUMN installed_at TEXT',
+  "ALTER TABLE tasks ADD COLUMN prep_object_id TEXT NOT NULL DEFAULT ''",
 ];
 
 async function migrate(run) {

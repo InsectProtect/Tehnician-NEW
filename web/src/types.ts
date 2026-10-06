@@ -143,6 +143,8 @@ export type Trap = {
   kind: string;
   location: string;
   target: string;
+  /** подготовлена заранее, ещё не установлена на объекте */
+  prepared?: boolean;
   inspection: Inspection | null;
 };
 
@@ -528,6 +530,13 @@ export interface CashOverview { items: CashOverviewItem[]; withdrawals: CashWith
 export interface ScanLookup {
   state: 'found' | 'new' | 'inactive'; code: string;
   object: { id: string; company_name: string; address: string } | null;
-  trap: { number: number; kind: string; location: string } | null;
+  trap: { number: number; kind: string; location: string; prepared?: boolean } | null;
   task_ids: string[]; visit_id: string | null;
+}
+
+/** Подготовка ловушек к заявке (до выезда). */
+export interface PrepState {
+  object: { id: string; company_name: string; address: string };
+  traps: { id: string; code: string; number: number; kind: string; target: string; location: string; prepared: boolean }[];
+  next_number: number;
 }

@@ -86,6 +86,7 @@ export function ScanButton({ onOpenVisit }: { onOpenVisit: (id: string) => void 
                   <MapPin size={16} strokeWidth={1.75} className="mt-0.5 shrink-0" />{res.r.object.address}
                 </div>
                 {res.r.trap.location && <div className="mt-1.5 text-[13.5px] text-muted">Место: {res.r.trap.location}</div>}
+                {res.r.trap.prepared && <div className="mt-1.5 text-[13.5px] font-medium text-accent-ink">Подготовлена заранее — ещё не установлена. Начните выезд и отметьте, где поставили.</div>}
                 {res.r.state === 'inactive' && <div className="mt-2 text-[13.5px] font-medium text-[#C93400] dark:text-[#FF9F0A]">Станция снята с обслуживания.</div>}
               </>
             ) : (
