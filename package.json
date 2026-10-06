@@ -1,14 +1,12 @@
 {
-  "name": "insectprotect-android",
+  "name": "pest-tma",
   "private": true,
-  "version": "1.0.0",
-  "description": "APK-обёртка приложения InsectProtect (Capacitor): открывает сайт на Render, вход — через Telegram-бота",
-  "dependencies": {
-    "@capacitor/android": "^6.2.0",
-    "@capacitor/core": "^6.2.0",
-    "@capacitor/browser": "^6.0.3"
+  "description": "Telegram Mini App для дезинсекторов: учёт обслуживания ловушек с синхронизацией amoCRM",
+  "scripts": {
+    "build": "npm install --prefix web --include=dev && npm run build --prefix web && npm install --prefix server --omit=dev",
+    "start": "node server/src/index.js",
+    "dev:server": "npm run dev --prefix server",
+    "dev:web": "npm run dev --prefix web"
   },
-  "devDependencies": {
-    "@capacitor/cli": "^6.2.0"
-  }
+  "engines": { "node": ">=22.5" }
 }
