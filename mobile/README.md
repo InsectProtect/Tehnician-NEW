@@ -6,8 +6,8 @@
 Вход — только через Telegram: «Войти через Telegram» → бот → «✅ Войти». Дальше PIN, как обычно.
 
 ## Сборка
-APK собирается автоматически на GitHub (Actions → «Android APK») при изменениях в папке `mobile/`
-или вручную: Actions → Android APK → Run workflow. Готовый файл — в Releases (скачивается с телефона).
+APK собирается на GitHub только вручную: Actions → Android APK → Run workflow
+(сейчас основной режим — Telegram). Готовый файл — в Releases (скачивается с телефона).
 
 Адрес сервера: переменная репозитория `APP_URL` (Settings → Secrets and variables → Actions → Variables)
 или файл `mobile/app-url.txt`.

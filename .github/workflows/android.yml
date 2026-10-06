@@ -4,13 +4,9 @@
 # (Settings → Secrets and variables → Actions → Variables) или mobile/app-url.txt.
 name: Android APK
 
+# Пока работаем только в Telegram — сборка запускается вручную (Actions → Android APK → Run workflow).
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'mobile/**'
-      - '.github/workflows/android.yml'
 
 permissions:
   contents: write
