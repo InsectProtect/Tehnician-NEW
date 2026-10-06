@@ -19,7 +19,9 @@ import { playSound } from '../sounds';
 
 type SheetState =
   | null
-  | { type: 'inspect'; trap: Trap }
+  | { type: 'inspect'; trap: Trap; back?: boolean }
+  | { type: 'scanned'; trap: Trap } // отсканирована станция этого объекта: пока не подтверждено «я на объекте» — спрашиваем
+  | { type: 'service'; focusId?: string } // список всех станций объекта к обслуживанию
   | { type: 'register'; code: string; next: number }
   | { type: 'manual' }
   | { type: 'finish' }
@@ -43,6 +45,8 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
   const [shareOpen, setShareOpen] = useState(false);
   const [pointsOpen, setPointsOpen] = useState(false);
   const [geoBusy, setGeoBusy] = useState(false);
+  // «Я на объекте» подтверждён при первом скане станции — запоминаем на выезд, чтобы не спрашивать каждый раз
+  const [onSiteOk, setOnSiteOk] = useState(() => { try { return localStorage.getItem(`onsite:${id}`) === '1'; } catch { return false; } });
 
   useBackButton(onBack);
 
@@ -62,10 +66,10 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       const r = await api.scan(id, text);
       haptic.success();
       if (r.state === 'found' || r.state === 'new') playSound('qr');
-      if (r.state === 'found') setSheet({ type: 'inspect', trap: r.trap });
+      if (r.state === 'found') setSheet({ type: 'scanned', trap: r.trap });
       else if (r.state === 'new') setSheet({ type: 'register', code: r.code, next: r.next_number });
       else if (r.state === 'other_object')
-        setSheet({ type: 'message', title: 'Ловушка другого объекта', text: `Этикетка ${r.code} привязана к адресу: ${r.object?.company_name ?? ''}, ${r.object?.address ?? ''}.` });
+        setSheet({ type: 'message', title: 'Ловушка другого объекта', text: `Этикетка ${r.code} привязана к адресу: ${r.object?.company_name ?? ''}, ${r.object?.address ?? ''}. Вы оформляете выезд по другому адресу — сверьте объект.` });
       else setSheet({ type: 'message', title: 'Ловушка снята', text: `Ловушка ${r.code} отключена на этом объекте.` });
     } catch (e) {
       haptic.error();
@@ -153,6 +157,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
   const activity = checked.filter((t) => t.inspection?.status === 'activity').length;
   const issues = checked.filter((t) => ['damaged', 'missing'].includes(t.inspection?.status ?? '')).length;
   const pct = traps.length ? Math.round((checked.length / traps.length) * 100) : 0;
+  const onSite = onSiteOk || checked.length > 0; // уже есть проверенные станции — значит, на объекте
   const statusLabel = (s: string) => cfg.statuses.find((x) => x.id === s)?.label ?? s;
   // Станции мониторинга: у юрлица спрашиваем, нужны ли они; у физлица — как раньше (дератизация или уже есть ловушки)
   const monitoringOn = visit.monitoring === true || (visit.monitoring === null && traps.some((t) => t.inspection));
@@ -181,6 +186,32 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       load();
     }
   }
+
+  /** «Да, я на объекте»: запоминаем, включаем мониторинг (у юрлица) и показываем список всех станций к обслуживанию. */
+  async function confirmOnSite(trap: Trap) {
+    haptic.success();
+    setOnSiteOk(true);
+    try { localStorage.setItem(`onsite:${id}`, '1'); } catch { /* без хранилища — спросим снова при следующем скане */ }
+    if (visit.is_company && visit.monitoring !== true) {
+      setData((d) => (d ? { ...d, visit: { ...d.visit, monitoring: true } } : d));
+      api.setMonitoring(id, true).catch(() => load());
+    }
+    setSheet({ type: 'service', focusId: trap.id });
+  }
+
+  const inspectEl = (trap: Trap, back = false) => (
+    <InspectSheet
+      key={trap.id}
+      visitId={id}
+      trap={trap}
+      onClose={() => setSheet(back ? { type: 'service', focusId: trap.id } : null)}
+      onSaved={(next) => {
+        load();
+        if (next) { setSheet(null); setTimeout(startScan, 350); }
+        else setSheet(back ? { type: 'service' } : null);
+      }}
+    />
+  );
 
   async function setAssessment(field: 'infestation' | 'preparation' | 'pests' | 'premises' | 'reentry', value: string | string[]) {
     haptic.tap();
@@ -276,6 +307,11 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
         icon={<ScanLine size={22} strokeWidth={1.75} />}>
         {trapFocus ? 'Сканировать QR' : 'Сканировать QR ловушки'}
       </Button>
+      {traps.length > 0 && onSite && (
+        <Button variant="secondary" onClick={() => setSheet({ type: 'service' })} icon={<Target size={18} strokeWidth={1.75} />}>
+          Список станций к обслуживанию
+        </Button>
+      )}
       <Button variant="plain" onClick={() => setSheet({ type: 'manual' })} icon={<Keyboard size={18} strokeWidth={1.75} />}>
         Ввести код вручную
       </Button>
@@ -809,17 +845,32 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       )}
 
       {/* Листы */}
-      {sheet?.type === 'inspect' && (
-        <InspectSheet
-          key={sheet.trap.id}
-          visitId={id}
-          trap={sheet.trap}
+      {sheet?.type === 'inspect' && inspectEl(sheet.trap, sheet.back)}
+      {sheet?.type === 'scanned' && (onSite ? inspectEl(sheet.trap) : (
+        <Sheet open onClose={() => setSheet(null)} title="Вы на объекте?">
+          <div className="-mt-3 mb-5 rounded-2xl bg-card px-4 py-3.5">
+            <div className="text-[17px] font-semibold leading-snug">{visit.company_name}</div>
+            <div className="mt-1 flex items-start gap-1.5 text-[14.5px] leading-snug text-muted"><MapPin size={16} strokeWidth={1.75} className="mt-0.5 shrink-0" />{visit.address}</div>
+          </div>
+          <p className="mb-5 text-[14.5px] leading-relaxed text-muted">
+            Станция № {sheet.trap.number} принадлежит этому объекту. Если вы сейчас на нём — покажу все станции, которые нужно обслужить ({traps.length}).
+          </p>
+          <div className="grid grid-cols-2 gap-2.5">
+            <Button variant="secondary" className="h-[48px] text-[15px]" onClick={() => setSheet(null)}>Нет</Button>
+            <Button className="h-[48px] text-[15px]" onClick={() => confirmOnSite(sheet.trap)}>Да, я здесь</Button>
+          </div>
+        </Sheet>
+      ))}
+      {sheet?.type === 'service' && (
+        <ServiceSheet
+          traps={traps}
+          focusId={sheet.focusId}
+          statusLabel={statusLabel}
+          targetLabel={targetLabel}
+          trapResult={trapResult}
+          onOpen={(t) => setSheet({ type: 'inspect', trap: t, back: true })}
+          onScan={() => { setSheet(null); setTimeout(startScan, 250); }}
           onClose={() => setSheet(null)}
-          onSaved={(next) => {
-            setSheet(null);
-            load();
-            if (next) setTimeout(startScan, 350);
-          }}
         />
       )}
       {sheet?.type === 'register' && (
@@ -999,5 +1050,49 @@ function RoomsFromTask({ visit, onChanged }: { visit: Visit; onChanged: () => vo
         </div>
       </Sheet>
     </div>
+  );
+}
+
+/** Список всех станций объекта к обслуживанию: после подтверждения «Я на объекте» и по кнопке в выезде. */
+function ServiceSheet({ traps, focusId, statusLabel, targetLabel, trapResult, onOpen, onScan, onClose }: {
+  traps: Trap[]; focusId?: string; statusLabel: (s: string) => string; targetLabel: (id: string) => string; trapResult: (t: Trap) => string;
+  onOpen: (t: Trap) => void; onScan: () => void; onClose: () => void;
+}) {
+  const left = traps.filter((t) => !t.inspection).length;
+  return (
+    <Sheet open onClose={onClose} title="Станции к обслуживанию">
+      <p className="-mt-3 mb-4 text-[14.5px] leading-relaxed text-muted">
+        {traps.length === 0
+          ? 'На объекте пока нет активных станций.'
+          : left > 0
+            ? `Осталось проверить: ${left} из ${traps.length}. Нажмите на станцию, чтобы записать результат, или сканируйте QR.`
+            : `Все ${traps.length} ${plural(traps.length, ['станция', 'станции', 'станций'])} проверены ✅`}
+      </p>
+      {traps.length > 0 && (
+        <Group>
+          {traps.map((t) => (
+            <Row
+              key={t.id}
+              left={<IconBadge tone={t.inspection ? statusTone(t.inspection.status) : 'gray'}><span className="font-mono">{t.number}</span></IconBadge>}
+              title={t.location || t.kind}
+              subtitle={
+                <>
+                  <div className="truncate">{[targetLabel(t.target), t.kind].filter(Boolean).join(' · ')}</div>
+                  {trapResult(t) && <div className="mt-0.5 truncate text-ink">{trapResult(t)}</div>}
+                  {t.id === focusId && <div className="mt-0.5 text-accent-ink">📍 только что отсканирована</div>}
+                </>
+              }
+              right={t.inspection ? <Pill tone={statusTone(t.inspection.status)}>{statusLabel(t.inspection.status)}</Pill> : <Pill>Проверить</Pill>}
+              chevron={false}
+              onClick={() => onOpen(t)}
+            />
+          ))}
+        </Group>
+      )}
+      <div className="mt-4 space-y-2">
+        {left > 0 && <Button onClick={onScan} icon={<ScanLine size={20} strokeWidth={1.75} />}>Сканировать следующую</Button>}
+        <Button variant={left > 0 ? 'plain' : 'primary'} onClick={onClose}>{left > 0 ? 'Закрыть' : 'Готово'}</Button>
+      </div>
+    </Sheet>
   );
 }

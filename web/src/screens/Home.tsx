@@ -22,7 +22,7 @@ import {
 } from '../components/ui';
 
 /** Меняется с каждым архивом — по ней видно, какая версия реально открыта на телефоне. */
-export const APP_VERSION = '2026.10.01-v54';
+export const APP_VERSION = '2026.10.06-v55';
 
 const isToday = (iso: string | null) => !!iso && new Date(iso).toDateString() === new Date().toDateString();
 
