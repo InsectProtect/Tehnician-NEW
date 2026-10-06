@@ -99,9 +99,11 @@ export function Group({ children, className }: { children: ReactNode; className?
   );
 }
 
-export function Row({ title, subtitle, left, right, onClick, chevron = true, selected, boost }: {
+export function Row({ title, subtitle, left, right, onClick, chevron = true, selected, boost, wrap }: {
   title: ReactNode; subtitle?: ReactNode; left?: ReactNode; right?: ReactNode;
   onClick?: () => void; chevron?: boolean; selected?: boolean; boost?: boolean;
+  /** длинный текст (адрес, комментарий) переносится на новые строки, а не обрезается «…» */
+  wrap?: boolean;
 }) {
   // div с role=button (а не <button>), чтобы внутри строки можно было разместить свои кнопки — например «Позвонить»
   const Tag = 'div';
@@ -120,7 +122,7 @@ export function Row({ title, subtitle, left, right, onClick, chevron = true, sel
     >
       {left}
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[16px] font-medium leading-snug">{title}</div>
+        <div className={cx('text-[16px] font-medium leading-snug', wrap ? 'whitespace-pre-line break-words' : 'truncate')}>{title}</div>
         {subtitle && <div className="mt-0.5 text-[13.5px] leading-snug text-muted">{subtitle}</div>}
       </div>
       {right}

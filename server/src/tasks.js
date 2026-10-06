@@ -54,7 +54,14 @@ function detectPests(text) {
   return found.includes('Рыжие тараканы') || found.includes('Чёрные тараканы') ? found.filter((p) => p !== 'Тараканы') : found;
 }
 
-const ADDRESS_MARK = /(^|[\s,(])(ул\.?|улица|пр-т|просп|бул\.?|бульвар|пер\.?|г\.|город|с\.|село|дом|кв\.?|квартира|подъезд|этаж|str\.?|strada|stradela|bd\.?|bul\.?|bulevardul|bd-ul|pia[țţt]a|[șşs]oseaua|aleea|calea|or\.|oraș|mun\.|s\.|sat|com\.|ap\.?|apt\.?|bl\.|sc\.|et\.)(\s|$|,)/i;
+// район / страна в адресе: «rl. Ialoveni», «r-l Ialoveni», «raionul Orhei», «р-н …»; «Republica Moldova» — лишнее, убираем
+const REGION_LINE = /^(r-?l\.?|r-nul|raion(ul)?|р-н|район|mun\.|municipiul|jud\.?)\s*\p{L}/iu;
+const COUNTRY_RE = /[,\s]*\b(Republica\s+Moldova|Rep\.?\s*Moldova|Moldova|RM)\b[,\s]*/giu;
+// «13.00-14.00 -» / «13:00–14:00» — окно времени; берём начало
+const TIME_RANGE = /(^|[\s,])([01]?\d|2[0-3])[.:]([0-5]\d)\s*[-–—]\s*([01]?\d|2[0-3])[.:]([0-5]\d)(?=[\s,\-–—]|$)\s*[-–—]?/;
+// название фирмы в кавычках: «„GUSTELIER GRUP”», «SRL "Beta"», «ООО «Альфа»»
+const QUOTED_COMPANY = /((?:S\.?R\.?L\.?|Î\.?I\.?|I\.?I\.?|Î\.?M\.?|S\.?A\.?|ООО|ОАО|ЗАО|ИП)\s*)?[„"«“]([^"»”“„]{2,80})[”"»“]/u;
+const ADDRESS_MARK = /(^|[\s,(])(r-?l\.?|raionul|р-н|ул\.?|улица|пр-т|просп|бул\.?|бульвар|пер\.?|г\.|город|с\.|село|дом|кв\.?|квартира|подъезд|этаж|str\.?|strada|stradela|bd\.?|bul\.?|bulevardul|bd-ul|pia[țţt]a|[șşs]oseaua|aleea|calea|or\.|oraș|mun\.|s\.|sat|com\.|ap\.?|apt\.?|bl\.|sc\.|et\.)(\s|$|,)/i;
 // «Дачия 23/2», «Ismail 33» — слово и номер дома
 const ADDRESS_LIKE = /\p{L}{3,}.*\s\d{1,4}([\/-]\d{1,4})?[a-zа-я]?\b/iu;
 const PHONE_RE = /(\+?\d[\d\s()-]{6,}\d)/;
@@ -153,7 +160,25 @@ export function parseTask(text, now = new Date()) {
   let timeStr = '';
   const free = [];
 
-  for (const line of lines) {
+  let quotedCompany = false;
+  for (const line0 of lines) {
+    let line = line0;
+    // свободная строка: окно времени «13.00-14.00 -» → время начала; фирма в кавычках → клиент
+    if (!/^[^:]{2,25}:/.test(line)) {
+      const tr = line.match(TIME_RANGE);
+      if (tr) {
+        if (!timeStr) timeStr = `${tr[2]}:${tr[3]}`;
+        line = line.replace(tr[0], tr[1]).replace(/^[\s,\-–—]+/, '').trim();
+      }
+      const qc = line.match(QUOTED_COMPANY);
+      if (qc && !out.company && /\p{L}{2,}/u.test(qc[2])) {
+        out.company = `${qc[1] ? `${qc[1].trim()} ` : ''}${qc[2].trim()}`.replace(/\s{2,}/g, ' ');
+        quotedCompany = true;
+        line = line.replace(qc[0], ' ').replace(/\s{2,}/g, ' ').replace(/^[\s,\-–—]+|[\s,\-–—]+$/g, '').trim();
+      }
+      line = line.replace(COUNTRY_RE, ' ').replace(/\s{2,}/g, ' ').trim();
+      if (!line) continue;
+    }
     const m = line.match(/^([^:–—-]{2,25})\s*[:–—-]\s*(.+)$/);
     const key = m && Object.entries(KEYS).find(([, words]) => words.some((w) => m[1].toLowerCase().replace(/[^\p{L}\d.²]/gu, ' ').trim().startsWith(w)));
     if (m && key) {
@@ -252,6 +277,7 @@ export function parseTask(text, now = new Date()) {
       if (nm) tail.push(`Контакт: ${nm[1]}`);
       if (after) tail.push(after);
     } else if (!out.address && ADDRESS_MARK.test(` ${line}`)) out.address = clean || line;
+    else if (out.address && REGION_LINE.test(clean || line)) out.address = `${out.address}, ${clean || line}`; // «rl. Ialoveni» отдельной строкой
     else if (clean && !isDateTime(withDate) && !onlyKeywords(clean)) {
       // без слов (цифры, цена, «3 1/2») — это не клиент и не адрес, а комментарий; оставляем строку целиком
       if (!/\p{L}{2,}/u.test(clean)) {
@@ -266,6 +292,8 @@ export function parseTask(text, now = new Date()) {
     const i = rest.findIndex((l) => ADDRESS_LIKE.test(l));
     if (i >= 0) out.address = rest.splice(i, 1)[0];
   }
+  // клиент уже взят из кавычек — одиночное имя («Radu») это контактное лицо
+  if (quotedCompany) for (let i = 0; i < rest.length; i++) if (/^\p{Lu}\p{Ll}{2,}$/u.test(rest[i])) rest[i] = `Контакт: ${rest[i]}`;
   if (!out.company && rest.length) out.company = rest.shift();
   if (!out.address && rest.length) out.address = rest.shift();
   // «Bulevardul Grigore Vieru 8 Radu» — имя клиента после номера дома уходит в «Контакт»
@@ -274,6 +302,7 @@ export function parseTask(text, now = new Date()) {
     out.address = out.address.slice(0, out.address.length - nameTail[2].length).trim();
     tail.unshift(`Контакт: ${nameTail[2]}`);
   }
+  out.address = out.address.replace(/\s+(r-?l\.?|raionul|р-н)\s/giu, ', $1 ').replace(/,\s*,/g, ',');
   if (rest.length || tail.length) out.comment = [out.comment, ...rest, ...tail].filter(Boolean).join('\n');
 
   // заявка должна содержать адрес или клиента плюс хоть какую-то деталь — иначе это обычная переписка

@@ -328,7 +328,7 @@ export function TaskSheet({ task, onClose, onStarted, onCancelled }: {
       <TaskMultBlock task={task} canEdit={cfg.isAdmin} onChanged={onCancelled} />
       {cfg.user.isAdmin && <CrmLeadField task={t2} onChanged={(id) => setT2((x) => ({ ...x, crm_lead_id: id }))} />}
       <Group>
-        {task.address && <Row left={<IconBadge tone="gray"><MapPin size={18} strokeWidth={1.75} /></IconBadge>} title={task.address} subtitle="Адрес" />}
+        {task.address && <Row left={<IconBadge tone="gray"><MapPin size={18} strokeWidth={1.75} /></IconBadge>} title={task.address} subtitle="Адрес" wrap />}
         <Row left={<IconBadge tone={isSoon(task, now) ? 'green' : 'gray'}><CalendarClock size={18} strokeWidth={1.75} /></IconBadge>}
           title={task.has_time && task.planned_at ? <TimeBadge t={task} now={now} full /> : fmtTaskDate(task)} subtitle="Когда" />
         {(task.procedure || task.pests.length > 0) && (
@@ -348,7 +348,7 @@ export function TaskSheet({ task, onClose, onStarted, onCancelled }: {
             chevron={false} right={<CallButton t={task} size={36} />}
             onClick={() => { haptic.tap(); callPhone(task.phone, () => setPhoneOpen(true)); }} />
         )}
-        {task.comment && <Row left={<IconBadge tone="gray"><MessageSquare size={18} strokeWidth={1.75} /></IconBadge>} title={task.comment} subtitle="Комментарий" />}
+        {task.comment && <Row left={<IconBadge tone="gray"><MessageSquare size={18} strokeWidth={1.75} /></IconBadge>} title={task.comment} subtitle="Комментарий" wrap />}
       </Group>
 
       {task.phone && (
