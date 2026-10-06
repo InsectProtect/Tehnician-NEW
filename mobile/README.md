@@ -12,4 +12,5 @@ APK собирается автоматически на GitHub (Actions → «A
 Адрес сервера: переменная репозитория `APP_URL` (Settings → Secrets and variables → Actions → Variables)
 или файл `mobile/app-url.txt`.
 
-Подпись: `keystore/insectprotect.keystore` (один и тот же ключ — новые APK ставятся поверх старых).
+Подпись: ключ хранится только в GitHub Secrets (`ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`), в репозиторий не кладётся. Пока ключ тот же — новые APK ставятся поверх старых.

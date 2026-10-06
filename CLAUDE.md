@@ -9,12 +9,13 @@
 - Дизайн «InsectProtect × Nothing»: Apple-подобный, скругления, много воздуха, иконки lucide-react. Повышенный коэффициент — фиолетовый (#AF52DE).
 
 ## Android APK
-- `mobile/` — обёртка Capacitor (грузит сайт с Render), сборка — GitHub Actions `.github/workflows/android.yml`, APK в Releases.
+- `mobile/` — обёртка Capacitor (грузит сайт с Render), сборка — GitHub Actions `.github/workflows/android.yml` (Android-проект генерируется на лету: `cap add android`, иконки из mobile/icons, разрешения камеры/геолокации, appId `md.insectprotect.app`), APK в Releases.
+- Ключ подписи — **только** в GitHub Secrets (ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD). Никогда не коммить `*.keystore`/`*.jks` (есть в .gitignore). Корневой README.md — полный; не путать с mobile/README.md.
 - Вход вне Telegram: `POST /api/app/login` → бот `/start applogin_<код>` → «✅ Войти» → токен `Authorization: app <token>` (auth.js `makeAppToken`), далее PIN.
 
 ## Версии
 - Видимая версия: `APP_VERSION` в `web/src/screens/Home.tsx` (формат `YYYY.MM.DD-vNN`). Увеличивай при каждом релизе — пользователь проверяет её в Настройках после деплоя.
-- Последняя версия на момент переноса: `2026.10.01-v53`.
+- Последняя версия: `2026.10.06-v57`.
 
 ## Как устроен сервер (server/src/index.js)
 - Маршруты: `route(method, pattern, handler, { access: 'admin' })`; ошибки — `must(cond, status, msg)` / `HttpError` (поле `extra` уходит в JSON).

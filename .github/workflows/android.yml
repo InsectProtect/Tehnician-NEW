@@ -1,0 +1,126 @@
+# Сборка APK (Capacitor-обёртка над сайтом на Render).
+# Нужны секреты репозитория: ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASSWORD,
+# ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD. Адрес сервера — переменная APP_URL
+# (Settings → Secrets and variables → Actions → Variables) или mobile/app-url.txt.
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      VERSION_CODE: ${{ github.run_number }}
+      VERSION_NAME: 1.0.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Проверить секреты подписи
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for n in KS KS_PASS KEY_ALIAS KEY_PASS; do
+            if [ -z "${!n}" ]; then
+              echo "::error::Не заданы секреты ANDROID_* (Settings → Secrets and variables → Actions → Secrets)"; exit 1
+            fi
+          done
+
+      - name: Адрес сервера
+        env:
+          VAR_URL: ${{ vars.APP_URL }}
+        run: |
+          URL="$VAR_URL"
+          [ -z "$URL" ] && URL="$(tr -d ' \r\n' < mobile/app-url.txt)"
+          URL="${URL%/}"
+          case "$URL" in
+            https://*.*) ;;
+            *) echo "::error::Задайте переменную APP_URL (https://<сервис>.onrender.com) или впишите адрес в mobile/app-url.txt"; exit 1 ;;
+          esac
+          if echo "$URL" | grep -q 'ЗАМЕНИТЕ'; then
+            echo "::error::В mobile/app-url.txt стоит заглушка — задайте переменную APP_URL"; exit 1
+          fi
+          echo "APP_URL=$URL" >> "$GITHUB_ENV"
+          echo "Сервер: $URL"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Создать Android-проект
+        working-directory: mobile
+        run: |
+          npm install --no-audit --no-fund
+          node -e '
+            const host = new URL(process.env.APP_URL).hostname;
+            require("fs").writeFileSync("capacitor.config.json", JSON.stringify({
+              appId: "md.insectprotect.app",
+              appName: "InsectProtect",
+              webDir: "www",
+              server: { url: process.env.APP_URL, errorPath: "index.html", allowNavigation: [host, "t.me", "*.t.me"] },
+              android: { allowMixedContent: false }
+            }, null, 2));
+          '
+          rm -rf android
+          npx cap add android
+          # Иконки
+          for d in icons/mipmap-*; do cp -f "$d"/*.png "android/app/src/main/res/$(basename "$d")/"; done
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher*.xml
+          # Разрешения: камера (фото/видео, QR), геолокация, файлы
+          M=android/app/src/main/AndroidManifest.xml
+          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\n    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n</manifest>#' "$M"
+          # Версия
+          G=android/app/build.gradle
+          sed -i -E "s/versionCode [0-9]+/versionCode ${VERSION_CODE}/; s/versionName \"[^\"]+\"/versionName \"${VERSION_NAME}\"/" "$G"
+          npx cap sync android
+
+      - name: Собрать и подписать APK
+        working-directory: mobile/android
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KS" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/release.keystore" \
+            -Pandroid.injected.signing.store.password="$KS_PASS" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASS"
+          rm -f "$RUNNER_TEMP/release.keystore"
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          cp "$APK" "$GITHUB_WORKSPACE/InsectProtect-${VERSION_NAME}.apk"
+
+      - name: Опубликовать в Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ env.VERSION_NAME }}
+          name: InsectProtect ${{ env.VERSION_NAME }}
+          body: |
+            APK для Android. Сервер: ${{ env.APP_URL }}
+            Скачайте файл на телефон, откройте и разрешите установку из этого источника.
+          files: InsectProtect-${{ env.VERSION_NAME }}.apk
