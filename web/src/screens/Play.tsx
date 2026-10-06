@@ -17,6 +17,7 @@ import { TaskSheet } from './Tasks';
 import { makeT } from '../i18n';
 import { playSound } from '../sounds';
 import { CashWidget } from './Cash';
+import { ScanButton } from './ScanStart';
 
 /*
  * Сотрудник: вкладки «Сегодня / Входящие / Лига / Профиль», игровой слой (опыт, уровни, квесты, значки),
@@ -312,7 +313,7 @@ export function GameTop({ onOpenVisit }: { onOpenVisit: (id: string) => void }) 
       <ShiftCard />
       <CashWidget />
       <InboxPreview onOpen={open} />
-      <QuestsCard />
+      <ScanButton onOpenVisit={onOpenVisit} />
       <PlanBoss />
       <MoreWorkButton />
       {sheets}
@@ -442,6 +443,7 @@ export function LeagueScreen() {
       <h1 className="mb-4 text-[34px] font-extrabold uppercase leading-none tracking-tight">Лига</h1>
       {cfg.features?.contest !== false && <ContestWidget />}
       <div className="mt-5"><PlanBoss /></div>
+      <div className="mt-5"><QuestsCard /></div>
       {game?.enabled && (
         <>
           <SectionTitle>Значки · {game.badges.filter((b) => b.got).length} из {game.badges.length}</SectionTitle>

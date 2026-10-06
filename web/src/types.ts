@@ -523,3 +523,11 @@ export interface CashMe {
 export interface CashOverviewItem { tg_id: string; name: string; balance: number; pending_handover: CashHandover | null; pending_withdrawals: number }
 export interface CashWithdrawalReq extends CashWithdrawal { tg_id: string; name: string }
 export interface CashOverview { items: CashOverviewItem[]; withdrawals: CashWithdrawalReq[] }
+
+/* ---------- v56: скан QR с главной ---------- */
+export interface ScanLookup {
+  state: 'found' | 'new' | 'inactive'; code: string;
+  object: { id: string; company_name: string; address: string } | null;
+  trap: { number: number; kind: string; location: string } | null;
+  task_ids: string[]; visit_id: string | null;
+}

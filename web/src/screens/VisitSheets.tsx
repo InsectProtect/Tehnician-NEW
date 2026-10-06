@@ -33,6 +33,30 @@ export function InspectSheet({ visitId, trap, onClose, onSaved }: {
   const [busy, setBusy] = useState<'save' | 'next' | null>(null);
   const blocked = BLOCKED.includes(condition);
   const pestOptions = target?.pests ?? cfg.pests;
+  // грызун в станции: можно сделать фото и прикрепить файл — уйдёт в замечания выезда (и в акт)
+  const isRodent = /мыш|крыс|грызун/i.test(pest);
+  const camera = useRef<HTMLInputElement>(null);
+  const gallery = useRef<HTMLInputElement>(null);
+  const [shots, setShots] = useState<{ key: string; data: string }[]>([]);
+  const [processing, setProcessing] = useState(false);
+  const MAX_SHOTS = 5;
+
+  async function addFiles(list: FileList | null) {
+    if (!list?.length) return;
+    const files = Array.from(list).slice(0, MAX_SHOTS - shots.length);
+    setProcessing(true);
+    try {
+      const out: { key: string; data: string }[] = [];
+      for (const f of files) out.push({ key: `${Date.now()}-${Math.random()}`, data: await compressImage(f) });
+      setShots((all) => [...all, ...out].slice(0, MAX_SHOTS));
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    } finally {
+      setProcessing(false);
+      if (camera.current) camera.current.value = '';
+      if (gallery.current) gallery.current.value = '';
+    }
+  }
 
   async function save(next: boolean) {
     setBusy(next ? 'next' : 'save');
@@ -42,6 +66,17 @@ export function InspectSheet({ visitId, trap, onClose, onSaved }: {
         pest: !blocked && caught === 'yes' ? pest : '', count: !blocked && caught === 'yes' ? count : 0,
         bait_replaced: !blocked && replaced, comment,
       });
+      if (!blocked && caught === 'yes' && isRodent && shots.length) {
+        try {
+          await api.addObservation(visitId, {
+            category: 'Грызун в станции',
+            comment: `Станция №${trap.number}${trap.location ? ` · ${trap.location}` : ''}: ${pest} × ${count}${comment.trim() ? `. ${comment.trim()}` : ''}`,
+            photos: shots.map((x) => x.data),
+          });
+        } catch (e) {
+          toast(`Станция записана, но фото не загрузилось: ${(e as Error).message}`, 'error');
+        }
+      }
       haptic.success();
       toast(`Станция №${trap.number} записана в журнал`);
       onSaved(next);
@@ -52,7 +87,7 @@ export function InspectSheet({ visitId, trap, onClose, onSaved }: {
     }
   }
 
-  const invalid = !condition || (!blocked && ((isBait && !bait) || !caught || (caught === 'yes' && !pest)));
+  const invalid = processing || !condition || (!blocked && ((isBait && !bait) || !caught || (caught === 'yes' && !pest)));
 
   return (
     <Sheet open onClose={onClose} title={`Станция №${trap.number}`}>
@@ -85,6 +120,33 @@ export function InspectSheet({ visitId, trap, onClose, onSaved }: {
                 <Field label="Количество">
                   <Stepper value={count} onChange={setCount} min={1} />
                 </Field>
+                {isRodent && (
+                  <Field label={`Фото грызуна${shots.length ? ` · ${shots.length}` : ''}`}>
+                    {shots.length > 0 && (
+                      <div className="mb-3 grid grid-cols-3 gap-2">
+                        {shots.map((x) => (
+                          <div key={x.key} className="relative">
+                            <img src={x.data} alt="" className="aspect-square w-full rounded-2xl object-cover" />
+                            <button onClick={() => setShots((all) => all.filter((y) => y.key !== x.key))} aria-label="Убрать"
+                              className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/55 text-white">
+                              <X size={15} strokeWidth={2.25} />
+                            </button>
+                          </div>
+                        ))}
+                        {processing && <div className="flex aspect-square items-center justify-center rounded-2xl bg-fill text-muted"><Loader2 size={22} className="animate-spin" /></div>}
+                      </div>
+                    )}
+                    <input ref={camera} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => addFiles(e.target.files)} />
+                    <input ref={gallery} type="file" accept="image/*" multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button variant="secondary" className="text-[15px]" disabled={shots.length >= MAX_SHOTS} loading={processing && !shots.length}
+                        onClick={() => camera.current?.click()} icon={<Camera size={18} strokeWidth={1.75} />}>Сделать фото</Button>
+                      <Button variant="secondary" className="text-[15px]" disabled={shots.length >= MAX_SHOTS}
+                        onClick={() => gallery.current?.click()} icon={<ImageIcon size={18} strokeWidth={1.75} />}>Прикрепить файл</Button>
+                    </div>
+                    <div className="mt-1.5 px-1 text-[12.5px] leading-snug text-muted">Необязательно. Фото попадёт в замечания выезда и в акт.</div>
+                  </Field>
+                )}
               </>
             )}
             <Toggle label={isBait ? 'Приманка заменена / добавлена' : 'Клеевая пластина / вкладыш заменены'} checked={replaced} onChange={setReplaced} />

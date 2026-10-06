@@ -1,7 +1,7 @@
 import { authHeader, setAppToken } from './telegram';
 import type {
   AdminStats, AdminVisit, BotStatus, KpiRes, MonthSummary, NotificationsRes, RemarksRes, TasksStats, PestsStats, AuditItem, Bootstrap, CompanySettings, Task, BootstrapPartial, Company, ImportStats, Invite, Lead, Observation, OfficeChat,
-  RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview,
+  RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup,
 } from './types';
 
 // Сессия после ввода PIN хранится только в памяти: закрыли приложение — PIN спросят снова.
@@ -259,6 +259,7 @@ export const api = {
   cashOverview: () => request<CashOverview>('GET', '/api/admin/cash'),
   cashConfirm: (id: string, received_amount: string) => request<{ ok: true; status: 'ok' | 'short'; shortfall: number }>('POST', `/api/admin/cash/handover/${id}/confirm`, { received_amount }),
   cashDecideWithdraw: (id: string, ok: boolean) => request<{ ok: true }>('POST', `/api/admin/cash/withdraw/${id}/decide`, { ok }),
+  scanLookup: (text: string) => request<ScanLookup>('POST', '/api/scan', { text }),
   cashAdjust: (tg: string, balance: string, reason: string) => request<{ ok: true; balance: number }>('POST', '/api/admin/cash/adjust', { tg, balance, reason }),
 };
 

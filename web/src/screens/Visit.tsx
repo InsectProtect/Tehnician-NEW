@@ -16,6 +16,7 @@ import { ShareSheet } from '../components/ShareSheet';
 import { MediaCard } from '../components/MediaUpload';
 import { FinishSheet, InspectSheet, ManualSheet, MessageSheet, ObservationSheet, RegisterSheet, RemarkSheet } from './VisitSheets';
 import { playSound } from '../sounds';
+import { takePendingScan } from '../pendingScan';
 
 type SheetState =
   | null
@@ -88,6 +89,13 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
     const text = await scanQr();
     if (text) await handleCode(text);
   }, [handleCode]);
+
+  // код, отсканированный на главной до старта выезда — сразу обрабатываем (вопрос «Вы на объекте?» → список станций)
+  useEffect(() => {
+    if (!data) return;
+    const c = takePendingScan(id);
+    if (c) handleCode(c);
+  }, [data, id, handleCode]);
 
   if (!data) {
     if (!loadErr && !slow) return <Spinner />;
