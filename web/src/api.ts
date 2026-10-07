@@ -1,6 +1,6 @@
 import { authHeader, setAppToken } from './telegram';
 import type {
-  PrepState, PrepTask,
+  PrepState, PrepTask, PrepTrap,
   AdminStats, AdminVisit, BotStatus, KpiRes, MonthSummary, NotificationsRes, RemarksRes, TasksStats, PestsStats, AuditItem, Bootstrap, CompanySettings, Task, BootstrapPartial, Company, ImportStats, Invite, Lead, Observation, OfficeChat,
   RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup,
 } from './types';
@@ -168,9 +168,14 @@ export const api = {
   scan: (visitId: string, text: string) => request<ScanResult>('POST', `/api/visits/${visitId}/scan`, { text }),
   registerTrap: (visitId: string, data: { code: string; number: number; kind: string; location: string; target?: string }) =>
     request<{ trap: Trap }>('POST', `/api/visits/${visitId}/traps`, data),
-  prepTasks: () => request<{ items: PrepTask[] }>('GET', '/api/prep/tasks'),
+  prepTasks: () => request<{ items: PrepTask[]; stock: number }>('GET', '/api/prep/tasks'),
+  prepStock: () => request<{ traps: PrepTrap[] }>('GET', '/api/prep/stock'),
+  prepCount: (taskId: string, count: number) => request<PrepState>('PUT', `/api/tasks/${taskId}/prep/count`, { count }),
+  prepFromStock: (taskId: string, ids: string[]) => request<PrepState>('POST', `/api/tasks/${taskId}/prep/from-stock`, { ids }),
+  prepCancel: (taskId: string, mode: 'stock' | 'keep') => request<PrepState>('POST', `/api/tasks/${taskId}/prep/cancel`, { mode }),
+  prepToStock: (trapId: string) => request<PrepState>('POST', `/api/prep/traps/${trapId}/stock`),
   prepOpen: (taskId: string) => request<PrepState>('POST', `/api/tasks/${taskId}/prep`),
-  prepAdd: (taskId: string, data: { code: string; number?: number; kind: string; target: string }) => request<PrepState>('POST', `/api/tasks/${taskId}/prep/traps`, data),
+  prepAdd: (taskId: string, data: { code: string; number?: number; kind?: string; target?: string; check?: boolean }) => request<PrepState>('POST', `/api/tasks/${taskId}/prep/traps`, data),
   prepRemove: (trapId: string) => request<PrepState>('DELETE', `/api/prep/traps/${trapId}`),
   installTrap: (visitId: string, trapId: string, location: string) => request<{ trap: Trap }>('POST', `/api/visits/${visitId}/traps/${trapId}/install`, { location }),
   saveInspection: (visitId: string, data: InspectionInput) =>

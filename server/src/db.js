@@ -486,6 +486,8 @@ const MIGRATIONS = [
   "ALTER TABLE tasks ADD COLUMN prep_object_id TEXT NOT NULL DEFAULT ''",
   // v59: кто подготовил станцию (может быть не тот, кто поедет)
   "ALTER TABLE traps ADD COLUMN prepared_by TEXT NOT NULL DEFAULT ''",
+  // v61: клиент отказался от ловушек, но их оставили за ним «на другой раз» — выезд не включает мониторинг сам
+  'ALTER TABLE tasks ADD COLUMN prep_skip INTEGER NOT NULL DEFAULT 0',
 ];
 
 async function migrate(run) {

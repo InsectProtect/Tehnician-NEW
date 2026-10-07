@@ -532,6 +532,8 @@ export interface ScanLookup {
   object: { id: string; company_name: string; address: string } | null;
   trap: { number: number; kind: string; location: string; prepared?: boolean } | null;
   task_ids: string[]; visit_id: string | null;
+  /** станция лежит в запасе (без объекта) */
+  stock?: boolean;
 }
 
 /** Подготовка ловушек к заявке (до выезда). */
@@ -539,6 +541,12 @@ export interface PrepState {
   object: { id: string; company_name: string; address: string };
   traps: { id: string; code: string; number: number; kind: string; target: string; location: string; prepared: boolean; prepared_by?: string }[];
   next_number: number;
+  /** станций в запасе (без объекта) */
+  stock: number;
+  /** клиент отказался, станции оставлены за ним «на другой раз» */
+  skip: boolean;
+  moved?: number; taken?: number; missing?: number; from_stock?: boolean; new_code?: boolean; busy?: string;
 }
+export type PrepTrap = PrepState['traps'][number];
 /** Заявка в списке «Подготовить ловушки»: свои и коллег. */
 export type PrepTask = Task & { mine: boolean; prepared: number };
