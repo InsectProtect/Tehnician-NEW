@@ -4,7 +4,7 @@ import { api } from '../api';
 import { useConfig } from '../config';
 import { compressImage } from '../image';
 import { haptic, openLink } from '../telegram';
-import type { CarCheck, CarDetail, CarDoc, CarExpense, CarFleet, CarRes, CarServiceCosts, CarSettings } from '../types';
+import type { CarCheck, CarDetail, CarDoc, CarExpense, CarFleet, CarRes, CarService, CarServiceCosts, CarSettings } from '../types';
 import { CarArt } from '../components/CarArt';
 import { Button, Chips, Collapse, ConfirmSheet, Field, Input, Screen, Sheet, Spinner, Toggle, cx, useToast } from '../components/ui';
 import { GameButton, XpChip } from '../components/game';
@@ -57,6 +57,7 @@ export function CarScreen() {
   const [d, setD] = useState<CarRes | null>(null);
   const [sheet, setSheet] = useState<'' | 'car' | 'fuel' | 'km' | 'service' | 'check' | 'expense'>('');
   const [doc, setDoc] = useState<CarDoc | 'new' | null>(null);
+  const [leftOf, setLeftOf] = useState<CarService | null>(null);
   const [flash, setFlash] = useState(0);
   const [delConfirm, setDelConfirm] = useState(false);
   const load = useCallback(() => api.car().then(setD).catch((e: Error) => toast(e.message, 'error')), [toast]);
@@ -126,7 +127,9 @@ export function CarScreen() {
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2.5">
-        <Tile label="До ТО (масло)" value={to ? (to.left < 0 ? `−${km(-to.left)}` : km(to.left)) : '—'} tone={to?.state === 'overdue' ? 'red' : to?.state === 'soon' ? 'orange' : 'green'} sub={to ? `на ${km(to.next_km)} · каждые ${km(to.interval)}` : undefined} />
+        <button className="text-left active:opacity-70" onClick={() => { const oil = d.service?.find((x) => x.id === 'oil'); if (oil) { haptic.tap(); setLeftOf(oil); } }}>
+          <Tile label="До ТО (масло)" value={to ? (to.left < 0 ? `−${km(-to.left)}` : km(to.left)) : '—'} tone={to?.state === 'overdue' ? 'red' : to?.state === 'soon' ? 'orange' : 'green'} sub={to ? `на ${km(to.next_km)} · нажмите, чтобы уточнить` : undefined} />
+        </button>
         <Tile label={`Топливо · ${s.month_label || 'месяц'}`} value={lei(s.fuel_month)}
           sub={`${s.refuels_month} заправ.${s.liters_month ? ` · ${String(s.liters_month).replace('.', ',')} л` : ''}${s.fuel_prev_month ? ` · ${s.prev_month_label}: ${lei(s.fuel_prev_month)}` : ''}`} />
         <Tile label={`Пробег · ${s.month_label || 'месяц'}`} value={km(s.km_month)} sub={s.cost_km != null ? `${String(s.cost_km).replace('.', ',')} лей / км` : 'после заправок будет цена км'} />
@@ -159,7 +162,7 @@ export function CarScreen() {
       </Block>
 
       <Block title="Регламент ТО">
-        <ServiceList service={d.service || []} />
+        <ServiceList service={d.service || []} onEdit={setLeftOf} />
       </Block>
 
       {d.service_costs && <ServiceCostsCard c={d.service_costs} />}
@@ -207,6 +210,7 @@ export function CarScreen() {
       <ServiceSheet open={sheet === 'service'} d={d} onClose={() => setSheet('')} onDone={done} />
       <ExpenseSheet open={sheet === 'expense'} d={d} onClose={() => setSheet('')} onDone={done} />
       {doc && <DocSheet d={d} doc={doc === 'new' ? null : doc} onClose={() => setDoc(null)} onDone={(r) => { setD(r); setDoc(null); haptic.success(); }} />}
+      {leftOf && <LeftSheet x={leftOf} mileage={c.mileage} onClose={() => setLeftOf(null)} onDone={(r) => { setD(r); setLeftOf(null); }} />}
       {d.pending && <CheckSheet open={sheet === 'check'} d={d} onClose={() => setSheet('')} onDone={(xp) => { setSheet(''); haptic.success(); setFlash(xp); toast('Фото отправлены менеджеру на проверку', 'ok'); load(); }} />}
       {delConfirm && (
         <ConfirmSheet title="Удалить авто?" confirmLabel="Отправить запрос" danger={false}
@@ -423,24 +427,70 @@ function DocSheet({ d, doc, tg, onClose, onDone }: { d: CarRes; doc: CarDoc | nu
   );
 }
 
-function ServiceList({ service }: { service: NonNullable<CarRes['service']> }) {
+function ServiceList({ service, onEdit }: { service: NonNullable<CarRes['service']>; onEdit?: (x: CarService) => void }) {
   return (
     <div className="flex flex-col divide-y divide-dashed divide-line">
+      {onEdit && <div className="pb-2 text-[12px] leading-snug text-muted">Нажмите на пункт, чтобы указать вручную, сколько км осталось, — дальше остаток считается сам по пробегу.</div>}
       {service.map((x) => {
         const done = Math.max(0, Math.min(100, ((x.interval - Math.max(0, x.left)) / x.interval) * 100));
         const color = x.state === 'overdue' ? '#FF453A' : x.state === 'soon' ? '#FF9F0A' : '#34C759';
         return (
-          <div key={x.id} className="py-2">
+          <button key={x.id} type="button" disabled={!onEdit} onClick={() => { haptic.tap(); onEdit?.(x); }} className="py-2 text-left active:opacity-70 disabled:active:opacity-100">
             <div className="flex items-center gap-3">
               <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />
-              <div className="min-w-0 flex-1 text-[14px]">{x.label}<div className="text-[11.5px] text-muted">каждые {km(x.interval)}{x.last_km != null ? ` · делали на ${km(x.last_km)}` : ' · ещё не отмечали'}</div></div>
+              <div className="min-w-0 flex-1 text-[14px]">{x.label}
+                <div className="text-[11.5px] text-muted">
+                  каждые {km(x.interval)}
+                  {x.manual ? <span className="font-semibold text-accent-ink"> · остаток задан вручную</span> : x.last_km != null ? ` · делали на ${km(x.last_km)}` : <span className="font-semibold text-[#C93400] dark:text-[#FF9F0A]"> · примерно — уточните</span>}
+                </div>
+              </div>
               <div className={cx('shrink-0 text-right text-[13px] font-semibold', x.state === 'overdue' && 'text-[#D70015] dark:text-[#FF453A]')}>{x.left < 0 ? `просрочено ${km(-x.left)}` : `через ${km(x.left)}`}<div className="text-[11px] font-normal text-muted">на {km(x.next_km)}</div></div>
             </div>
             <div className="ml-5 mt-1.5 h-1 overflow-hidden rounded-full bg-fill"><div className="h-full rounded-full" style={{ width: `${x.left < 0 ? 100 : done}%`, background: color }} /></div>
-          </div>
+          </button>
         );
       })}
     </div>
+  );
+}
+
+/** Вручную: сколько км осталось до работы ТО. Сохраняется как «следующая замена на пробеге N» — дальше остаток уменьшается сам. */
+function LeftSheet({ x, mileage, tg, onClose, onDone }: { x: CarService; mileage: number; tg?: string; onClose: () => void; onDone: (r: CarRes) => void }) {
+  const toast = useToast();
+  const [mode, setMode] = useState<'left' | 'at'>('left');
+  const [v, setV] = useState(String(Math.max(0, x.left)));
+  const [busy, setBusy] = useState(false);
+  const leftNum = mode === 'left' ? Number(v.replace(/[^\d-]/g, '')) : Number(v.replace(/\D/g, '')) - mileage;
+  async function save(left: string | null) {
+    setBusy(true);
+    try { onDone(await api.carServiceLeft(x.id, left, tg)); haptic.success(); toast(left === null ? 'Считается от последнего ТО' : 'Сохранено — дальше считается само', 'ok'); }
+    catch (e) { toast((e as Error).message, 'error'); setBusy(false); }
+  }
+  return (
+    <Sheet open onClose={onClose} title={x.label}>
+      <p className="-mt-3 mb-4 text-[14px] leading-relaxed text-muted">
+        Сейчас: {x.left < 0 ? `просрочено на ${km(-x.left)}` : `через ${km(x.left)}`} (на {km(x.next_km)}). Пробег машины {km(mileage)}.
+        Укажите точно — например, со стикера сервиса или с бортового компьютера.
+      </p>
+      <div className="mb-3 grid grid-cols-2 gap-1 rounded-2xl bg-fill p-1">
+        {([['left', 'Осталось, км'], ['at', 'Замена на пробеге']] as const).map(([id, label]) => (
+          <button key={id} onClick={() => { setMode(id); setV(id === 'left' ? String(Math.max(0, x.left)) : String(x.next_km)); }}
+            className={cx('h-9 rounded-xl text-[13.5px] font-semibold', mode === id ? 'bg-card shadow-sm' : 'text-muted')}>{label}</button>
+        ))}
+      </div>
+      <Field label={mode === 'left' ? 'Сколько км осталось до замены' : 'На каком пробеге следующая замена, км'}>
+        <Input inputMode="numeric" autoFocus value={v} onChange={(e) => setV(e.target.value.replace(mode === 'left' ? /[^\d-]/g : /\D/g, ''))} />
+      </Field>
+      {Number.isFinite(leftNum) && v !== '' && (
+        <div className="mt-2 px-1 text-[13px] text-muted">
+          {leftNum < 0 ? `Просрочено на ${km(-leftNum)}` : `Осталось ${km(leftNum)}`} · замена на {km(mileage + leftNum)}. Дальше остаток будет уменьшаться с каждым новым пробегом.
+        </div>
+      )}
+      <div className="mt-5 space-y-2">
+        <Button loading={busy} disabled={v === '' || !Number.isFinite(leftNum)} onClick={() => save(String(leftNum))}>Сохранить</Button>
+        {x.manual && <Button variant="secondary" disabled={busy} onClick={() => save(null)}>Считать от последнего ТО</Button>}
+      </div>
+    </Sheet>
   );
 }
 
@@ -733,6 +783,7 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
   const [d, setD] = useState<CarDetail | null>(null);
   const [delConfirm, setDelConfirm] = useState(false);
   const [doc, setDoc] = useState<CarDoc | 'new' | null>(null);
+  const [leftOf, setLeftOf] = useState<CarService | null>(null);
   const [more, setMore] = useState(false);
   const load = useCallback(() => api.adminCar(tg).then(setD).catch((e: Error) => toast(e.message, 'error')), [tg, toast]);
   useEffect(() => { load(); }, [load]);
@@ -768,7 +819,7 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
           <Block title="Страховки и документы" right={<button onClick={() => { haptic.tap(); setDoc('new'); }} className="flex items-center gap-1 text-[13px] font-semibold text-accent-ink"><Plus size={15} />Добавить</button>}>
             <DocsList docs={d.docs || []} onOpen={(x) => setDoc(x)} />
           </Block>
-          <Block title="Регламент ТО"><ServiceList service={d.service || []} /></Block>
+          <Block title="Регламент ТО"><ServiceList service={d.service || []} onEdit={setLeftOf} /></Block>
           {d.service_costs && <ServiceCostsCard c={d.service_costs} />}
           {!!d.service_log.length && (
             <Block title="История ТО">
@@ -813,6 +864,7 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
           <Button variant="danger" icon={<Trash2 size={17} strokeWidth={1.9} />} onClick={() => setDelConfirm(true)}>Удалить машину</Button>
         </div>
       )}
+      {leftOf && d?.car && <LeftSheet x={leftOf} mileage={d.car.mileage} tg={tg} onClose={() => setLeftOf(null)} onDone={() => { setLeftOf(null); load(); }} />}
       {doc && d && <DocSheet d={d} tg={tg} doc={doc === 'new' ? null : doc} onClose={() => setDoc(null)} onDone={() => { setDoc(null); haptic.success(); load(); }} />}
       {delConfirm && (
         <ConfirmSheet title="Удалить машину?" confirmLabel="Удалить" danger

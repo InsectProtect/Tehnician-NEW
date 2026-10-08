@@ -495,6 +495,8 @@ const MIGRATIONS = [
   "ALTER TABLE cars ADD COLUMN body TEXT NOT NULL DEFAULT ''",
   "CREATE TABLE IF NOT EXISTS car_docs (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, kind TEXT NOT NULL, number TEXT NOT NULL DEFAULT '', company TEXT NOT NULL DEFAULT '', starts TEXT, expires TEXT NOT NULL, amount REAL, note TEXT NOT NULL DEFAULT '', reminded TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '')",
   'CREATE INDEX IF NOT EXISTS car_docs_user_idx ON car_docs (tg_id, expires)',
+  // v69: «сколько осталось до ТО» вручную — точка отсчёта: следующая замена на пробеге next_km (дальше считается сама)
+  "CREATE TABLE IF NOT EXISTS car_service_set (tg_id TEXT NOT NULL, item TEXT NOT NULL, next_km INTEGER NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '', PRIMARY KEY (tg_id, item))",
 ];
 
 async function migrate(run) {

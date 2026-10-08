@@ -125,15 +125,19 @@ export function initCar(ctx) {
   }
   async function serviceState(car) {
     const c = await cfg();
-    const logs = await db.query('SELECT item, MAX(km) AS km FROM car_service WHERE tg_id = $1 GROUP BY item', [car.tg_id]);
-    const last = Object.fromEntries(logs.map((l) => [l.item, Number(l.km)]));
+    const logs = await db.query('SELECT item, MAX(km) AS km, MAX(created_at) AS at FROM car_service WHERE tg_id = $1 GROUP BY item', [car.tg_id]);
+    const last = Object.fromEntries(logs.map((l) => [l.item, { km: Number(l.km), at: l.at }]));
+    const sets = Object.fromEntries((await db.query('SELECT item, next_km, created_at FROM car_service_set WHERE tg_id = $1', [car.tg_id])).map((r) => [r.item, r]));
     const km = Number(car.mileage) || 0;
     return SERVICE_ITEMS.filter((it) => (!it.fuels || it.fuels.includes(car.fuel)) && intervalOf(it, car, c) > 0).map((it) => {
       const interval = intervalOf(it, car, c);
-      const done = last[it.id];
-      const next = done != null ? done + interval : (Math.floor(km / interval) + 1) * interval;
+      const done = last[it.id]?.km;
+      // ручная отметка «осталось N км» действует, пока после неё не отметили «Сделал ТО»
+      const set = sets[it.id] && (!last[it.id] || sets[it.id].created_at > last[it.id].at) ? sets[it.id] : null;
+      const next = set ? Number(set.next_km) : done != null ? done + interval : (Math.floor(km / interval) + 1) * interval;
       const left = next - km;
-      return { id: it.id, label: it.label, interval, last_km: done ?? null, next_km: next, left, state: left < 0 ? 'overdue' : left <= Math.max(1000, interval * 0.1) ? 'soon' : 'ok' };
+      return { id: it.id, label: it.label, interval, last_km: done ?? null, next_km: next, left, manual: Boolean(set), estimated: !set && done == null,
+        state: left < 0 ? 'overdue' : left <= Math.max(1000, interval * 0.1) ? 'soon' : 'ok' };
     }).sort((a, b) => a.left - b.left);
   }
 
@@ -576,6 +580,32 @@ export function initCar(ctx) {
     return { ok: true, ...(await fullFor(e.tg_id)) };
   });
 
+  // ---------- «сколько осталось до ТО» вручную ----------
+  async function setServiceLeft(tg, body, actor) {
+    const car = await carOf(tg); must(car, 400, 'Сначала добавьте авто');
+    const item = SERVICE_ITEMS.find((i) => i.id === body.item); must(item, 400, 'Неизвестный пункт ТО');
+    if (body.left === null || body.left === '') {
+      await db.query('DELETE FROM car_service_set WHERE tg_id = $1 AND item = $2', [String(tg), item.id]);
+      await audit(actor, 'Авто: ТО — остаток по расчёту', item.label, '');
+      return;
+    }
+    const left = Math.round(num(body.left, NaN));
+    must(Number.isFinite(left) && left >= -100000 && left <= 300000, 400, 'Укажите, сколько км осталось (можно с минусом, если просрочено)');
+    const next = Number(car.mileage) + left;
+    await db.query('DELETE FROM car_service_set WHERE tg_id = $1 AND item = $2', [String(tg), item.id]);
+    await db.query('INSERT INTO car_service_set (tg_id, item, next_km, created_at, created_by) VALUES ($1,$2,$3,$4,$5)', [String(tg), item.id, next, now(), actor.name || '']);
+    await audit(actor, 'Авто: ТО — осталось вручную', item.label, `${left} км → на ${next} км`);
+  }
+  route('POST', '/api/car/service-left', async ({ user, body }) => {
+    await carGuard();
+    await setServiceLeft(user.id, body, user);
+    return fullFor(user.id);
+  });
+  route('POST', '/api/admin/cars/:tg/service-left', async ({ user, params, body }) => {
+    await setServiceLeft(params.tg, body, user);
+    return fullFor(params.tg);
+  }, { access: 'admin' });
+
   // ---------- страховки и документы со сроком ----------
   async function saveDoc(tg, body, actor) {
     const kind = String(body.kind || '');
@@ -696,6 +726,7 @@ export function initCar(ctx) {
     await db.query('DELETE FROM car_checks WHERE tg_id = $1', [String(tg)]);
     await db.query('DELETE FROM car_fuel WHERE tg_id = $1', [String(tg)]);
     await db.query('DELETE FROM car_service WHERE tg_id = $1', [String(tg)]);
+    for (const t of ['car_service_set', 'car_docs', 'car_expenses']) await db.query(`DELETE FROM ${t} WHERE tg_id = $1`, [String(tg)]);
     await db.query('DELETE FROM cars WHERE tg_id = $1', [String(tg)]);
   }
 

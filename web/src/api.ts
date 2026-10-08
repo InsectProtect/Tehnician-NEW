@@ -257,6 +257,7 @@ export const api = {
   carExpenseDelete: (id: string) => request<CarRes>('DELETE', `/api/car/expense/${id}`),
   carDocSave: (d: Record<string, string | number | null | undefined>, tg?: string) => request<CarRes>('POST', tg ? `/api/admin/cars/${tg}/docs` : '/api/car/docs', d),
   carDocDelete: (id: string) => request<CarRes>('DELETE', `/api/car/docs/${id}`),
+  carServiceLeft: (item: string, left: string | null, tg?: string) => request<CarRes>('POST', tg ? `/api/admin/cars/${tg}/service-left` : '/api/car/service-left', { item, left }),
   carService: (d: { item: string; km: string; note?: string; amount?: string }) => request<CarRes & { xp: number }>('POST', '/api/car/service', d),
   carCheckSubmit: (id: string, d: { ext: string[]; int: string[]; box: string[] }) => request<{ ok: true; xp: number }>('POST', `/api/car/checks/${id}/submit`, d),
   adminCars: () => request<CarFleet>('GET', '/api/admin/cars'),

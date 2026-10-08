@@ -503,7 +503,7 @@ export interface SalesDetail extends SalesFull {
 /* ---------- v47: комнаты, «Мой авто» ---------- */
 export interface RoomsDispute { id: string; visit_id: string; task_no: number; client: string; tech_name: string; task_rooms: number; claimed: number; note: string; created_at: string }
 export interface CarCheck { id: string; day: string; status: 'requested' | 'checking' | 'review' | 'flagged' | 'ok' | 'rejected' | 'missed'; requested_at: string; due_at: string; submitted_at: string | null; ai_verdict: string; ai_score: number | null; ai_note: string; points: number | null; decided_by: string; photos?: { id: string; zone: 'ext' | 'int' | 'box'; url: string }[]; name?: string; tg_id?: string }
-export interface CarService { id: string; label: string; interval: number; last_km: number | null; next_km: number; left: number; state: 'ok' | 'soon' | 'overdue' }
+export interface CarService { id: string; label: string; interval: number; last_km: number | null; next_km: number; left: number; state: 'ok' | 'soon' | 'overdue'; manual?: boolean; estimated?: boolean }
 export interface CarFuel { id: string; km: number; amount: number | null; liters: number | null; ai_note: string; created_at: string; photo: string | null }
 export interface CarInfo { make: string; model: string; year: number | null; plate: string; fuel: string; mileage: number; mileage_start: number; mileage_at: string | null; service_interval: number; body?: string; body_auto?: boolean }
 export interface CarDoc { id: string; kind: string; label: string; icon: string; number: string; company: string; starts: string | null; expires: string; amount: number | null; note: string; days_left: number; state: 'ok' | 'soon' | 'urgent' | 'expired'; created_at: string }
