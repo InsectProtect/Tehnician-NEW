@@ -253,7 +253,9 @@ export const api = {
   saveCar: (d: Record<string, string | number | null>) => request<CarRes>('PUT', '/api/car', d),
   carFuel: (d: { km: string; amount: string; liters: string; photo: string }) => request<CarRes & { xp: number }>('POST', '/api/car/fuel', d),
   carMileage: (km: string) => request<CarRes & { xp: number }>('POST', '/api/car/mileage', { km }),
-  carService: (d: { item: string; km: string; note?: string }) => request<CarRes & { xp: number }>('POST', '/api/car/service', d),
+  carExpense: (d: { kind: string; amount: string; liters?: string; note?: string }) => request<CarRes & { xp: number }>('POST', '/api/car/expense', d),
+  carExpenseDelete: (id: string) => request<CarRes>('DELETE', `/api/car/expense/${id}`),
+  carService: (d: { item: string; km: string; note?: string; amount?: string }) => request<CarRes & { xp: number }>('POST', '/api/car/service', d),
   carCheckSubmit: (id: string, d: { ext: string[]; int: string[]; box: string[] }) => request<{ ok: true; xp: number }>('POST', `/api/car/checks/${id}/submit`, d),
   adminCars: () => request<CarFleet>('GET', '/api/admin/cars'),
   adminCar: (tg: string) => request<CarDetail>('GET', `/api/admin/cars/${tg}`),
@@ -280,6 +282,7 @@ export const api = {
   cashConfirm: (id: string, received_amount: string) => request<{ ok: true; status: 'ok' | 'short'; shortfall: number }>('POST', `/api/admin/cash/handover/${id}/confirm`, { received_amount }),
   cashDecideWithdraw: (id: string, ok: boolean) => request<{ ok: true }>('POST', `/api/admin/cash/withdraw/${id}/decide`, { ok }),
   scanLookup: (text: string) => request<ScanLookup>('POST', '/api/scan', { text }),
+  cashLimits: (d: { limit: string | number | null; tg?: string }) => request<CashOverview & { ok: true }>('PUT', '/api/admin/cash/limits', d),
   cashAdjust: (tg: string, balance: string, reason: string) => request<{ ok: true; balance: number }>('POST', '/api/admin/cash/adjust', { tg, balance, reason }),
 };
 

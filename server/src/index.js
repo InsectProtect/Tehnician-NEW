@@ -3994,6 +3994,7 @@ route('POST', '/api/visits/:id/finish', async ({ params, body, req, user }) => {
         .catch((e) => console.error('crm onVisitDone:', e.message));
     }
   }
+  if (pay.payment === 'cash') cash.checkLimit(v.tech_tg_id).catch((e) => console.error('cash limit:', e.message)); // лимит наличных на руках
   let office = { skipped: true };
   try {
     office = await sendToOffice(v.id, req);
@@ -4538,7 +4539,7 @@ route('POST', '/api/hooks/crm/:token', async ({ params, body }) => {
   return { ok: true, id: t.id, task_no: Number(t.task_no), assigned_to: tech?.name || null, open: !tech };
 }, { access: 'public' });
 // Касса: наличные на руках у сотрудника, сдача кассы и выдача под отчёт — server/src/cash.js
-const cash = initCash({ db, route, must, str, uid, now, audit, notifyTech, escHtml });
+const cash = initCash({ db, route, must, str, uid, now, audit, notifyTech, escHtml, getSetting, setSetting });
 
 // Привязка заявки к лиду CRM (например, ID сделки amoCRM) — необязательное поле, задаёт менеджер/администратор.
 route('PUT', '/api/tasks/:id/crm-lead', async ({ params, body, user }) => {

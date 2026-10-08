@@ -7,7 +7,36 @@ const r2 = (n) => Math.round(Number(n) * 100) / 100;
 const num = (v) => { const n = Number(String(v ?? '').replace(',', '.').replace(/\s/g, '')); return Number.isFinite(n) ? n : NaN; };
 
 export function initCash(ctx) {
-  const { db, route, must, str, uid, now, audit, notifyTech, escHtml } = ctx;
+  const { db, route, must, str, uid, now, audit, notifyTech, escHtml, getSetting, setSetting } = ctx;
+
+  // ---------- лимит наличных на руках (v66) ----------
+  // cash_cfg: { limit — общий лимит (0 = без лимита), per_user: { tg: лимит } }. Превышение — сотрудник и касса получают
+  // уведомление (один раз до следующей сдачи), виджет краснеет и просит сдать кассу. Работу не блокирует.
+  const DEFAULT_LIMIT = 5000;
+  async function cashCfg() {
+    const c = (await getSetting('cash_cfg')) || {};
+    return { limit: c.limit == null ? DEFAULT_LIMIT : Number(c.limit), per_user: { ...(c.per_user || {}) }, alerted: { ...(c.alerted || {}) } };
+  }
+  const limitOf = (c, tg) => (c.per_user[String(tg)] != null ? Number(c.per_user[String(tg)]) : c.limit);
+
+  /** После выезда с наличными: если на руках больше лимита — предупредить (один раз до следующей сдачи). */
+  async function checkLimit(tg) {
+    tg = String(tg);
+    const c = await cashCfg();
+    const limit = limitOf(c, tg);
+    if (!(limit > 0)) return;
+    const balance = await balanceOf(tg);
+    if (balance <= limit) return;
+    const key = (await settledAt(tg)) || 'start';
+    if (c.alerted[tg] === key) return;
+    c.alerted[tg] = key;
+    await setSetting('cash_cfg', c);
+    const [u] = await db.query('SELECT name FROM users WHERE tg_id = $1', [tg]);
+    if (/^\d+$/.test(tg)) notifyTech(tg, `🚨 <b>Лимит кассы превышен:</b> на руках ${balance} лей при лимите ${limit} лей. Сдайте кассу в офис как можно скорее.`, { kind: 'cash' });
+    for (const a of await cashStaff()) {
+      if (/^\d+$/.test(a)) notifyTech(a, `🚨 У <b>${escHtml(u?.name || tg)}</b> на руках ${balance} лей — больше лимита ${limit} лей.`, { kind: 'cash' });
+    }
+  }
 
   /** Кому слать уведомления о кассе: главный администратор — всегда, менеджер — только с правом «Касса». */
   function hasCashPerm(u) { try { return (JSON.parse(u.perms || '[]') || []).includes('cash'); } catch { return false; } }
@@ -53,8 +82,12 @@ export function initCash(ctx) {
     const withdrawals = await db.query("SELECT id, amount, reason, status, created_at, decided_at FROM cash_withdrawals WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 10", [user.id]);
     const history = await db.query("SELECT id, expected_amount, received_amount, status, created_at, decided_at FROM cash_handovers WHERE tg_id = $1 AND status != 'pending' ORDER BY created_at DESC LIMIT 10", [user.id]);
     const adjustments = await db.query("SELECT id, amount, reason, created_at, created_by FROM cash_adjustments WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 10", [user.id]);
+    const c = await cashCfg();
+    const limit = limitOf(c, user.id);
+    const [last] = await db.query("SELECT received_amount, status, decided_at FROM cash_handovers WHERE tg_id = $1 AND status != 'pending' ORDER BY created_at DESC LIMIT 1", [user.id]);
     return {
-      balance,
+      balance, limit: limit > 0 ? limit : null, over: limit > 0 && balance > limit,
+      last_handover: last ? { amount: last.received_amount == null ? null : Number(last.received_amount), status: last.status, at: last.decided_at } : null,
       pending: pending ? { id: pending.id, expected_amount: Number(pending.expected_amount), created_at: pending.created_at } : null,
       pending_withdrawals: withdrawals.filter((w) => w.status === 'pending').map((w) => ({ id: w.id, amount: Number(w.amount), reason: w.reason, created_at: w.created_at })),
       withdrawals: withdrawals.map((w) => ({ id: w.id, amount: Number(w.amount), reason: w.reason, status: w.status, created_at: w.created_at, decided_at: w.decided_at })),
@@ -94,23 +127,49 @@ export function initCash(ctx) {
 
   async function cashOverview() {
     const techs = await db.query("SELECT tg_id, name FROM users WHERE status = 'active' AND role NOT IN ('admin', 'manager') ORDER BY name");
+    const c = await cashCfg();
     const items = [];
     for (const t of techs) {
       const balance = await balanceOf(t.tg_id);
+      const limit = limitOf(c, t.tg_id);
       const pending = await pendingHandover(t.tg_id);
       const [{ n: wn }] = await db.query("SELECT COUNT(*) AS n FROM cash_withdrawals WHERE tg_id = $1 AND status = 'pending'", [t.tg_id]);
-      items.push({ tg_id: t.tg_id, name: t.name, balance, pending_handover: pending ? { id: pending.id, expected_amount: Number(pending.expected_amount), created_at: pending.created_at } : null, pending_withdrawals: Number(wn) || 0 });
+      items.push({ tg_id: t.tg_id, name: t.name, balance, limit: limit > 0 ? limit : null, own_limit: c.per_user[String(t.tg_id)] != null, over: limit > 0 && balance > limit, pending_handover: pending ? { id: pending.id, expected_amount: Number(pending.expected_amount), created_at: pending.created_at } : null, pending_withdrawals: Number(wn) || 0 });
     }
     const withdrawals = await db.query(
       "SELECT w.*, u.name FROM cash_withdrawals w LEFT JOIN users u ON u.tg_id = w.tg_id WHERE w.status = 'pending' ORDER BY w.created_at",
     );
+    items.sort((a, b) => Number(b.over) - Number(a.over) || b.balance - a.balance);
     return {
-      items,
+      items, limit: c.limit > 0 ? c.limit : 0,
+      total: Math.round(items.reduce((s2, i) => s2 + i.balance, 0) * 100) / 100,
       withdrawals: withdrawals.map((w) => ({ id: w.id, tg_id: w.tg_id, name: w.name || w.tg_id, amount: Number(w.amount), reason: w.reason, created_at: w.created_at })),
     };
   }
 
   route('GET', '/api/admin/cash', async () => cashOverview(), { access: 'admin' });
+
+  // Лимиты: общий { limit } и/или для сотрудника { tg, limit } (limit: null — как у всех)
+  route('PUT', '/api/admin/cash/limits', async ({ user, body }) => {
+    const c = await cashCfg();
+    const val = (v) => { const n = num(v); must(Number.isFinite(n) && n >= 0 && n < 10000000, 400, 'Лимит — число от 0 (0 — без лимита)'); return Math.round(n); };
+    if (body.tg) {
+      const tg = String(body.tg);
+      const [t] = await db.query('SELECT name FROM users WHERE tg_id = $1', [tg]);
+      must(t, 404, 'Сотрудник не найден');
+      if (body.limit === null || body.limit === '') delete c.per_user[tg]; else c.per_user[tg] = val(body.limit);
+      delete c.alerted[tg];
+      await setSetting('cash_cfg', c);
+      await audit(user, 'Касса: лимит сотрудника', t.name, c.per_user[tg] != null ? `${c.per_user[tg]} лей` : 'как у всех');
+    } else {
+      c.limit = val(body.limit);
+      c.alerted = {};
+      await setSetting('cash_cfg', c);
+      await audit(user, 'Касса: общий лимит', '', c.limit ? `${c.limit} лей` : 'без лимита');
+    }
+    for (const t of await db.query("SELECT tg_id FROM users WHERE status = 'active' AND role NOT IN ('admin', 'manager')")) await checkLimit(t.tg_id).catch(() => {});
+    return { ok: true, ...(await cashOverview()) };
+  }, { access: 'admin' });
 
   route('POST', '/api/admin/cash/handover/:id/confirm', async ({ user, params, body }) => {
     const [r] = await db.query('SELECT * FROM cash_handovers WHERE id = $1', [params.id]);
@@ -165,5 +224,5 @@ export function initCash(ctx) {
     return { ok: true, balance: target };
   }, { access: 'admin' });
 
-  return { balanceOf };
+  return { balanceOf, checkLimit };
 }

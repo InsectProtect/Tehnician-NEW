@@ -506,17 +506,19 @@ export interface CarCheck { id: string; day: string; status: 'requested' | 'chec
 export interface CarService { id: string; label: string; interval: number; last_km: number | null; next_km: number; left: number; state: 'ok' | 'soon' | 'overdue' }
 export interface CarFuel { id: string; km: number; amount: number | null; liters: number | null; ai_note: string; created_at: string; photo: string | null }
 export interface CarInfo { make: string; model: string; year: number | null; plate: string; fuel: string; mileage: number; mileage_start: number; mileage_at: string | null; service_interval: number }
-export interface CarStats { mileage: number; km_total: number; km_month: number; fuel_month: number; fuel_total: number; refuels_month: number; month_label?: string; prev_month_label?: string; fuel_prev_month?: number; liters_month: number; per100: number | null; cost_km: number | null; last_refuel: string | null }
+export interface CarStats { mileage: number; km_total: number; km_month: number; fuel_month: number; fuel_total: number; refuels_month: number; expenses_month?: number; expenses_by_kind?: Record<string, number>; expenses_prev_month?: number; service_month?: number; spend_month?: number; month_label?: string; prev_month_label?: string; fuel_prev_month?: number; liters_month: number; per100: number | null; cost_km: number | null; last_refuel: string | null }
 export interface CarDeleteRequest { id: string; tg_id: string; name: string; label: string; created_at: string }
 export interface CarRes {
   on: boolean; ai: boolean; photos_need: Record<'ext' | 'int' | 'box', [number, number]>; fuels: Record<string, string>; items: { id: string; label: string }[];
   car: CarInfo | null; to?: { left: number; next_km: number; interval: number; state: string } | null; stats?: CarStats; service?: CarService[];
   tips?: { id: string; title: string; text: string; ai?: boolean }[]; fuel?: CarFuel[]; pending: CarCheck | null; checks?: CarCheck[]; xp?: number;
   delete_request?: { status: 'pending' | 'approved' | 'rejected' } | null;
+  expenses?: CarExpense[]; expense_kinds?: Record<string, { label: string; icon: string; liters?: boolean }>;
 }
-export interface CarSettings { on: boolean; checks_per_week: number; from_hour: number; to_hour: number; deadline_hour: number; points_min: number; points_max: number; photos: Record<'ext' | 'int' | 'box', [number, number]>; service_interval: number }
-export interface CarFleetItem { tg_id: string; name: string; car: string | null; year?: number | null; plate?: string; mileage?: number; to_left?: number | null; fuel_month?: number; km_month?: number; cost_km?: number | null; last_check?: { status: string; day: string; points: number | null } | null }
-export interface CarFleet { settings: CarSettings; ai: boolean; items: CarFleetItem[]; queue: CarCheck[]; delete_requests: CarDeleteRequest[] }
+export interface CarSettings { on: boolean; checks_per_week: number; from_hour: number; to_hour: number; deadline_hour: number; points_min: number; points_max: number; photos: Record<'ext' | 'int' | 'box', [number, number]>; service_interval: number; service_km?: Record<string, number> }
+export interface CarExpense { id: string; kind: string; amount: number; liters: number | null; km: number | null; note: string; created_at: string }
+export interface CarFleetItem { tg_id: string; name: string; car: string | null; year?: number | null; plate?: string; mileage?: number; to_left?: number | null; fuel_month?: number; expenses_month?: number; spend_month?: number; km_month?: number; cost_km?: number | null; last_check?: { status: string; day: string; points: number | null } | null }
+export interface CarFleet { settings: CarSettings; service_items?: { id: string; label: string; km: number; fuels: string[] | null }[]; ai: boolean; items: CarFleetItem[]; queue: CarCheck[]; delete_requests: CarDeleteRequest[] }
 export interface CarDetail extends CarRes { user: { tg_id: string; name: string }; service_log: { item: string; label: string; km: number; note: string; amount: number | null; created_at: string }[] }
 
 /* ---------- v49: CRM-коннектор ---------- */
@@ -536,10 +538,13 @@ export interface CashWithdrawal { id: string; amount: number; reason: string; st
 export interface CashAdjustment { id: string; amount: number; reason: string; created_at: string; created_by: string }
 export interface CashMe {
   balance: number; pending: CashHandover | null; pending_withdrawals: CashWithdrawal[]; withdrawals: CashWithdrawal[]; history: CashHandoverDone[]; adjustments: CashAdjustment[];
+  /** лимит наличных на руках (null — без лимита) */
+  limit?: number | null; over?: boolean;
+  last_handover?: { amount: number | null; status: string; at: string | null } | null;
 }
-export interface CashOverviewItem { tg_id: string; name: string; balance: number; pending_handover: CashHandover | null; pending_withdrawals: number }
+export interface CashOverviewItem { tg_id: string; name: string; balance: number; pending_handover: CashHandover | null; pending_withdrawals: number; limit?: number | null; own_limit?: boolean; over?: boolean }
 export interface CashWithdrawalReq extends CashWithdrawal { tg_id: string; name: string }
-export interface CashOverview { items: CashOverviewItem[]; withdrawals: CashWithdrawalReq[] }
+export interface CashOverview { items: CashOverviewItem[]; withdrawals: CashWithdrawalReq[]; limit?: number; total?: number }
 
 /* ---------- v56: скан QR с главной ---------- */
 export interface ScanLookup {

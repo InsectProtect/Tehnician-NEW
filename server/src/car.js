@@ -11,22 +11,44 @@ const aiOn = () => false;
 const aiJson = async () => { throw new Error('ИИ выключен'); };
 import { zonedIso } from './tasks.js';
 
+// Регламент ТО по пробегу. Интервалы по умолчанию; администратор может изменить или выключить любой пункт (car_cfg.service_km).
+const ICE = ['petrol', 'diesel', 'gas', 'hybrid'];
 export const SERVICE_ITEMS = [
-  { id: 'oil', label: 'Масло и масляный фильтр', km: 0 }, // интервал — из настроек машины
+  { id: 'oil', label: 'Масло и масляный фильтр', km: 0, fuels: ICE }, // интервал — из настроек машины
+  { id: 'tires', label: 'Перестановка и балансировка шин', km: 10000 },
+  { id: 'gas_filters', label: 'Фильтры ГБО', km: 10000, fuels: ['gas'] },
   { id: 'cabin', label: 'Салонный фильтр', km: 15000 },
   { id: 'brakes', label: 'Тормозные колодки (проверка)', km: 15000 },
-  { id: 'air', label: 'Воздушный фильтр', km: 20000 },
-  { id: 'plugs', label: 'Свечи зажигания', km: 30000, fuels: ['petrol', 'gas'] },
-  { id: 'fuel_filter', label: 'Топливный фильтр', km: 40000 },
+  { id: 'alignment', label: 'Развал-схождение', km: 15000 },
+  { id: 'air', label: 'Воздушный фильтр', km: 20000, fuels: ICE },
+  { id: 'suspension', label: 'Диагностика подвески', km: 20000 },
+  { id: 'plugs', label: 'Свечи зажигания', km: 30000, fuels: ['petrol', 'gas', 'hybrid'] },
+  { id: 'battery', label: 'Аккумулятор (проверка)', km: 30000 },
+  { id: 'ac', label: 'Кондиционер (обслуживание)', km: 30000 },
+  { id: 'fuel_filter', label: 'Топливный фильтр', km: 40000, fuels: ICE },
   { id: 'brake_fluid', label: 'Тормозная жидкость', km: 40000 },
+  { id: 'shocks', label: 'Амортизаторы (проверка)', km: 50000 },
   { id: 'coolant', label: 'Антифриз', km: 60000 },
   { id: 'gearbox', label: 'Масло КПП', km: 60000 },
-  { id: 'timing', label: 'Ремень / цепь ГРМ (проверка)', km: 90000 },
+  { id: 'aux_belt', label: 'Ремень навесного оборудования', km: 60000, fuels: ICE },
+  { id: 'brake_discs', label: 'Тормозные диски', km: 60000 },
+  { id: 'clutch', label: 'Сцепление (проверка)', km: 60000 },
+  { id: 'glow_plugs', label: 'Свечи накаливания', km: 80000, fuels: ['diesel'] },
+  { id: 'timing', label: 'Ремень / цепь ГРМ (проверка)', km: 90000, fuels: ICE },
+  { id: 'dpf', label: 'Сажевый фильтр / EGR (чистка)', km: 100000, fuels: ['diesel'] },
 ];
+// Прочие расходы (кроме топлива)
+export const EXPENSE_KINDS = {
+  wash: { label: 'Мойка', icon: '🧽' },
+  adblue: { label: 'AdBlue', icon: '💧', liters: true },
+  parking: { label: 'Парковка / дорога', icon: '🅿️' },
+  repair: { label: 'Ремонт / запчасти', icon: '🔧' },
+  other: { label: 'Другое', icon: '🧾' },
+};
 const FUELS = { petrol: 'Бензин', diesel: 'Дизель', gas: 'Газ / бензин', hybrid: 'Гибрид', electric: 'Электро' };
 const ZONES = { ext: 'Снаружи', int: 'Салон', box: 'Будка' };
 const XPC = { fuel: 10, week: 20, km: 5, service: 10, check: 20, clean: 10 };
-const DEFAULT_CFG = { on: true, checks_per_week: 2, from_hour: 9, to_hour: 17, deadline_hour: 20, points_min: 1, points_max: 3, photos: { ext: [3, 5], int: [2, 3], box: [1, 3] }, service_interval: 10000 };
+const DEFAULT_CFG = { on: true, checks_per_week: 2, from_hour: 9, to_hour: 17, deadline_hour: 20, points_min: 1, points_max: 3, photos: { ext: [3, 5], int: [2, 3], box: [1, 3] }, service_interval: 10000, service_km: {} };
 
 const num = (v, d = null) => { if (v === undefined || v === null || v === '') return d; const n = Number(String(v).replace(',', '.').replace(/\s/g, '')); return Number.isFinite(n) ? n : d; };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -49,7 +71,7 @@ export function initCar(ctx) {
 
   async function cfg() {
     const c = (await getSetting('car_cfg')) || {};
-    return { ...DEFAULT_CFG, ...c, photos: { ...DEFAULT_CFG.photos, ...(c.photos || {}) } };
+    return { ...DEFAULT_CFG, ...c, photos: { ...DEFAULT_CFG.photos, ...(c.photos || {}) }, service_km: { ...(c.service_km || {}) } };
   }
   const photoUrl = (kind, id) => `/r/car/${kind}/${id}?${signLink(`car:${kind}:${id}`, 3600 * 24 * 7)}`;
   function b64img(s) {
@@ -72,12 +94,19 @@ export function initCar(ctx) {
   // ---------- состояние машины ----------
   async function carOf(tg) { const [c] = await db.query('SELECT * FROM cars WHERE tg_id = $1', [String(tg)]); return c || null; }
 
+  /** Интервал пункта ТО: масло — из машины; остальное — настройка администратора (0 = пункт выключен) или по умолчанию. */
+  function intervalOf(it, car, c) {
+    if (it.id === 'oil') return Number(car.service_interval) || 10000;
+    const o = c.service_km?.[it.id];
+    return o === undefined || o === null ? it.km : Number(o);
+  }
   async function serviceState(car) {
+    const c = await cfg();
     const logs = await db.query('SELECT item, MAX(km) AS km FROM car_service WHERE tg_id = $1 GROUP BY item', [car.tg_id]);
     const last = Object.fromEntries(logs.map((l) => [l.item, Number(l.km)]));
     const km = Number(car.mileage) || 0;
-    return SERVICE_ITEMS.filter((it) => !it.fuels || it.fuels.includes(car.fuel)).map((it) => {
-      const interval = it.id === 'oil' ? Number(car.service_interval) || 10000 : it.km;
+    return SERVICE_ITEMS.filter((it) => (!it.fuels || it.fuels.includes(car.fuel)) && intervalOf(it, car, c) > 0).map((it) => {
+      const interval = intervalOf(it, car, c);
       const done = last[it.id];
       const next = done != null ? done + interval : (Math.floor(km / interval) + 1) * interval;
       const left = next - km;
@@ -119,7 +148,15 @@ export function initCar(ctx) {
       if (dist > 50) per100 = Math.round((lit / dist) * 1000) / 10;
     }
     const monthAmount = sum(inMonth, 'amount');
+    const ex = await db.query('SELECT kind, amount, created_at FROM car_expenses WHERE tg_id = $1 AND created_at >= $2', [car.tg_id, prevFrom]);
+    const exMonth = ex.filter((e) => e.created_at >= from);
+    const byKind = {};
+    for (const e of exMonth) byKind[e.kind] = Math.round((byKind[e.kind] || 0) + Number(e.amount));
+    const exAmount = Math.round(sum(exMonth, 'amount'));
+    const svcMonth = Math.round(sum(await db.query('SELECT amount FROM car_service WHERE tg_id = $1 AND created_at >= $2', [car.tg_id, from]), 'amount'));
     return {
+      expenses_month: exAmount, expenses_by_kind: byKind, expenses_prev_month: Math.round(sum(ex.filter((e) => e.created_at < from), 'amount')),
+      service_month: svcMonth, spend_month: Math.round(monthAmount) + exAmount + svcMonth,
       mileage: Number(car.mileage), km_total: Math.max(0, Number(car.mileage) - Number(car.mileage_start)), km_month: kmMonth,
       fuel_month: Math.round(monthAmount), fuel_total: Math.round(sum(fuel, 'amount')), refuels_month: inMonth.length,
       month_label: MONTHS_RU[m - 1], prev_month_label: MONTHS_RU[pm - 1], fuel_prev_month: Math.round(sum(prevMonth, 'amount')),
@@ -152,10 +189,11 @@ export function initCar(ctx) {
     const checks = await db.query('SELECT * FROM car_checks WHERE tg_id = $1 ORDER BY requested_at DESC LIMIT 10', [String(tg)]);
     const pending = checks.find((x) => x.status === 'requested');
     const delReq = await pendingDeleteReq(tg);
-    if (!car) return { on: c.on, car: null, pending: pending ? await checkOut(pending) : null, photos_need: c.photos, fuels: FUELS, items: SERVICE_ITEMS.map(({ id, label }) => ({ id, label })), ai: aiOn(), delete_request: delReq ? { status: delReq.status } : null };
+    if (!car) return { on: c.on, expense_kinds: EXPENSE_KINDS, car: null, pending: pending ? await checkOut(pending) : null, photos_need: c.photos, fuels: FUELS, items: SERVICE_ITEMS.map(({ id, label }) => ({ id, label })), ai: aiOn(), delete_request: delReq ? { status: delReq.status } : null };
     refreshAiTip(car).catch(() => {});
     const service = await serviceState(car);
     const fuel = await db.query('SELECT id, km, amount, liters, ai_note, created_at, photo <> \'\' AS has_photo FROM car_fuel WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 15', [car.tg_id]);
+    const expenses = await db.query('SELECT id, kind, amount, liters, km, note, created_at FROM car_expenses WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 20', [car.tg_id]);
     const tips = [];
     for (const s of service.filter((x) => x.state !== 'ok').slice(0, 3)) tips.push({ id: s.id, title: s.state === 'overdue' ? `${s.label}: просрочено на ${kmS(-s.left)}` : `${s.label}: через ${kmS(s.left)}`, text: s.state === 'overdue' ? 'Запишитесь на сервис и отметьте «Сделал» с пробегом.' : 'Запланируйте замену заранее, чтобы не выпасть из графика заявок.' });
     const season = seasonTip(lp().m);
@@ -170,6 +208,8 @@ export function initCar(ctx) {
       to: oil ? { left: oil.left, next_km: oil.next_km, interval: oil.interval, state: oil.state } : null,
       stats: await stats(car), service, tips,
       fuel: fuel.map((f) => ({ id: f.id, km: Number(f.km), amount: f.amount == null ? null : Number(f.amount), liters: f.liters == null ? null : Number(f.liters), ai_note: f.ai_note, created_at: f.created_at, photo: Number(f.has_photo) || f.has_photo === true ? photoUrl('f', f.id) : null })),
+      expenses: expenses.map((e) => ({ id: e.id, kind: e.kind, amount: Number(e.amount), liters: e.liters == null ? null : Number(e.liters), km: e.km == null ? null : Number(e.km), note: e.note, created_at: e.created_at })),
+      expense_kinds: EXPENSE_KINDS,
       pending: pending ? await checkOut(pending) : null,
       checks: await Promise.all(checks.filter((x) => x.status !== 'requested').slice(0, 6).map((x) => checkOut(x))),
       delete_request: delReq ? { status: delReq.status } : null,
@@ -446,6 +486,35 @@ export function initCar(ctx) {
   setInterval(() => { scheduleTick().catch((e) => console.error('car tick:', e.message)); }, 5 * 60000).unref?.();
 
   // ---------- администратор / менеджер ----------
+  // ---------- прочие расходы: мойка, AdBlue, парковка, ремонт ----------
+  route('POST', '/api/car/expense', async ({ user, body }) => {
+    await carGuard();
+    const car = await carOf(user.id); must(car, 400, 'Сначала добавьте свой авто');
+    const kind = String(body.kind || '');
+    must(EXPENSE_KINDS[kind], 400, 'Выберите вид расхода');
+    const amount = num(body.amount); must(amount != null && amount > 0 && amount < 100000, 400, 'Укажите сумму (лей)');
+    const liters = EXPENSE_KINDS[kind].liters ? num(body.liters) : null;
+    must(liters == null || (liters > 0 && liters < 500), 400, 'Некорректное количество литров');
+    const note = str(body.note, 200);
+    must(kind !== 'other' || note.length >= 2, 400, 'Напишите, на что потрачено');
+    const id = uid();
+    await db.query('INSERT INTO car_expenses (id, tg_id, kind, amount, liters, km, note, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, String(user.id), kind, Math.round(amount * 100) / 100, liters, Number(car.mileage) || null, note, now()]);
+    await audit(user, 'Авто: расход', EXPENSE_KINDS[kind].label, `${amount} лей${liters ? ` · ${liters} л` : ''}${note ? ` · ${note}` : ''}`);
+    const xp = await awardXp(user.id, 'car_week', XPC.week, `cweek:${weekKey()}`, 'Регулярно веду «Мой авто»');
+    return { ok: true, xp: xp ? XPC.week : 0, ...(await fullFor(user.id)) };
+  });
+
+  // удалить свою запись расхода (ошиблись) — в течение суток
+  route('DELETE', '/api/car/expense/:id', async ({ user, params }) => {
+    const [e] = await db.query('SELECT * FROM car_expenses WHERE id = $1', [params.id]);
+    must(e && (e.tg_id === String(user.id) || user.isAdmin), 404, 'Запись не найдена');
+    must(user.isAdmin || Date.now() - new Date(e.created_at).getTime() < 86400000, 400, 'Удалить можно только в течение суток — попросите администратора');
+    await db.query('DELETE FROM car_expenses WHERE id = $1', [e.id]);
+    await audit(user, 'Авто: расход удалён', EXPENSE_KINDS[e.kind]?.label || e.kind, `${e.amount} лей`);
+    return { ok: true, ...(await fullFor(e.tg_id)) };
+  });
+
   route('GET', '/api/admin/cars', async () => {
     const c = await cfg();
     const users = await db.query("SELECT tg_id, name, role FROM users WHERE status = 'active' AND role IN ('tech', 'specialist') ORDER BY name");
@@ -456,11 +525,11 @@ export function initCar(ctx) {
       const st = await stats(car);
       const oil = (await serviceState(car)).find((s) => s.id === 'oil');
       const [last] = await db.query("SELECT status, day, points FROM car_checks WHERE tg_id = $1 AND status <> 'requested' ORDER BY requested_at DESC LIMIT 1", [u.tg_id]);
-      items.push({ tg_id: u.tg_id, name: u.name, car: `${car.make} ${car.model || ''}`.trim(), year: car.year, plate: car.plate, mileage: Number(car.mileage), to_left: oil?.left ?? null, fuel_month: st.fuel_month, km_month: st.km_month, cost_km: st.cost_km, last_check: last ? { status: last.status, day: last.day, points: last.points == null ? null : Number(last.points) } : null });
+      items.push({ tg_id: u.tg_id, name: u.name, car: `${car.make} ${car.model || ''}`.trim(), year: car.year, plate: car.plate, mileage: Number(car.mileage), to_left: oil?.left ?? null, fuel_month: st.fuel_month, expenses_month: st.expenses_month, spend_month: st.spend_month, km_month: st.km_month, cost_km: st.cost_km, last_check: last ? { status: last.status, day: last.day, points: last.points == null ? null : Number(last.points) } : null });
     }
     const queue = await db.query("SELECT k.*, u.name FROM car_checks k LEFT JOIN users u ON u.tg_id = k.tg_id WHERE k.status IN ('flagged', 'review', 'checking') ORDER BY k.submitted_at DESC LIMIT 30");
     const delRows = await db.query("SELECT d.*, u.name FROM car_delete_requests d LEFT JOIN users u ON u.tg_id = d.tg_id WHERE d.status = 'pending' ORDER BY d.created_at DESC LIMIT 20");
-    return { settings: c, ai: aiOn(), items, queue: await Promise.all(queue.map(async (q) => ({ ...(await checkOut(q, true)), name: q.name || q.tg_id, tg_id: q.tg_id }))),
+    return { settings: c, service_items: SERVICE_ITEMS.filter((i) => i.id !== 'oil').map(({ id, label, km, fuels }) => ({ id, label, km, fuels: fuels || null })), ai: aiOn(), items, queue: await Promise.all(queue.map(async (q) => ({ ...(await checkOut(q, true)), name: q.name || q.tg_id, tg_id: q.tg_id }))),
       delete_requests: delRows.map((d) => ({ id: d.id, tg_id: d.tg_id, name: d.name || d.tg_id, label: d.label, created_at: d.created_at })) };
   });
 
@@ -471,7 +540,8 @@ export function initCar(ctx) {
     const checks = await db.query('SELECT * FROM car_checks WHERE tg_id = $1 ORDER BY requested_at DESC LIMIT 12', [u.tg_id]);
     const fuel = await db.query('SELECT id, km, amount, liters, ai_note, created_at FROM car_fuel WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 40', [u.tg_id]);
     const service = await db.query('SELECT item, km, note, amount, created_at FROM car_service WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 30', [u.tg_id]);
-    return { user: u, ...data, fuel: fuel.map((f) => ({ id: f.id, km: Number(f.km), amount: f.amount == null ? null : Number(f.amount), liters: f.liters == null ? null : Number(f.liters), ai_note: f.ai_note, created_at: f.created_at, photo: photoUrl('f', f.id) })),
+    const expenses = await db.query('SELECT id, kind, amount, liters, km, note, created_at FROM car_expenses WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 40', [u.tg_id]);
+    return { user: u, ...data, expenses: expenses.map((e) => ({ id: e.id, kind: e.kind, amount: Number(e.amount), liters: e.liters == null ? null : Number(e.liters), km: e.km == null ? null : Number(e.km), note: e.note, created_at: e.created_at })), fuel: fuel.map((f) => ({ id: f.id, km: Number(f.km), amount: f.amount == null ? null : Number(f.amount), liters: f.liters == null ? null : Number(f.liters), ai_note: f.ai_note, created_at: f.created_at, photo: photoUrl('f', f.id) })),
       checks: await Promise.all(checks.map((x) => checkOut(x, true))), service_log: service.map((s) => ({ ...s, label: SERVICE_ITEMS.find((i) => i.id === s.item)?.label || s.item })) };
   });
 
@@ -572,7 +642,16 @@ export function initCar(ctx) {
       points_min: clamp(num(body.points_min, cur.points_min), 0, 10), points_max: clamp(num(body.points_max, cur.points_max), 0, 10),
       photos: { ext: ph('ext'), int: ph('int'), box: ph('box') },
       service_interval: n(body.service_interval, cur.service_interval, 3000, 30000),
+      service_km: { ...cur.service_km },
     };
+    if (body.service_km && typeof body.service_km === 'object') {
+      for (const it of SERVICE_ITEMS) {
+        if (it.id === 'oil' || !(it.id in body.service_km)) continue;
+        const v = body.service_km[it.id];
+        if (v === null || v === '') delete next.service_km[it.id]; // по умолчанию
+        else next.service_km[it.id] = clamp(Math.round(num(v, it.km)), 0, 300000); // 0 — пункт выключен
+      }
+    }
     if (next.points_max < next.points_min) next.points_max = next.points_min;
     await setSetting('car_cfg', next);
     await audit(user, 'Настройки «Мой авто»', '', `${next.on ? 'вкл' : 'выкл'} · проверок в неделю ${next.checks_per_week} · баллы ${next.points_min}–${next.points_max}`);

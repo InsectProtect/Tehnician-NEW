@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Camera, Car as CarIcon, Fuel, Gauge, Sparkles, Trash2, Wrench, X } from 'lucide-react';
+import { Camera, Car as CarIcon, Fuel, Gauge, Receipt, Sparkles, Trash2, Wrench, X } from 'lucide-react';
 import { api } from '../api';
 import { useConfig } from '../config';
 import { compressImage } from '../image';
 import { haptic, openLink } from '../telegram';
-import type { CarCheck, CarDetail, CarFleet, CarRes, CarSettings } from '../types';
+import type { CarCheck, CarDetail, CarExpense, CarFleet, CarRes, CarSettings } from '../types';
 import { Button, Chips, Collapse, ConfirmSheet, Field, Input, Screen, Sheet, Spinner, Toggle, cx, useToast } from '../components/ui';
 import { GameButton, XpChip } from '../components/game';
 
@@ -54,7 +54,7 @@ function Block({ title, right, children }: { title: string; right?: ReactNode; c
 export function CarScreen() {
   const toast = useToast();
   const [d, setD] = useState<CarRes | null>(null);
-  const [sheet, setSheet] = useState<'' | 'car' | 'fuel' | 'km' | 'service' | 'check'>('');
+  const [sheet, setSheet] = useState<'' | 'car' | 'fuel' | 'km' | 'service' | 'check' | 'expense'>('');
   const [flash, setFlash] = useState(0);
   const [delConfirm, setDelConfirm] = useState(false);
   const load = useCallback(() => api.car().then(setD).catch((e: Error) => toast(e.message, 'error')), [toast]);
@@ -126,11 +126,13 @@ export function CarScreen() {
         <Tile label={`Пробег · ${s.month_label || 'месяц'}`} value={km(s.km_month)} sub={s.cost_km != null ? `${String(s.cost_km).replace('.', ',')} лей / км` : 'после заправок будет цена км'} />
         <Tile label="Расход" value={s.per100 != null ? `${String(s.per100).replace('.', ',')} л` : '—'} sub={s.per100 != null ? 'на 100 км' : 'укажите литры в 2+ заправках'} />
       </div>
+      <SpendCard d={d} />
 
       <div className="mt-4 grid grid-cols-2 gap-2.5">
         <GameButton icon={<Fuel size={19} />} onClick={() => setSheet('fuel')}>Заправка</GameButton>
         <GameButton tone="ghost" icon={<Wrench size={18} />} onClick={() => setSheet('service')}>Сделал ТО</GameButton>
       </div>
+      <GameButton className="mt-2.5" tone="yellow" small icon={<Receipt size={17} />} onClick={() => setSheet('expense')}>Расход: мойка, AdBlue, парковка…</GameButton>
       <div className="mt-1.5 text-center text-[12px] text-muted">Заправка с чеком +10 XP · первая за неделю ещё +20 · пробег +5 · ТО +10 · фотопроверка до +30</div>
 
       {!!d.tips?.length && (
@@ -171,6 +173,10 @@ export function CarScreen() {
         )}
       </Block>
 
+      <Block title="Другие расходы" right={<span className="text-[12px] text-muted">{s.month_label}: {lei(s.expenses_month)}</span>}>
+        <ExpenseList d={d} items={d.expenses || []} onChanged={setD} />
+      </Block>
+
       {!!d.checks?.length && (
         <Block title="Фотопроверки">
           <div className="flex flex-col gap-2">
@@ -195,6 +201,7 @@ export function CarScreen() {
       <FuelSheet open={sheet === 'fuel'} d={d} onClose={() => setSheet('')} onDone={done} />
       <KmSheet open={sheet === 'km'} d={d} onClose={() => setSheet('')} onDone={done} />
       <ServiceSheet open={sheet === 'service'} d={d} onClose={() => setSheet('')} onDone={done} />
+      <ExpenseSheet open={sheet === 'expense'} d={d} onClose={() => setSheet('')} onDone={done} />
       {d.pending && <CheckSheet open={sheet === 'check'} d={d} onClose={() => setSheet('')} onDone={(xp) => { setSheet(''); haptic.success(); setFlash(xp); toast('Фото отправлены менеджеру на проверку', 'ok'); load(); }} />}
       {delConfirm && (
         <ConfirmSheet title="Удалить авто?" confirmLabel="Отправить запрос" danger={false}
@@ -299,14 +306,113 @@ function ServiceSheet({ open, d, onClose, onDone }: SheetP) {
   const toast = useToast();
   const [item, setItem] = useState('oil');
   const [v, setV] = useState('');
+  const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) { setItem(d.service?.[0]?.id || 'oil'); setV(String(d.car?.mileage ?? '')); } }, [open, d]);
+  useEffect(() => { if (open) { setItem(d.service?.[0]?.id || 'oil'); setV(String(d.car?.mileage ?? '')); setAmount(''); } }, [open, d]);
   return (
     <Sheet open={open} onClose={onClose} title="Сделал ТО">
       <div className="flex flex-col gap-3">
         <Field label="Что сделано"><Chips options={(d.service || []).map((x) => ({ id: x.id, label: x.label }))} value={item} onChange={setItem} columns={2} /></Field>
-        <Field label="На каком пробеге, км"><Input inputMode="numeric" value={v} onChange={(e) => setV(e.target.value.replace(/\D/g, ''))} /></Field>
-        <Button loading={busy} onClick={async () => { setBusy(true); try { onDone(await api.carService({ item, km: v })); } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(false); } }}>Отметить · +10 XP</Button>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="На каком пробеге, км"><Input inputMode="numeric" value={v} onChange={(e) => setV(e.target.value.replace(/\D/g, ''))} /></Field>
+          <Field label="Стоимость, лей"><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="необязательно" /></Field>
+        </div>
+        <Button loading={busy} onClick={async () => { setBusy(true); try { onDone(await api.carService({ item, km: v, amount })); } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(false); } }}>Отметить · +10 XP</Button>
+      </div>
+    </Sheet>
+  );
+}
+
+const EXP_COLORS: Record<string, string> = { wash: '#2DA8E6', adblue: '#0A84FF', parking: '#AF52DE', repair: '#FF9F0A', other: '#8E8E93' };
+
+/** Все траты на авто за месяц: топливо + расходы + ТО — полоской по долям. */
+function SpendCard({ d }: { d: CarRes }) {
+  const s = d.stats!;
+  const kinds = d.expense_kinds || {};
+  const parts = [
+    { label: '⛽ Топливо', v: s.fuel_month, c: '#F58220' },
+    ...Object.entries(s.expenses_by_kind || {}).map(([k, v]) => ({ label: `${kinds[k]?.icon || '🧾'} ${kinds[k]?.label || k}`, v, c: EXP_COLORS[k] || '#8E8E93' })),
+    ...(s.service_month ? [{ label: '🔧 ТО', v: s.service_month, c: '#34C759' }] : []),
+  ].filter((p) => p.v > 0);
+  const total = s.spend_month ?? parts.reduce((a, p) => a + p.v, 0);
+  if (!total) return null;
+  return (
+    <div className="mt-2.5 rounded-[20px] bg-card p-3.5">
+      <div className="flex items-baseline justify-between">
+        <span className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-muted">Все траты · {s.month_label}</span>
+        <span className="font-dot text-[22px] leading-none">{lei(total)}</span>
+      </div>
+      <div className="mt-2.5 flex h-3 overflow-hidden rounded-full bg-fill">
+        {parts.map((p) => <div key={p.label} style={{ width: `${(p.v / total) * 100}%`, background: p.c }} />)}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[12px]">
+        {parts.map((p) => <span key={p.label} className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: p.c }} />{p.label} <b>{lei(p.v)}</b></span>)}
+      </div>
+    </div>
+  );
+}
+
+function ExpenseList({ d, items, onChanged, admin }: { d: CarRes; items: CarExpense[]; onChanged?: (r: CarRes) => void; admin?: boolean }) {
+  const toast = useToast();
+  const [del, setDel] = useState('');
+  const kinds = d.expense_kinds || {};
+  if (!items.length) return <div className="text-[14px] text-muted">Пока нет. Мойка, AdBlue, парковка, ремонт — всё сюда, чтобы видеть полные расходы на машину.</div>;
+  return (
+    <div className="flex flex-col divide-y divide-dashed divide-line">
+      {items.map((e) => {
+        const fresh = admin || Date.now() - new Date(e.created_at).getTime() < 86400000;
+        return (
+          <div key={e.id} className="flex items-center gap-3 py-2">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[19px]" style={{ background: `${EXP_COLORS[e.kind] || '#8E8E93'}22` }}>{kinds[e.kind]?.icon || '🧾'}</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[14.5px] font-semibold">{kinds[e.kind]?.label || e.kind} · {lei(e.amount)}{e.liters ? ` · ${String(e.liters).replace('.', ',')} л` : ''}</div>
+              <div className="truncate text-[12px] text-muted">{dt(e.created_at)}{e.km ? ` · ${km(e.km)}` : ''}{e.note ? ` · ${e.note}` : ''}</div>
+            </div>
+            {fresh && onChanged && (
+              del === e.id
+                ? <button onClick={async () => { try { onChanged(await api.carExpenseDelete(e.id)); haptic.success(); setDel(''); } catch (err) { toast((err as Error).message, 'error'); } }} className="shrink-0 rounded-full bg-[#FF3B30]/12 px-3 py-1 text-[13px] font-medium text-[#D70015] dark:text-[#FF453A]">Удалить?</button>
+                : <button onClick={() => setDel(e.id)} aria-label="Удалить" className="shrink-0 p-1 text-muted"><Trash2 size={16} /></button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ExpenseSheet({ open, d, onClose, onDone }: SheetP) {
+  const toast = useToast();
+  const kinds = d.expense_kinds || {};
+  const [kind, setKind] = useState('wash');
+  const [amount, setAmount] = useState('');
+  const [liters, setLiters] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setKind('wash'); setAmount(''); setLiters(''); setNote(''); } }, [open]);
+  const k = kinds[kind];
+  return (
+    <Sheet open={open} onClose={onClose} title="Расход на авто">
+      <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-3 gap-2">
+          {Object.entries(kinds).map(([id, x]) => (
+            <button key={id} onClick={() => { haptic.tap(); setKind(id); }}
+              className={cx('flex flex-col items-center gap-1 rounded-2xl px-2 py-3 text-[13px] font-semibold transition', kind === id ? 'text-white' : 'bg-fill')}
+              style={kind === id ? { background: EXP_COLORS[id] || '#8E8E93' } : undefined}>
+              <span className="text-[22px]">{x.icon}</span>{x.label}
+            </button>
+          ))}
+        </div>
+        <div className={cx('grid gap-2', k?.liters ? 'grid-cols-2' : 'grid-cols-1')}>
+          <Field label="Сумма, лей"><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="например, 150" autoFocus /></Field>
+          {k?.liters && <Field label="Литров"><Input inputMode="decimal" value={liters} onChange={(e) => setLiters(e.target.value)} placeholder="например, 10" /></Field>}
+        </div>
+        <Field label={kind === 'other' ? 'На что потрачено' : 'Комментарий (необязательно)'}>
+          <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={kind === 'repair' ? 'например, лампа фары' : kind === 'parking' ? 'например, платная стоянка' : ''} />
+        </Field>
+        <Button loading={busy} disabled={!amount || (kind === 'other' && note.trim().length < 2)}
+          onClick={async () => { setBusy(true); try { onDone(await api.carExpense({ kind, amount, liters, note })); } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(false); } }}>
+          Сохранить
+        </Button>
       </div>
     </Sheet>
   );
@@ -409,13 +515,13 @@ export function CarsPanel() {
               <div className="mt-3 grid grid-cols-3 gap-2 text-[12.5px]">
                 <div><div className="text-muted">Пробег</div><b>{km(i.mileage)}</b></div>
                 <div><div className="text-muted">До ТО</div><b className={cx((i.to_left ?? 1) < 0 && 'text-[#D70015] dark:text-[#FF453A]')}>{i.to_left == null ? '—' : i.to_left < 0 ? `−${km(-i.to_left)}` : km(i.to_left)}</b></div>
-                <div><div className="text-muted">Топливо с 1-го</div><b>{lei(i.fuel_month)}</b></div>
+                <div><div className="text-muted">Траты с 1-го</div><b>{lei(i.spend_month ?? i.fuel_month)}</b>{!!i.expenses_month && <div className="text-[11px] text-muted">⛽ {lei(i.fuel_month)} · прочее {lei(i.expenses_month)}</div>}</div>
               </div>
             )}
           </button>
         ))}
       </div>
-      {canSettings && <CarSettingsCard s={d.settings} onSaved={load} />}
+      {canSettings && <CarSettingsCard s={d.settings} items={d.service_items || []} onSaved={load} />}
       {open && <FleetCarSheet tg={open} settings={d.settings} onClose={() => { setOpen(null); load(); }} />}
     </>
   );
@@ -502,10 +608,12 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
               </button>
             ))}
           </div>
+          <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Другие расходы · {d.stats!.month_label}: {lei(d.stats!.expenses_month)}</div>
+          <ExpenseList d={d} items={d.expenses || []} admin onChanged={() => load()} />
           {!!d.service_log.length && (
             <>
               <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">ТО</div>
-              {d.service_log.map((s, i) => <div key={i} className="text-[13.5px]"><b>{s.label}</b> · {km(s.km)} · <span className="text-muted">{dt(s.created_at)}</span></div>)}
+              {d.service_log.map((s, i) => <div key={i} className="text-[13.5px]"><b>{s.label}</b> · {km(s.km)}{s.amount ? ` · ${lei(s.amount)}` : ''} · <span className="text-muted">{dt(s.created_at)}</span></div>)}
             </>
           )}
           <div className="text-[12px] text-muted">Баллы за чистую машину: {settings.points_min}–{settings.points_max}.</div>
@@ -522,7 +630,7 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
   );
 }
 
-function CarSettingsCard({ s: s0, onSaved }: { s: CarSettings; onSaved: () => void }) {
+function CarSettingsCard({ s: s0, items, onSaved }: { s: CarSettings; items: NonNullable<CarFleet['service_items']>; onSaved: () => void }) {
   const toast = useToast();
   const [s, setS] = useState(s0);
   const [busy, setBusy] = useState(false);
@@ -540,7 +648,26 @@ function CarSettingsCard({ s: s0, onSaved }: { s: CarSettings; onSaved: () => vo
           <div key={z.id} className="flex flex-wrap items-center gap-2">{z.label}: фото от {inp(s.photos[z.id][0], (x) => setS({ ...s, photos: { ...s.photos, [z.id]: [x, s.photos[z.id][1]] } }))} до {inp(s.photos[z.id][1], (x) => setS({ ...s, photos: { ...s.photos, [z.id]: [s.photos[z.id][0], x] } }))}</div>
         ))}
         <div className="flex flex-wrap items-center gap-2"><Gauge size={16} />Замена масла по умолчанию каждые <input inputMode="numeric" value={String(s.service_interval)} onChange={(e) => setS({ ...s, service_interval: n(e.target.value) })} className="h-9 w-24 rounded-xl bg-card text-center ring-1 ring-inset ring-line" /> км</div>
-        <Button loading={busy} onClick={async () => { setBusy(true); try { await api.saveCarSettings(s); toast('Сохранено', 'ok'); onSaved(); } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(false); } }}>Сохранить</Button>
+        {items.length > 0 && (
+          <div className="rounded-2xl bg-fill p-3">
+            <div className="mb-1 text-[14px] font-semibold">Регламент ТО по пробегу</div>
+            <div className="mb-2 text-[12px] leading-snug text-muted">Интервал в км для всех машин. 0 — пункт выключен. Пусто — по умолчанию. Сотрудник видит, когда пора, и отмечает «Сделал ТО».</div>
+            <div className="flex flex-col gap-1.5">
+              {items.map((it) => {
+                const cur = s.service_km?.[it.id];
+                return (
+                  <div key={it.id} className="flex items-center gap-2">
+                    <span className={cx('min-w-0 flex-1 text-[13px] leading-snug', cur === 0 && 'text-muted line-through')}>{it.label}{it.fuels ? <span className="text-muted"> · {it.fuels.map((f) => ({ petrol: 'бензин', diesel: 'дизель', gas: 'ГБО', hybrid: 'гибрид' } as Record<string, string>)[f] || f).join('/')}</span> : null}</span>
+                    <input inputMode="numeric" placeholder={String(it.km)} value={cur == null ? '' : String(cur)}
+                      onChange={(e) => { const v = e.target.value.replace(/\D/g, ''); const next = { ...(s.service_km || {}) }; if (v === '') delete next[it.id]; else next[it.id] = Number(v); setS({ ...s, service_km: next }); }}
+                      className="h-8 w-20 shrink-0 rounded-lg bg-card text-center text-[13px] ring-1 ring-inset ring-line" />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <Button loading={busy} onClick={async () => { setBusy(true); try { await api.saveCarSettings({ ...s, service_km: Object.fromEntries(items.map((it) => [it.id, s.service_km?.[it.id] ?? null])) as unknown as Record<string, number> }); toast('Сохранено', 'ok'); onSaved(); } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(false); } }}>Сохранить</Button>
       </div>
     </Collapse>
   );

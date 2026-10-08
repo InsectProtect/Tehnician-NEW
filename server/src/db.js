@@ -488,6 +488,9 @@ const MIGRATIONS = [
   "ALTER TABLE traps ADD COLUMN prepared_by TEXT NOT NULL DEFAULT ''",
   // v61: клиент отказался от ловушек, но их оставили за ним «на другой раз» — выезд не включает мониторинг сам
   'ALTER TABLE tasks ADD COLUMN prep_skip INTEGER NOT NULL DEFAULT 0',
+  // v66: прочие расходы на авто — мойка, AdBlue, парковка, ремонт…
+  "CREATE TABLE IF NOT EXISTS car_expenses (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, kind TEXT NOT NULL, amount REAL NOT NULL, liters REAL, km INTEGER, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)",
+  'CREATE INDEX IF NOT EXISTS car_expenses_user_idx ON car_expenses (tg_id, created_at)',
 ];
 
 async function migrate(run) {
