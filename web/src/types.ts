@@ -506,7 +506,7 @@ export interface CarCheck { id: string; day: string; status: 'requested' | 'chec
 export interface CarService { id: string; label: string; interval: number; last_km: number | null; next_km: number; left: number; state: 'ok' | 'soon' | 'overdue' }
 export interface CarFuel { id: string; km: number; amount: number | null; liters: number | null; ai_note: string; created_at: string; photo: string | null }
 export interface CarInfo { make: string; model: string; year: number | null; plate: string; fuel: string; mileage: number; mileage_start: number; mileage_at: string | null; service_interval: number }
-export interface CarStats { mileage: number; km_total: number; km_month: number; fuel_month: number; fuel_total: number; refuels_month: number; liters_month: number; per100: number | null; cost_km: number | null; last_refuel: string | null }
+export interface CarStats { mileage: number; km_total: number; km_month: number; fuel_month: number; fuel_total: number; refuels_month: number; month_label?: string; prev_month_label?: string; fuel_prev_month?: number; liters_month: number; per100: number | null; cost_km: number | null; last_refuel: string | null }
 export interface CarDeleteRequest { id: string; tg_id: string; name: string; label: string; created_at: string }
 export interface CarRes {
   on: boolean; ai: boolean; photos_need: Record<'ext' | 'int' | 'box', [number, number]>; fuels: Record<string, string>; items: { id: string; label: string }[];

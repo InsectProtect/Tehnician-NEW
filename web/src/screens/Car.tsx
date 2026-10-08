@@ -121,8 +121,9 @@ export function CarScreen() {
 
       <div className="mt-3 grid grid-cols-2 gap-2.5">
         <Tile label="До ТО (масло)" value={to ? (to.left < 0 ? `−${km(-to.left)}` : km(to.left)) : '—'} tone={to?.state === 'overdue' ? 'red' : to?.state === 'soon' ? 'orange' : 'green'} sub={to ? `на ${km(to.next_km)} · каждые ${km(to.interval)}` : undefined} />
-        <Tile label="Топливо за месяц" value={lei(s.fuel_month)} sub={`${s.refuels_month} заправ.${s.liters_month ? ` · ${String(s.liters_month).replace('.', ',')} л` : ''}`} />
-        <Tile label="Пробег за месяц" value={km(s.km_month)} sub={s.cost_km != null ? `${String(s.cost_km).replace('.', ',')} лей / км` : 'после заправок будет цена км'} />
+        <Tile label={`Топливо · ${s.month_label || 'месяц'}`} value={lei(s.fuel_month)}
+          sub={`${s.refuels_month} заправ.${s.liters_month ? ` · ${String(s.liters_month).replace('.', ',')} л` : ''}${s.fuel_prev_month ? ` · ${s.prev_month_label}: ${lei(s.fuel_prev_month)}` : ''}`} />
+        <Tile label={`Пробег · ${s.month_label || 'месяц'}`} value={km(s.km_month)} sub={s.cost_km != null ? `${String(s.cost_km).replace('.', ',')} лей / км` : 'после заправок будет цена км'} />
         <Tile label="Расход" value={s.per100 != null ? `${String(s.per100).replace('.', ',')} л` : '—'} sub={s.per100 != null ? 'на 100 км' : 'укажите литры в 2+ заправках'} />
       </div>
 
@@ -408,7 +409,7 @@ export function CarsPanel() {
               <div className="mt-3 grid grid-cols-3 gap-2 text-[12.5px]">
                 <div><div className="text-muted">Пробег</div><b>{km(i.mileage)}</b></div>
                 <div><div className="text-muted">До ТО</div><b className={cx((i.to_left ?? 1) < 0 && 'text-[#D70015] dark:text-[#FF453A]')}>{i.to_left == null ? '—' : i.to_left < 0 ? `−${km(-i.to_left)}` : km(i.to_left)}</b></div>
-                <div><div className="text-muted">Топливо/мес</div><b>{lei(i.fuel_month)}</b></div>
+                <div><div className="text-muted">Топливо с 1-го</div><b>{lei(i.fuel_month)}</b></div>
               </div>
             )}
           </button>
@@ -479,7 +480,8 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
           <div className="grid grid-cols-2 gap-2">
             <Tile label="Пробег" value={km(d.car.mileage)} sub={`с начала учёта ${km(d.stats!.km_total)}`} />
             <Tile label="До ТО" value={d.to ? km(d.to.left) : '—'} tone={d.to?.state === 'overdue' ? 'red' : d.to?.state === 'soon' ? 'orange' : 'green'} />
-            <Tile label="Топливо за месяц" value={lei(d.stats!.fuel_month)} sub={`всего ${lei(d.stats!.fuel_total)}`} />
+            <Tile label={`Топливо · ${d.stats!.month_label || 'месяц'}`} value={lei(d.stats!.fuel_month)}
+              sub={`${d.stats!.fuel_prev_month ? `${d.stats!.prev_month_label}: ${lei(d.stats!.fuel_prev_month)} · ` : ''}всего ${lei(d.stats!.fuel_total)}`} />
             <Tile label="Цена км" value={d.stats!.cost_km != null ? `${String(d.stats!.cost_km).replace('.', ',')} лей` : '—'} sub={d.stats!.per100 != null ? `${String(d.stats!.per100).replace('.', ',')} л/100 км` : undefined} />
           </div>
           <Button variant="secondary" icon={<Camera size={17} />} onClick={async () => { try { await api.requestCarCheck(tg); toast('Запрос отправлен сотруднику', 'ok'); load(); } catch (e) { toast((e as Error).message, 'error'); } }}>Запросить фото машины сейчас</Button>

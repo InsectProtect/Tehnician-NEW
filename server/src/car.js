@@ -92,15 +92,23 @@ export function initCar(ctx) {
     return null;
   }
 
+  const MONTHS_RU = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+
+  /** Статистика авто. «За месяц» — с 1-го числа текущего месяца (по Кишинёву): каждый новый месяц счёт начинается с нуля. */
   async function stats(car) {
     const month = lp().month;
     const [y, m] = month.split('-').map(Number);
     const from = zonedIso(y, m, 1, 0, 0);
+    const py = m === 1 ? y - 1 : y; const pm = m === 1 ? 12 : m - 1;
+    const prevFrom = zonedIso(py, pm, 1, 0, 0);
     const fuel = await db.query('SELECT km, amount, liters, created_at FROM car_fuel WHERE tg_id = $1 ORDER BY km', [car.tg_id]);
     const inMonth = fuel.filter((f) => f.created_at >= from);
-    const before = fuel.filter((f) => f.created_at < from);
+    const prevMonth = fuel.filter((f) => f.created_at >= prevFrom && f.created_at < from);
     const sum = (a, k) => a.reduce((s, x) => s + (Number(x[k]) || 0), 0);
-    const startKm = before.length ? Number(before[before.length - 1].km) : Number(car.mileage_start);
+    // пробег на начало месяца: самая большая отметка (заправки, ТО) до 1-го числа; машину завели в этом месяце — стартовый пробег
+    const svc = await db.query('SELECT km FROM car_service WHERE tg_id = $1 AND created_at < $2', [car.tg_id, from]);
+    const kmBefore = [...fuel.filter((f) => f.created_at < from), ...svc].map((r) => Number(r.km) || 0);
+    const startKm = car.created_at >= from || !kmBefore.length ? Number(car.mileage_start) : Math.max(Number(car.mileage_start), ...kmBefore);
     const kmMonth = Math.max(0, Number(car.mileage) - startKm);
     // средний расход: литры между первой и последней заправкой / пройденные км
     let per100 = null;
@@ -114,6 +122,7 @@ export function initCar(ctx) {
     return {
       mileage: Number(car.mileage), km_total: Math.max(0, Number(car.mileage) - Number(car.mileage_start)), km_month: kmMonth,
       fuel_month: Math.round(monthAmount), fuel_total: Math.round(sum(fuel, 'amount')), refuels_month: inMonth.length,
+      month_label: MONTHS_RU[m - 1], prev_month_label: MONTHS_RU[pm - 1], fuel_prev_month: Math.round(sum(prevMonth, 'amount')),
       liters_month: Math.round(sum(inMonth, 'liters') * 10) / 10, per100, cost_km: kmMonth > 0 && monthAmount > 0 ? Math.round((monthAmount / kmMonth) * 100) / 100 : null,
       last_refuel: fuel.length ? [...fuel].sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0].created_at : null,
     };
