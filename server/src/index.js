@@ -4396,12 +4396,18 @@ async function topicBindings() { return (await getSetting('topic_bindings')) || 
 // ====================================================================================================
 const XP = { call: 10, call_late: 5, en_route: 5, on_time: 15, photo: 5, photo_cap: 20, visit: 30, ack: 5, geo_hour: 10 };
 const ON_TIME_GRACE_MIN = 15;
-const LEVEL_TITLES = ['Новичок', 'Помощник', 'Специалист', 'Специалист', 'Профи', 'Профи', 'Мастер', 'Мастер', 'Эксперт', 'Эксперт', 'Легенда'];
+// v64: 20 уровней (потолок). Каждые 2 уровня — новая маска-вредитель (фронтенд: components/PestMask.tsx), чем выше — тем страшнее.
+const MAX_LEVEL = 20;
+const LEVEL_TITLES = [
+  'Муравей', 'Муравей-солдат', 'Моль', 'Ночная моль', 'Блоха', 'Блоха-прыгун', 'Таракан', 'Таракан-громила', 'Клоп', 'Клоп-кровопийца',
+  'Комар', 'Комар-вампир', 'Оса', 'Шершень', 'Паук', 'Чёрная вдова', 'Крыса', 'Крыса-мутант', 'Король крыс', 'Чума',
+];
 const levelNeed = (n) => 50 * n * (n + 1); // XP, с которого начинается уровень n+1: 0 · 100 · 300 · 600 · 1000 · 1500 · 2100 · 2800…
 function levelOf(xp) {
   let n = 0;
-  while (xp >= levelNeed(n + 1)) n += 1;
-  return { level: n + 1, from: levelNeed(n), to: levelNeed(n + 1), title: LEVEL_TITLES[Math.min(n, LEVEL_TITLES.length - 1)] };
+  while (n + 1 < MAX_LEVEL && xp >= levelNeed(n + 1)) n += 1;
+  const max = n + 1 >= MAX_LEVEL;
+  return { level: n + 1, from: levelNeed(n), to: max ? levelNeed(n) : levelNeed(n + 1), title: LEVEL_TITLES[Math.min(n, LEVEL_TITLES.length - 1)], max, max_level: MAX_LEVEL };
 }
 const gameOn = async () => (await features()).game !== false;
 

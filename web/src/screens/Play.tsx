@@ -19,6 +19,8 @@ import { playSound } from '../sounds';
 import { CashWidget } from './Cash';
 import { ScanButton } from './ScanStart';
 import { PrepButton } from './Prep';
+import { PestMask } from '../components/PestMask';
+import { LevelsSheet } from '../components/LevelsSheet';
 
 /*
  * Сотрудник: вкладки «Сегодня / Входящие / Лига / Профиль», игровой слой (опыт, уровни, квесты, значки),
@@ -105,21 +107,23 @@ export function LevelStrip() {
   const cfg = useConfig();
   const { game } = usePlay();
   const crown = useCrown();
+  const [levels, setLevels] = useState(false);
   if (!game || !game.enabled) return null;
-  const pct = ((game.xp - game.from) / Math.max(1, game.to - game.from)) * 100;
+  const pct = game.max ? 100 : ((game.xp - game.from) / Math.max(1, game.to - game.from)) * 100;
   return (
     <div className="mb-4 flex items-center gap-3">
-      <div className="relative flex h-[58px] w-[58px] shrink-0 items-center justify-center rounded-full bg-accent text-[22px] font-extrabold text-black shadow-[0_4px_0_#9C4A08]">
-        {(cfg.user.name || '?').trim().slice(0, 1).toUpperCase()}
+      {levels && <LevelsSheet level={game.level} xp={game.xp} onClose={() => setLevels(false)} />}
+      <button aria-label="Все уровни" onClick={() => { haptic.tap(); setLevels(true); }} className="relative shrink-0 active:scale-95">
+        <PestMask level={game.level} size={58} />
         <span className="absolute -bottom-1 -right-1 flex h-[26px] min-w-[26px] items-center justify-center rounded-full border-[3px] border-page bg-[#FFD23F] px-1 text-[12px] font-extrabold text-black">{game.level}</span>
-      </div>
+      </button>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <span className="truncate text-[17px] font-extrabold">{crown(cfg.user.id)}{cfg.user.name.split(' ')[0]}</span>
           <span className="shrink-0 font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">ур. {game.level} · {game.title}</span>
         </div>
         <div className="mt-1.5 h-3 overflow-hidden rounded-full border-2 border-line bg-fill"><div className="h-full rounded-full bg-[#FFD23F]" style={{ width: `${Math.min(100, pct)}%` }} /></div>
-        <div className="mt-1 text-[12px] text-muted">{game.xp} / {game.to} XP{game.today_xp ? ` · сегодня +${game.today_xp}` : ''}{game.streak ? ` · серия ${game.streak} дн.` : ''}</div>
+        <div className="mt-1 text-[12px] text-muted">{game.max ? `${game.xp} XP · максимум 👑` : `${game.xp} / ${game.to} XP`}{game.today_xp ? ` · сегодня +${game.today_xp}` : ''}{game.streak ? ` · серия ${game.streak} дн.` : ''}</div>
       </div>
     </div>
   );
@@ -524,14 +528,22 @@ export function ProfileScreen({ onOpenVisit, version }: { onOpenVisit: (id: stri
   const [kpiOpen, setKpiOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [theme, setTheme] = useState<ThemePref>(getThemePref());
+  const [levelsOpen, setLevelsOpen] = useState(false);
   useEffect(() => { api.notifications().then((r) => setMonth(r.month)).catch(() => {}); }, []);
   return (
     <Screen>
       <div className="mb-5 flex items-center gap-4">
-        <div className="relative flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-full bg-accent text-[28px] font-extrabold text-black shadow-[0_5px_0_#9C4A08]">
-          {(cfg.user.name || '?').trim().slice(0, 1).toUpperCase()}
-          {game?.enabled && <span className="absolute -bottom-1 -right-1 flex h-7 min-w-7 items-center justify-center rounded-full border-[3px] border-page bg-[#FFD23F] px-1 text-[13px] font-extrabold text-black">{game.level}</span>}
-        </div>
+        {game?.enabled ? (
+          <button aria-label="Все уровни" onClick={() => { haptic.tap(); setLevelsOpen(true); }} className="relative shrink-0 active:scale-95">
+            <PestMask level={game.level} size={72} />
+            <span className="absolute -bottom-1 -right-1 flex h-7 min-w-7 items-center justify-center rounded-full border-[3px] border-page bg-[#FFD23F] px-1 text-[13px] font-extrabold text-black">{game.level}</span>
+          </button>
+        ) : (
+          <div className="relative flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-full bg-accent text-[28px] font-extrabold text-black shadow-[0_5px_0_#9C4A08]">
+            {(cfg.user.name || '?').trim().slice(0, 1).toUpperCase()}
+          </div>
+        )}
+        {levelsOpen && game && <LevelsSheet level={game.level} xp={game.xp} onClose={() => setLevelsOpen(false)} />}
         <div className="min-w-0">
           <div className="truncate text-[22px] font-extrabold leading-tight">{crown(cfg.user.id)}{cfg.user.name}</div>
           <div className="text-[14px] text-muted">{ROLE_RU[cfg.user.role] || cfg.user.role}{game?.enabled ? ` · ${game.title}` : ''}</div>
@@ -648,7 +660,7 @@ export function RewardSheet({ reward, onClose }: { reward: Reward; onClose: () =
       </div>
       {reward.detail && <div className="mt-3 rounded-2xl bg-card px-4 py-3 text-[13.5px] leading-snug"><div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted">Как посчитаны баллы</div>{reward.detail}</div>}
       <div className="mt-3 rounded-2xl bg-card px-4 py-3">
-        <div className="mb-1 flex justify-between text-[13px]"><span>{reward.title} · ур. {reward.level}</span><span className="text-muted">{reward.xp_total} / {reward.level_to} XP</span></div>
+        <div className="mb-1 flex items-center justify-between gap-2 text-[13px]"><span className="flex items-center gap-2"><PestMask level={reward.level} size={34} />{reward.title} · ур. {reward.level}</span><span className="text-muted">{reward.xp_total} / {reward.level_to} XP</span></div>
         <div className="h-3 overflow-hidden rounded-full border-2 border-line bg-fill"><div className="h-full rounded-full bg-[#FFD23F]" style={{ width: `${Math.min(100, lvlPct)}%` }} /></div>
       </div>
       {plan && plan.plan > 0 && (

@@ -420,7 +420,7 @@ export type QuestsSettings = {
 export type Badge = { id: string; title: string; hint: string; icon: string; got: boolean; progress: [number, number] | null };
 export type ShiftState = { live: boolean; since: string | null; until: string | null; last_at: string | null; minutes: number; hours: number; max_hours: number; xp_per_hour: number; from_hour: number; to_hour: number };
 export type GameState = {
-  enabled: boolean; xp: number; today_xp: number; level: number; from: number; to: number; title: string;
+  enabled: boolean; xp: number; today_xp: number; level: number; from: number; to: number; title: string; max?: boolean; max_level?: number;
   quests: Quest[]; streak: number; best_streak: number; badges: Badge[];
   recent: { kind: string; xp: number; note: string; at: string }[]; shift: ShiftState;
 };
