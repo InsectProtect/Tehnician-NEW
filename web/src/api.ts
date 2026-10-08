@@ -1,6 +1,6 @@
 import { authHeader, setAppToken } from './telegram';
 import type {
-  PrepState, PrepTask, PrepTrap,
+  PrepState, PrepTask, PrepTrap, CrmProvider,
   AdminStats, AdminVisit, BotStatus, KpiRes, MonthSummary, NotificationsRes, RemarksRes, TasksStats, PestsStats, AuditItem, Bootstrap, CompanySettings, Task, BootstrapPartial, Company, ImportStats, Invite, Lead, Observation, OfficeChat,
   RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup,
 } from './types';
@@ -261,7 +261,13 @@ export const api = {
   adminCarDelete: (tg: string) => request<{ ok: true }>('DELETE', `/api/admin/cars/${tg}`),
   decideCarDelete: (id: string, ok: boolean) => request<{ ok: true }>('POST', `/api/admin/car-delete-requests/${id}`, { ok }),
   getCrm: () => request<CrmSettings>('GET', '/api/admin/crm'),
-  saveCrm: (d: { provider?: 'amocrm' | null; enabled?: boolean; amocrm?: { domain?: string; access_token?: string } }) => request<{ ok: true }>('PUT', '/api/admin/crm', d),
+  saveCrm: (d: {
+    provider?: CrmProvider | null; enabled?: boolean; amocrm?: { domain?: string; access_token?: string };
+    bitrix24?: { webhook_url?: string; won_stage?: string };
+    webhook?: { url?: string; secret?: string; new_secret?: boolean; include_pdf?: boolean };
+    inbound?: { enabled?: boolean; new_token?: boolean };
+  }) => request<{ ok: true }>('PUT', '/api/admin/crm', d),
+  testCrm: () => request<{ ok: boolean; message: string }>('POST', '/api/admin/crm/test'),
   disconnectCrm: () => request<{ ok: true }>('POST', '/api/admin/crm/disconnect'),
   setTaskCrmLead: (id: string, crm_lead_id: string) => request<{ ok: true; crm_lead_id: string }>('PUT', `/api/tasks/${id}/crm-lead`, { crm_lead_id }),
   cashMe: () => request<CashMe>('GET', '/api/cash/me'),

@@ -3984,9 +3984,11 @@ route('POST', '/api/visits/:id/finish', async ({ params, body, req, user }) => {
       const [fresh] = await db.query('SELECT act_seq, id FROM visits WHERE id = $1', [v.id]);
       taskReply(t, `✅ <b>Выполнено</b> · акт № ${actNumber(fresh || v)}${Number(v.revision) ? ' (исправленный)' : ''} · ${escHtml(user.name)}${paymentText(v) ? `\n${escHtml(paymentText(v))}` : ''}`);
       // подключаемая CRM (amoCRM и др., Настройки → «CRM»): best-effort, не блокирует завершение выезда
-      if (t.crm_lead_id) {
-        crm.onVisitDone({ task: t, visit: v, buildPdf: () => buildVisitPdf(v, docs), filename: pdfName(v) }).catch((e) => console.error('crm onVisitDone:', e.message));
-      }
+      // amoCRM/Bitrix24 — только при привязанном лиде; «Любая CRM» (вебхук) — по каждой выполненной заявке
+      const [vf] = await db.query('SELECT * FROM visits WHERE id = $1', [v.id]);
+      const vCrm = { ...(vf || v), act_no: actNumber(vf || v) };
+      crm.onVisitDone({ task: t, visit: vCrm, buildPdf: () => buildVisitPdf(vf || v, docs), filename: pdfName(vf || v), actUrl: publicBase() ? `${publicBase()}${reportPath(v.id)}` : '' })
+        .catch((e) => console.error('crm onVisitDone:', e.message));
     }
   }
   let office = { skipped: true };
@@ -4413,7 +4415,82 @@ async function xpTotal(tgId) { return Number((await db.query('SELECT COALESCE(SU
 const sales = initSales({ db, route, must, str, uid, now, getSetting, setSetting, audit, awardXp, xpTotal, levelOf, publicBase, TZN, notifyTech, taskSummary, pointsConfig });
 // «Мой авто»: машина, заправки, ТО, фотопроверки с ИИ — server/src/car.js
 const car = initCar({ db, route, must, str, uid, now, getSetting, setSetting, audit, awardXp, publicBase, TZN, addNotification });
-const crm = initCrm({ route, must, str, getSetting, setSetting, audit, notifyAdmins });
+const crm = initCrm({ route, must, str, getSetting, setSetting, audit, notifyAdmins, publicBase });
+
+// ---------- входящий вебхук: любая CRM создаёт заявку (v62) ----------
+// POST /api/hooks/crm/<токен> (токен — в Настройки → Интеграции → CRM). JSON-поля (все, кроме адреса, необязательны):
+// address, company, phone, date (2026-10-08 | 08.10 | 08.10.2026), time (13:00), datetime (ISO), procedure, pests (массив или строка),
+// comment, price, lead_id (ID сделки в CRM — для обратной связи), tech (Telegram ID, телефон или имя исполнителя).
+// Либо text — свободный текст заявки, как в чате (разберётся так же, как сообщение боту). Без исполнителя → «Кто заберёт».
+route('POST', '/api/hooks/crm/:token', async ({ params, body }) => {
+  const c = await crm.cfg();
+  const tok = String(params.token || '');
+  const ok = c.inbound.enabled && c.inbound.token && tok.length === c.inbound.token.length
+    && crypto.timingSafeEqual(Buffer.from(tok), Buffer.from(c.inbound.token));
+  must(ok, 403, 'Неверный или отключённый вебхук');
+  const f = (k, n = 300) => str(body[k] ?? '', n);
+  const leadId = str(body.lead_id ?? body.crm_lead_id ?? body.deal_id ?? '', 100);
+  if (leadId) {
+    const [dup] = await db.query("SELECT id, task_no FROM tasks WHERE crm_lead_id = $1 AND status IN ('new','open','pending','in_progress') LIMIT 1", [leadId]);
+    if (dup) return { ok: true, duplicate: true, id: dup.id, task_no: Number(dup.task_no) };
+  }
+  const pestsIn = Array.isArray(body.pests) ? body.pests.map((x) => str(x, 60)).join(', ') : f('pests', 300);
+  const lines = [
+    f('text', 3000),
+    f('company', 200) || f('client', 200) ? `Клиент: ${f('company', 200) || f('client', 200)}` : '',
+    f('address') ? `Адрес: ${f('address')}` : '',
+    f('phone', 40) ? `Телефон: ${f('phone', 40)}` : '',
+    f('procedure', 60) ? `Обработка: ${f('procedure', 60)}` : '',
+    pestsIn ? `Вредители: ${pestsIn}` : '',
+  ].filter(Boolean);
+  const parsed = parseTask(lines.join('\n')) || { company: '', address: '', procedure: '', pests: [], phone: '', comment: '', area: '' };
+  if (f('address')) parsed.address = f('address');
+  if (f('company', 200) || f('client', 200)) parsed.company = f('company', 200) || f('client', 200);
+  if (f('phone', 40)) parsed.phone = f('phone', 40);
+  parsed.comment = [parsed.comment, f('comment', 1000)].filter(Boolean).join('\n');
+  if (!PROCEDURES.includes(parsed.procedure)) parsed.procedure = PROCEDURES.find((p) => p.toLowerCase() === f('procedure', 60).toLowerCase()) || parsed.procedure || '';
+  // дата/время
+  const dt = f('datetime', 40);
+  const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(f('date', 20)) || /^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$/.exec(f('date', 20));
+  const tm = /^(\d{1,2})[:.](\d{2})/.exec(f('time', 10));
+  if (dt && !Number.isNaN(Date.parse(dt))) { parsed.planned_at = new Date(dt).toISOString(); parsed.has_time = /T\d{2}:\d{2}/.test(dt); }
+  else if (dm) {
+    const iso = dm[0].includes('-');
+    const y = iso ? +dm[1] : dm[3] ? (dm[3].length === 2 ? 2000 + +dm[3] : +dm[3]) : new Date().getFullYear();
+    const mo = iso ? +dm[2] : +dm[2]; const d = iso ? +dm[3] : +dm[1];
+    parsed.planned_at = zonedIso(y, mo, d, tm ? +tm[1] : 9, tm ? +tm[2] : 0); parsed.has_time = Boolean(tm);
+  }
+  const price = body.price == null || body.price === '' ? null : Number(String(body.price).replace(',', '.').replace(/\s/g, ''));
+  if (Number.isFinite(price) && price >= 0) parsed.price = price;
+  must(String(parsed.address || '').trim().length >= 3, 400, 'Нужен адрес (поле address или text)');
+  // исполнитель: Telegram ID, телефон или имя
+  const techQ = f('tech', 100);
+  let tech = null;
+  if (techQ) {
+    const staff = await db.query("SELECT tg_id, name, phone FROM users WHERE status = 'active' AND role IN ('tech','specialist')");
+    const digits = techQ.replace(/\D/g, '');
+    tech = staff.find((u) => u.tg_id === techQ)
+      || (digits.length >= 8 ? staff.find((u) => String(u.phone || '').replace(/\D/g, '').endsWith(digits.slice(-8))) : null)
+      || staff.find((u) => u.name.toLowerCase() === techQ.toLowerCase())
+      || staff.find((u) => u.name.toLowerCase().includes(techQ.toLowerCase()));
+  }
+  const author = 'CRM';
+  let t;
+  if (tech) {
+    let chatId = null; let threadId = null;
+    const binding = Object.entries(await topicBindings()).find(([, v]) => String(v) === tech.tg_id);
+    if (binding) { const [cid, th] = binding[0].split(':'); chatId = cid; threadId = th && th !== '0' ? th : null; }
+    else { const office = await officeChat(); if (office) { chatId = String(office.id); threadId = office.thread_id || null; } }
+    t = await createTask({ parsed, tech: tech.tg_id, chatId, threadId, messageId: null, author, authorId: null, trusted: true }); // CRM подключает владелец — подтверждение не нужно
+  } else {
+    const office = await officeChat();
+    t = await createOpenTask({ parsed, audience: 'all', bonus: 0, author, authorId: null, chatId: office ? String(office.id) : null, threadId: office?.thread_id || null });
+  }
+  must(t, 400, 'Не удалось создать заявку');
+  if (leadId) await db.query('UPDATE tasks SET crm_lead_id = $1 WHERE id = $2', [leadId, t.id]);
+  await audit({ id: 'crm', name: 'CRM' }, 'Заявка из CRM', `№ ${t.task_no} · ${parsed.company || parsed.address}`, [leadId && `лид ${leadId}`, tech ? `исполнитель ${tech.name}` : '«Кто заберёт»'].filter(Boolean).join('; '));
+  return { ok: true, id: t.id, task_no: Number(t.task_no), assigned_to: tech?.name || null, open: !tech };
+}, { access: 'public' });
 // Касса: наличные на руках у сотрудника, сдача кассы и выдача под отчёт — server/src/cash.js
 const cash = initCash({ db, route, must, str, uid, now, audit, notifyTech, escHtml });
 
@@ -5758,7 +5835,7 @@ async function createOpenTask({ parsed, audience, bonus, author, authorId, chatI
   return t;
 }
 
-async function createTask({ parsed, tech, chatId, threadId, messageId, author, authorId }) {
+async function createTask({ parsed, tech, chatId, threadId, messageId, author, authorId, trusted = false }) {
   const [u] = await db.query('SELECT tg_id, name FROM users WHERE tg_id = $1', [tech]);
   if (!u) return null;
   const [r] = await db.query('SELECT MAX(task_no) AS m FROM tasks');
@@ -5767,7 +5844,7 @@ async function createTask({ parsed, tech, chatId, threadId, messageId, author, a
     planned_at: parsed.planned_at, has_time: parsed.has_time ? 1 : 0, procedure: parsed.procedure, pests: JSON.stringify(parsed.pests),
     phone: parsed.phone, comment: parsed.comment, area: parsed.area || '', status: 'new', chat_id: chatId,
     // заявку от не-админа сначала подтверждает администратор (настройка «Подтверждение заявок»)
-    ...((await taskApprovalOn()) && !(await isAdminTg(authorId)) ? { status: 'pending' } : {}),
+    ...(!trusted && (await taskApprovalOn()) && !(await isAdminTg(authorId)) ? { status: 'pending' } : {}),
     thread_id: threadId ? String(threadId) : null, message_id: messageId, author, created_at: now(), updated_at: now(),
   };
   t.rooms = parsed.rooms || null; t.stage = parsed.stage || ''; t.price = parsed.price ?? null; t.mult = parsed.mult && parsed.mult !== 1 ? parsed.mult : null; t.point_cat = parsed.point_cat || ''; t.point_zone = parsed.point_zone || ''; t.sotki = parsed.sotki ?? null; t.team = JSON.stringify((parsed.team || []).filter((x) => x !== tech));

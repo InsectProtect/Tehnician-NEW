@@ -512,7 +512,14 @@ export interface CarFleet { settings: CarSettings; ai: boolean; items: CarFleetI
 export interface CarDetail extends CarRes { user: { tg_id: string; name: string }; service_log: { item: string; label: string; km: number; note: string; amount: number | null; created_at: string }[] }
 
 /* ---------- v49: CRM-коннектор ---------- */
-export interface CrmSettings { provider: 'amocrm' | null; enabled: boolean; amocrm: { domain: string; token_set: boolean; token_masked: string } }
+export type CrmProvider = 'amocrm' | 'bitrix24' | 'webhook';
+export interface CrmSettings {
+  provider: CrmProvider | null; enabled: boolean;
+  amocrm: { domain: string; token_set: boolean; token_masked: string };
+  bitrix24: { url_set: boolean; url_masked: string; won_stage: string };
+  webhook: { url: string; secret_set: boolean; secret_masked: string; include_pdf: boolean };
+  inbound: { enabled: boolean; url: string };
+}
 
 /* ---------- v52: Касса ---------- */
 export interface CashHandover { id: string; expected_amount: number; created_at: string }
