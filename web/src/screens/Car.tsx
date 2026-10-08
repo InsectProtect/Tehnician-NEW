@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Camera, Car as CarIcon, Fuel, Gauge, Plus, Receipt, Sparkles, Trash2, Wrench, X } from 'lucide-react';
+import { Camera, Car as CarIcon, Check, Fuel, Gauge, Plus, Receipt, Sparkles, Trash2, Wrench, X } from 'lucide-react';
 import { api } from '../api';
 import { useConfig } from '../config';
 import { compressImage } from '../image';
@@ -676,7 +676,8 @@ export function CarsPanel() {
           </button>
         ))}
       </div>
-      {canSettings && <CarSettingsCard s={d.settings} items={d.service_items || []} onSaved={load} />}
+      {canSettings && <ServiceRegCard s={d.settings} items={d.service_items || []} onSaved={load} />}
+      {canSettings && <CarSettingsCard s={d.settings} onSaved={load} />}
       {open && <FleetCarSheet tg={open} settings={d.settings} onClose={() => { setOpen(null); load(); }} />}
     </>
   );
@@ -823,7 +824,78 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
   );
 }
 
-function CarSettingsCard({ s: s0, items, onSaved }: { s: CarSettings; items: NonNullable<CarFleet['service_items']>; onSaved: () => void }) {
+// основное, что важно для служебных фургонов — для кнопки «Только основное»
+const SERVICE_BASIC = ['tires', 'cabin', 'brakes', 'air', 'fuel_filter', 'brake_fluid', 'coolant', 'timing', 'glow_plugs', 'battery'];
+const FUEL_RU: Record<string, string> = { petrol: 'бензин', diesel: 'дизель', gas: 'ГБО', hybrid: 'гибрид' };
+
+/** Регламент ТО: галочками — какие пункты важны компании (видны сотрудникам и напоминаются), и интервал каждого. */
+function ServiceRegCard({ s, items, onSaved }: { s: CarSettings; items: NonNullable<CarFleet['service_items']>; onSaved: () => void }) {
+  const toast = useToast();
+  const init = () => Object.fromEntries(items.map((it) => {
+    const v = s.service_km?.[it.id];
+    return [it.id, { on: v !== 0, km: v == null || v === 0 ? '' : String(v) }];
+  })) as Record<string, { on: boolean; km: string }>;
+  const [st, setSt] = useState(init);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setSt(init()), [s, items]); // eslint-disable-line react-hooks/exhaustive-deps
+  const onCount = Object.values(st).filter((x) => x.on).length;
+  const setAll = (pick: (id: string) => boolean) => { haptic.tap(); setSt((x) => Object.fromEntries(Object.entries(x).map(([id, v]) => [id, { ...v, on: pick(id) }]))); };
+  async function save() {
+    setBusy(true);
+    try {
+      const service_km = Object.fromEntries(items.map((it) => [it.id, !st[it.id]?.on ? 0 : st[it.id].km ? Number(st[it.id].km) : null]));
+      await api.saveCarSettings({ service_km } as unknown as Partial<CarSettings>);
+      haptic.success(); toast('Регламент сохранён', 'ok'); onSaved();
+    } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(false); }
+  }
+  if (!items.length) return null;
+  return (
+    <Collapse id="car-service-reg" title="🔧 Регламент ТО" hint={`Отмечено ${onCount + 1} из ${items.length + 1} · масло всегда`}>
+      <div className="flex flex-col gap-3">
+        <div className="text-[13px] leading-snug text-muted">
+          Отметьте галочкой, какие работы важны для ваших машин. Только они показываются сотрудникам в «Мой авто», попадают в подсказки «что сделать по пробегу» и в предупреждения автопарка. Интервал можно оставить по умолчанию или задать свой.
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => setAll(() => true)} className="rounded-full bg-fill px-3 py-1.5 text-[13px] font-semibold">Все</button>
+          <button onClick={() => setAll((id) => SERVICE_BASIC.includes(id))} className="rounded-full bg-fill px-3 py-1.5 text-[13px] font-semibold">Только основное</button>
+          <button onClick={() => setAll(() => false)} className="rounded-full bg-fill px-3 py-1.5 text-[13px] font-semibold">Снять все</button>
+        </div>
+        <div className="overflow-hidden rounded-2xl bg-card">
+          <div className="flex items-center gap-3 border-b border-line px-3.5 py-3 opacity-70">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-ink text-card"><Check size={15} strokeWidth={3} /></span>
+            <span className="flex-1 text-[14px]">Масло и масляный фильтр<div className="text-[11.5px] text-muted">всегда · интервал задаёт сотрудник в своей машине</div></span>
+          </div>
+          {items.map((it, i) => {
+            const v = st[it.id] || { on: true, km: '' };
+            return (
+              <div key={it.id} className={cx('flex items-center gap-3 px-3.5 py-2.5', i > 0 && 'border-t border-line')}>
+                <button onClick={() => { haptic.tap(); setSt((x) => ({ ...x, [it.id]: { ...v, on: !v.on } })); }} className="flex min-w-0 flex-1 items-center gap-3 text-left" aria-pressed={v.on}>
+                  <span className={cx('flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition', v.on ? 'bg-accent text-black' : 'ring-2 ring-inset ring-line')}>
+                    {v.on && <Check size={15} strokeWidth={3} />}
+                  </span>
+                  <span className={cx('min-w-0 text-[14px] leading-snug', !v.on && 'text-muted')}>
+                    {it.label}
+                    {it.fuels && <span className="block text-[11.5px] text-muted">только {it.fuels.map((f) => FUEL_RU[f] || f).join(' / ')}</span>}
+                  </span>
+                </button>
+                {v.on && (
+                  <div className="flex shrink-0 items-center gap-1 text-[12px] text-muted">
+                    <input inputMode="numeric" placeholder={String(it.km)} value={v.km}
+                      onChange={(e) => { const km = e.target.value.replace(/\D/g, ''); setSt((x) => ({ ...x, [it.id]: { ...v, km } })); }}
+                      className="h-8 w-[72px] rounded-lg bg-fill text-center text-[13px] text-ink" />км
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <Button loading={busy} onClick={save}>Сохранить регламент</Button>
+      </div>
+    </Collapse>
+  );
+}
+
+function CarSettingsCard({ s: s0, onSaved }: { s: CarSettings; onSaved: () => void }) {
   const toast = useToast();
   const [s, setS] = useState(s0);
   const [busy, setBusy] = useState(false);
@@ -841,26 +913,7 @@ function CarSettingsCard({ s: s0, items, onSaved }: { s: CarSettings; items: Non
           <div key={z.id} className="flex flex-wrap items-center gap-2">{z.label}: фото от {inp(s.photos[z.id][0], (x) => setS({ ...s, photos: { ...s.photos, [z.id]: [x, s.photos[z.id][1]] } }))} до {inp(s.photos[z.id][1], (x) => setS({ ...s, photos: { ...s.photos, [z.id]: [s.photos[z.id][0], x] } }))}</div>
         ))}
         <div className="flex flex-wrap items-center gap-2"><Gauge size={16} />Замена масла по умолчанию каждые <input inputMode="numeric" value={String(s.service_interval)} onChange={(e) => setS({ ...s, service_interval: n(e.target.value) })} className="h-9 w-24 rounded-xl bg-card text-center ring-1 ring-inset ring-line" /> км</div>
-        {items.length > 0 && (
-          <div className="rounded-2xl bg-fill p-3">
-            <div className="mb-1 text-[14px] font-semibold">Регламент ТО по пробегу</div>
-            <div className="mb-2 text-[12px] leading-snug text-muted">Интервал в км для всех машин. 0 — пункт выключен. Пусто — по умолчанию. Сотрудник видит, когда пора, и отмечает «Сделал ТО».</div>
-            <div className="flex flex-col gap-1.5">
-              {items.map((it) => {
-                const cur = s.service_km?.[it.id];
-                return (
-                  <div key={it.id} className="flex items-center gap-2">
-                    <span className={cx('min-w-0 flex-1 text-[13px] leading-snug', cur === 0 && 'text-muted line-through')}>{it.label}{it.fuels ? <span className="text-muted"> · {it.fuels.map((f) => ({ petrol: 'бензин', diesel: 'дизель', gas: 'ГБО', hybrid: 'гибрид' } as Record<string, string>)[f] || f).join('/')}</span> : null}</span>
-                    <input inputMode="numeric" placeholder={String(it.km)} value={cur == null ? '' : String(cur)}
-                      onChange={(e) => { const v = e.target.value.replace(/\D/g, ''); const next = { ...(s.service_km || {}) }; if (v === '') delete next[it.id]; else next[it.id] = Number(v); setS({ ...s, service_km: next }); }}
-                      className="h-8 w-20 shrink-0 rounded-lg bg-card text-center text-[13px] ring-1 ring-inset ring-line" />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-        <Button loading={busy} onClick={async () => { setBusy(true); try { await api.saveCarSettings({ ...s, service_km: Object.fromEntries(items.map((it) => [it.id, s.service_km?.[it.id] ?? null])) as unknown as Record<string, number> }); toast('Сохранено', 'ok'); onSaved(); } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(false); } }}>Сохранить</Button>
+        <Button loading={busy} onClick={async () => { setBusy(true); try { const { service_km: _skip, ...rest } = s; void _skip; await api.saveCarSettings(rest); toast('Сохранено', 'ok'); onSaved(); } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(false); } }}>Сохранить</Button>
       </div>
     </Collapse>
   );
