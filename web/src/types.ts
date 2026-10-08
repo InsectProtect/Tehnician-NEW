@@ -408,7 +408,15 @@ export type GuardStat = { id: string; name: string; visits: number; flagged: num
 export type GuardRes = { settings: GuardSettings; kinds: Record<string, string>; stats: { team_minutes: number | null; items: GuardStat[] }; items: GuardFlag[] };
 
 /* ---------- игра, смена в эфире, входящие ---------- */
-export type Quest = { id: string; title: string; target: number; progress: number; xp: number; done: boolean };
+export type Quest = { id: string; title: string; target: number; progress: number; xp: number; done: boolean; icon?: string; hint?: string; action?: 'checkin' | null };
+type QuestToggle = { on: boolean; xp: number };
+/** Настройки квестов дня (админка → «🎯 Квесты»). */
+export type QuestsSettings = {
+  coffee: QuestToggle & { from: string; to: string };
+  first_ontime: QuestToggle; ontime: QuestToggle; visits: QuestToggle; photos: QuestToggle;
+  shift: QuestToggle & { hours: number };
+  office: { lat: number | null; lon: number | null; radius: number; label: string };
+};
 export type Badge = { id: string; title: string; hint: string; icon: string; got: boolean; progress: [number, number] | null };
 export type ShiftState = { live: boolean; since: string | null; until: string | null; last_at: string | null; minutes: number; hours: number; max_hours: number; xp_per_hour: number; from_hour: number; to_hour: number };
 export type GameState = {

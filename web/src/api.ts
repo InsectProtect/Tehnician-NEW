@@ -1,6 +1,6 @@
 import { authHeader, setAppToken } from './telegram';
 import type {
-  PrepState, PrepTask, PrepTrap, CrmProvider,
+  PrepState, PrepTask, PrepTrap, CrmProvider, QuestsSettings,
   AdminStats, AdminVisit, BotStatus, KpiRes, MonthSummary, NotificationsRes, RemarksRes, TasksStats, PestsStats, AuditItem, Bootstrap, CompanySettings, Task, BootstrapPartial, Company, ImportStats, Invite, Lead, Observation, OfficeChat,
   RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup,
 } from './types';
@@ -202,6 +202,9 @@ export const api = {
   moreWork: () => request<{ ok: true }>('POST', '/api/me/more-work'),
   taskRoute: (id: string) => request<RouteInfo>('GET', `/api/tasks/${id}/route`),
   adminLive: () => request<{ items: LiveItem[] }>('GET', '/api/admin/live'),
+  checkin: (lat: number, lon: number) => request<{ ok: true; fresh: boolean; xp: number; game: GameState }>('POST', '/api/me/checkin', { lat, lon }),
+  questsSettings: () => request<{ settings: QuestsSettings }>('GET', '/api/admin/quests-settings'),
+  saveQuestsSettings: (s: Record<string, unknown>) => request<{ ok: true; settings: QuestsSettings }>('PUT', '/api/admin/quests-settings', s),
   geoSettings: () => request<{ settings: GeoSettings }>('GET', '/api/admin/geo-settings'),
   saveGeoSettings: (s: Partial<GeoSettings>) => request<{ ok: true; settings: GeoSettings }>('PUT', '/api/admin/geo-settings', s),
   claimJob: (id: string) => request<{ ok: true; name: string }>('POST', `/api/jobs/${id}/claim`),

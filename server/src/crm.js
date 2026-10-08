@@ -54,8 +54,8 @@ function amocrmProvider(cfg) {
     }
   }
 
-  /** Загрузка файла в Диск amoCRM и привязка к сделке (best-effort, двухшаговый флоу Files API). */
-  async function attachFile(leadId, buf, filename) {
+  /** Загрузка файла в Диск amoCRM (один раз) и привязка к нескольким сущностям: [['leads', id], ['companies', id], …]. */
+  async function attachFile(targets, buf, filename) {
     try {
       const session = await api('/v2.0/files/session', {
         method: 'POST',
@@ -72,32 +72,59 @@ function amocrmProvider(cfg) {
       const meta = await up.json().catch(() => null);
       const uuid = meta?.uuid || session?.uuid;
       if (!uuid) throw new Error('amoCRM не вернул uuid файла');
-      await api(`/api/v4/leads/${encodeURIComponent(leadId)}/files`, { method: 'POST', body: JSON.stringify([{ uuid }]) });
+      for (const [entity, id] of targets) {
+        await api(`/api/v4/${entity}/${encodeURIComponent(id)}/files`, { method: 'POST', body: JSON.stringify([{ file_uuid: uuid }]) })
+          .catch((e) => console.error(`amoCRM: акт не привязан к ${entity} ${id}:`, e.message));
+      }
     } catch (e) {
-      console.error('amoCRM: акт не прикреплён к сделке (некритично):', e.message);
+      console.error('amoCRM: акт не прикреплён (некритично):', e.message);
     }
   }
 
-  async function addNote(leadId, text) {
-    await api('/api/v4/leads/notes', {
+  async function addNote(entity, id, text) {
+    await api(`/api/v4/${entity}/notes`, {
       method: 'POST',
-      body: JSON.stringify([{ entity_id: Number(leadId), note_type: 'common', params: { text } }]),
+      body: JSON.stringify([{ entity_id: Number(id), note_type: 'common', params: { text } }]),
     });
+  }
+
+  /** Карточка клиента: компании и контакты сделки, а без сделки — поиск по телефону и названию. */
+  async function clientCards(leadId, report, task) {
+    const out = [];
+    if (leadId) {
+      const lead = await api(`/api/v4/leads/${encodeURIComponent(leadId)}?with=contacts`).catch(() => null);
+      for (const c of lead?._embedded?.companies || []) out.push(['companies', c.id]);
+      for (const c of (lead?._embedded?.contacts || []).slice(0, 3)) out.push(['contacts', c.id]);
+      if (out.length) return out;
+    }
+    const phone = String(report?.client?.phone || task?.phone || '').replace(/\D/g, '').slice(-8);
+    if (phone.length >= 8) {
+      const r = await api(`/api/v4/contacts?query=${phone}&limit=1`).catch(() => null);
+      const c = r?._embedded?.contacts?.[0];
+      if (c) out.push(['contacts', c.id]);
+    }
+    const name = String(report?.client?.name || task?.company_name || '').trim();
+    if (name.length >= 3 && !/^persoan|^физлиц/i.test(name)) {
+      const r = await api(`/api/v4/companies?query=${encodeURIComponent(name)}&limit=1`).catch(() => null);
+      const c = r?._embedded?.companies?.[0];
+      if (c) out.push(['companies', c.id]);
+    }
+    return out;
   }
 
   return {
     id: 'amocrm',
-    needsLead: true,
     async test() { if (!domain || !token) throw new Error('Не заданы домен или токен'); await api('/api/v4/account'); return 'amoCRM отвечает, токен рабочий'; },
-    async upsertLeadSuccess({ leadId, task, visit, actPdfBuffer, actFilename }) {
+    async upsertLeadSuccess({ leadId, task, visit, actPdfBuffer, actFilename, report }) {
       if (!domain || !token) throw new Error('CRM (amoCRM): не заданы домен или токен');
-      await markWon(leadId);
-      if (actPdfBuffer) await attachFile(leadId, actPdfBuffer, actFilename || 'act.pdf');
-      const lines = ['✅ Выезд выполнен успешно'];
-      if (task?.task_no) lines.push(`Заявка № ${task.task_no}`);
-      if (visit?.address) lines.push(`Адрес: ${visit.address}`);
-      if (visit?.procedure) lines.push(`Обработка: ${visit.procedure}`);
-      await addNote(leadId, lines.join('\n'));
+      const text = report?.text || ['✅ Выезд выполнен успешно', task?.task_no && `Заявка № ${task.task_no}`, visit?.address && `Адрес: ${visit.address}`].filter(Boolean).join('\n');
+      const cards = await clientCards(leadId, report, task);
+      const targets = [...(leadId ? [['leads', leadId]] : []), ...cards];
+      if (!targets.length) return { skipped: 'клиент не найден в amoCRM' };
+      if (leadId) await markWon(leadId);
+      if (actPdfBuffer) await attachFile(targets, actPdfBuffer, actFilename || 'act.pdf');
+      for (const [entity, id] of targets) await addNote(entity, id, text).catch((e) => console.error(`amoCRM note ${entity}:`, e.message));
+      return { cards: cards.length };
     },
   };
 }
@@ -120,16 +147,42 @@ function bitrix24Provider(cfg) {
 
   return {
     id: 'bitrix24',
-    needsLead: true,
     async test() { await call('crm.deal.fields'); return 'Bitrix24 отвечает, доступ к CRM есть'; },
-    async upsertLeadSuccess({ leadId, task, visit, actPdfBuffer, actFilename, actUrl }) {
+    async upsertLeadSuccess({ leadId, task, visit, actPdfBuffer, actFilename, actUrl, report }) {
       if (!/^https:\/\/[^/]+\/rest\/\d+\/[^/]+\/$/.test(base)) throw new Error('CRM (Bitrix24): адрес вебхука вида https://xxx.bitrix24.ru/rest/1/код/');
-      await call('crm.deal.update', { id: leadId, fields: { STAGE_ID: stage } });
-      const text = ['✅ Выезд выполнен успешно', task?.task_no && `Заявка № ${task.task_no}`, visit?.address && `Адрес: ${visit.address}`,
+      const text = report?.text || ['✅ Выезд выполнен успешно', task?.task_no && `Заявка № ${task.task_no}`, visit?.address && `Адрес: ${visit.address}`,
         visit?.procedure && `Обработка: ${visit.procedure}`, actUrl && `Акт: ${actUrl}`].filter(Boolean).join('\n');
-      const fields = { ENTITY_ID: Number(leadId), ENTITY_TYPE: 'deal', COMMENT: text };
-      if (actPdfBuffer) fields.FILES = [[actFilename || 'act.pdf', actPdfBuffer.toString('base64')]];
-      await call('crm.timeline.comment.add', { fields });
+      // карточка клиента: компания и контакт сделки, без сделки — поиск по телефону / названию
+      const targets = [];
+      if (leadId) {
+        await call('crm.deal.update', { id: leadId, fields: { STAGE_ID: stage } });
+        targets.push(['deal', leadId]);
+        const deal = await call('crm.deal.get', { id: leadId }).catch(() => null);
+        if (Number(deal?.COMPANY_ID)) targets.push(['company', deal.COMPANY_ID]);
+        if (Number(deal?.CONTACT_ID)) targets.push(['contact', deal.CONTACT_ID]);
+      }
+      if (targets.length <= 1) {
+        const phone = String(report?.client?.phone || task?.phone || '').replace(/\D/g, '');
+        if (phone.length >= 8) {
+          for (const [type, key] of [['CONTACT', 'contact'], ['COMPANY', 'company']]) {
+            const r = await call('crm.duplicate.findbycomm', { entity_type: type, type: 'PHONE', values: [phone, `+${phone}`, phone.slice(-8)] }).catch(() => null);
+            const id = r?.[type]?.[0];
+            if (id && !targets.some(([e, x]) => e === key && String(x) === String(id))) targets.push([key, id]);
+          }
+        }
+        const name = String(report?.client?.name || task?.company_name || '').trim();
+        if (!targets.some(([e]) => e === 'company') && name.length >= 3 && !/^persoan|^физлиц/i.test(name)) {
+          const r = await call('crm.company.list', { filter: { '%TITLE': name }, select: ['ID'] }).catch(() => null);
+          if (r?.[0]?.ID) targets.push(['company', r[0].ID]);
+        }
+      }
+      if (!targets.length) return { skipped: 'клиент не найден в Bitrix24' };
+      const files = actPdfBuffer ? [[actFilename || 'act.pdf', actPdfBuffer.toString('base64')]] : null;
+      for (const [type, id] of targets) {
+        await call('crm.timeline.comment.add', { fields: { ENTITY_ID: Number(id), ENTITY_TYPE: type, COMMENT: text, ...(files ? { FILES: files } : {}) } })
+          .catch((e) => console.error(`Bitrix24 comment ${type}:`, e.message));
+      }
+      return { cards: targets.filter(([t]) => t !== 'deal').length };
     },
   };
 }
@@ -157,12 +210,11 @@ function webhookProvider(cfg) {
   }
   return {
     id: 'webhook',
-    needsLead: false,
     async test() {
       await send({ event: 'test', sent_at: new Date().toISOString(), message: 'Проверка подключения InsectProtect' });
       return 'Тестовое событие доставлено (ответ 2xx)';
     },
-    async upsertLeadSuccess({ leadId, task, visit, actPdfBuffer, actFilename, actUrl }) {
+    async upsertLeadSuccess({ leadId, task, visit, actPdfBuffer, actFilename, actUrl, report }) {
       const pests = (() => { try { return JSON.parse(visit?.pests || task?.pests || '[]'); } catch { return []; } })();
       await send({
         event: 'visit.done',
@@ -177,7 +229,12 @@ function webhookProvider(cfg) {
           company: visit.company_name || '', address: visit.address || '', procedure: visit.procedure || '', pests,
           payment: visit.payment || '', pay_amount: visit.pay_amount ?? null, comment: visit.comment || '',
         },
+        client: report?.client || null,
+        traps: report?.traps || null,
+        observations: report?.observations || [],
+        summary: report?.text || '',
         act_pdf_url: actUrl || null,
+        journal_pdf_url: report?.journal_url || null,
         ...(cfg.webhook?.include_pdf && actPdfBuffer ? { act_pdf: { filename: actFilename || 'act.pdf', base64: actPdfBuffer.toString('base64') } } : {}),
       });
     },
@@ -272,16 +329,17 @@ export function initCrm(ctx) {
   }, { access: 'admin' });
 
   /** Вызывается после успешного завершения выезда. Best-effort: ошибка не должна ломать /finish для техника. */
-  async function onVisitDone({ task, visit, buildPdf, filename, actUrl }) {
+  /** Результат выезда → CRM: сделка (если привязана) и карточка клиента (компания/контакт; без сделки — поиск по телефону и названию). */
+  async function onVisitDone({ task, visit, buildPdf, filename, actUrl, report, log }) {
     if (!task) return;
     const c = await cfg();
     const p = providerFor(c);
     if (!p) return;
-    if (p.needsLead && !task.crm_lead_id) return; // amoCRM/Bitrix24: лид не привязан к заявке — молча пропускаем
     try {
       const wantPdf = p.id !== 'webhook' || c.webhook.include_pdf;
       const buf = wantPdf ? await buildPdf() : null;
-      await p.upsertLeadSuccess({ leadId: task.crm_lead_id || '', task, visit, actPdfBuffer: buf, actFilename: filename, actUrl });
+      const r = await p.upsertLeadSuccess({ leadId: task.crm_lead_id || '', task, visit, actPdfBuffer: buf, actFilename: filename, actUrl, report });
+      log?.(r?.skipped ? `не отправлено: ${r.skipped}` : `отправлено${r?.cards ? `, карточек клиента: ${r.cards}` : ''}`);
     } catch (e) {
       console.error('CRM sync error:', e.message);
       notifyAdmins?.(`⚠️ CRM: не удалось передать заявку № ${task.task_no} в ${c.provider}${task.crm_lead_id ? ` (лид ${escHtml(task.crm_lead_id)})` : ''}: ${escHtml(String(e.message).slice(0, 300))}`).catch?.(() => {});

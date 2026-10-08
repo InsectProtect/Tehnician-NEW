@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Bell, Car as CarIcon, CalendarClock, ChevronRight, Hand, Home as HomeIcon, Inbox, MapPin, Megaphone, Navigation, Plus, Trophy, User as UserIcon } from 'lucide-react';
 import { api } from '../api';
 import { useConfig } from '../config';
-import { getThemePref, haptic, openLink, openTgChat, setThemePref, type ThemePref } from '../telegram';
+import { getLocation, getThemePref, haptic, openLink, openTgChat, setThemePref, type ThemePref } from '../telegram';
 import type { GameState, InboxItem, InboxRes, Job, MonthSummary, MyPlan, Reward, RouteInfo, Task, LiveItem } from '../types';
 import { BadgeTile, FatBar, GameButton, QuestPath, Segments, TileMap, XpChip, fmtN, type MapMark } from '../components/game';
 import { Button, Screen, SectionTitle, Segmented, Sheet, Spinner, cx, useToast } from '../components/ui';
@@ -243,8 +243,27 @@ export function InboxPreview({ onOpen }: { onOpen: (item: InboxItem) => void }) 
 
 /** Квесты дня. */
 export function QuestsCard() {
-  const { game } = usePlay();
-  if (!game || !game.enabled) return null;
+  const { game, refresh } = usePlay();
+  const toast = useToast();
+  const [checking, setChecking] = useState(false);
+  if (!game || !game.enabled || !game.quests.length) return null;
+  async function checkin() {
+    haptic.tap();
+    setChecking(true);
+    try {
+      const pos = await getLocation();
+      if (!pos) { toast('Нет доступа к геопозиции — разрешите её для Telegram в настройках телефона', 'error'); return; }
+      const r = await api.checkin(pos.lat, pos.lon);
+      haptic.success();
+      toast(r.fresh ? `☕️ Доброе утро! +${r.xp} XP` : 'Уже засчитано сегодня');
+      refresh();
+    } catch (e) {
+      haptic.error();
+      toast((e as Error).message, 'error');
+    } finally {
+      setChecking(false);
+    }
+  }
   return (
     <div className="mb-5">
       <div className="mb-2 flex items-center justify-between px-1">
@@ -257,8 +276,15 @@ export function QuestsCard() {
             <span className={cx('flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] text-[13px] font-extrabold',
               q.done ? 'bg-[#34C759] text-black shadow-[0_3px_0_#1E7A37]' : 'border-2 border-accent text-accent-ink')}>{q.done ? '✓' : q.progress}</span>
             <div className="min-w-0 flex-1">
-              <div className={cx('text-[14.5px] font-bold', q.done && 'text-muted line-through')}>{q.title}{!q.done && q.target > 1 ? ` · ${q.progress}/${q.target}` : ''}</div>
+              <div className={cx('text-[14.5px] font-bold', q.done && 'text-muted line-through')}>{q.icon ? `${q.icon} ` : ''}{q.title}{!q.done && q.target > 1 ? ` · ${q.progress}/${q.target}` : ''}</div>
+              {!q.done && q.hint && <div className="mt-0.5 text-[12px] leading-snug text-muted">{q.hint}</div>}
               {!q.done && q.target > 1 && <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-fill"><div className="h-full rounded-full bg-accent" style={{ width: `${(q.progress / q.target) * 100}%` }} /></div>}
+              {!q.done && q.action === 'checkin' && (
+                <button disabled={checking} onClick={checkin}
+                  className="mt-2 rounded-full bg-accent px-3.5 py-1.5 text-[13px] font-extrabold text-black shadow-[0_3px_0_#9C4A08] active:translate-y-[2px] active:shadow-none disabled:opacity-50">
+                  {checking ? 'Проверяю…' : '☕️ Я в офисе'}
+                </button>
+              )}
             </div>
             <span className={cx('shrink-0 text-[12px] font-extrabold', q.done ? 'text-[#248A3D] dark:text-[#30D158]' : 'text-[#9A7A00] dark:text-[#FFD23F]')}>+{q.xp} XP</span>
           </div>

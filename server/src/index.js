@@ -3987,7 +3987,10 @@ route('POST', '/api/visits/:id/finish', async ({ params, body, req, user }) => {
       // amoCRM/Bitrix24 — только при привязанном лиде; «Любая CRM» (вебхук) — по каждой выполненной заявке
       const [vf] = await db.query('SELECT * FROM visits WHERE id = $1', [v.id]);
       const vCrm = { ...(vf || v), act_no: actNumber(vf || v) };
-      crm.onVisitDone({ task: t, visit: vCrm, buildPdf: () => buildVisitPdf(vf || v, docs), filename: pdfName(vf || v), actUrl: publicBase() ? `${publicBase()}${reportPath(v.id)}` : '' })
+      const actUrl = publicBase() ? `${publicBase()}${reportPath(v.id)}` : '';
+      crmReport(vCrm, t, actUrl)
+        .then((report) => crm.onVisitDone({ task: t, visit: vCrm, buildPdf: () => buildVisitPdf(vf || v, docs), filename: pdfName(vf || v), actUrl, report,
+          log: (msg) => audit({ id: 'crm', name: 'CRM' }, 'Результат выезда → CRM', `№ ${t.task_no} · ${vCrm.company_name}`, msg).catch(() => {}) }))
         .catch((e) => console.error('crm onVisitDone:', e.message));
     }
   }
@@ -4415,6 +4418,43 @@ async function xpTotal(tgId) { return Number((await db.query('SELECT COALESCE(SU
 const sales = initSales({ db, route, must, str, uid, now, getSetting, setSetting, audit, awardXp, xpTotal, levelOf, publicBase, TZN, notifyTech, taskSummary, pointsConfig });
 // «Мой авто»: машина, заправки, ТО, фотопроверки с ИИ — server/src/car.js
 const car = initCar({ db, route, must, str, uid, now, getSetting, setSetting, audit, awardXp, publicBase, TZN, addNotification });
+/** Всё о выполненном выезде для CRM: текст для примечания + данные клиента, станции, замечания с фото, ссылки на PDF. */
+async function crmReport(v, t, actUrl = '') {
+  const base = publicBase();
+  const abs = (p) => (base && p ? `${base}${p}` : p || null);
+  const rows = await visitRows(v);
+  const checked = rows.filter((r) => r.status);
+  const traps = rows.length ? {
+    total: rows.length, checked: checked.length,
+    activity: checked.filter((r) => r.status === 'activity').length,
+    damaged: checked.filter((r) => ['damaged', 'missing'].includes(r.status)).length,
+  } : null;
+  const observations = (await loadObservations(v.id)).map((o) => ({ category: o.category, comment: o.comment || '', photos: o.photos.map((p) => abs(p.url)) }));
+  const [cl] = await db.query('SELECT * FROM clients WHERE id = $1', [v.company_id]).catch(() => []);
+  const client = {
+    id: v.company_id, name: cl?.name || v.company_name || t?.company_name || '', phone: cl?.phone || t?.phone || '',
+    inn: cl?.inn || '', contact: cl?.contact || v.client_rep || '', address: v.address || '',
+  };
+  const pests = (() => { try { return JSON.parse(v.pests || '[]'); } catch { return []; } })();
+  const journal_url = rows.length ? abs(`/r/journal/${v.id}.pdf?${signLink(`journal:${v.id}`)}`) : null;
+  const when = new Date(v.finished_at || Date.now()).toLocaleString('ru-RU', { timeZone: TZN, day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const text = [
+    `✅ Выполнено · акт № ${v.act_no || actNumber(v)} · ${when}`,
+    t?.task_no && `Заявка № ${t.task_no}`,
+    `Клиент: ${client.name}`,
+    `Адрес: ${v.address}`,
+    `Обработка: ${[v.procedure, pests.join(', ')].filter(Boolean).join(' · ')}`,
+    `Специалист: ${v.tech_name}`,
+    paymentText(v) && `Оплата: ${paymentText(v)}`,
+    traps && `Станции: проверено ${traps.checked} из ${traps.total}${traps.activity ? `, с активностью ${traps.activity}` : ''}${traps.damaged ? `, повреждено/нет ${traps.damaged}` : ''}`,
+    observations.length && `Замечания:\n${observations.map((o) => `• ${o.category}${o.comment ? ` — ${o.comment}` : ''}${o.photos.length ? ` (фото: ${o.photos.length})` : ''}`).join('\n')}`,
+    v.comment && `Комментарий: ${v.comment}`,
+    actUrl && `Акт (PDF): ${actUrl}`,
+    journal_url && `Журнал станций (PDF): ${journal_url}`,
+  ].filter(Boolean).join('\n');
+  return { text, client, traps, observations, journal_url };
+}
+
 const crm = initCrm({ route, must, str, getSetting, setSetting, audit, notifyAdmins, publicBase });
 
 // ---------- входящий вебхук: любая CRM создаёт заявку (v62) ----------
@@ -4540,6 +4580,76 @@ const BADGES = [
   { id: 'crown', title: 'Чемпион', hint: 'победа в соревновании месяца', icon: 'crown' },
 ];
 
+// ---------- квесты дня (v63): набор и опыт настраиваются в админке («🎯 Квесты») ----------
+const DEFAULT_QUESTS = {
+  coffee: { on: true, xp: 25, from: '07:30', to: '09:30' }, // утренний кофе в офисе: геопозиция у офиса в окне времени
+  first_ontime: { on: true, xp: 20 },                        // первую обработку дня начать вовремя
+  ontime: { on: true, xp: 30 },                              // все обработки дня со временем — вовремя
+  visits: { on: true, xp: 50 },                              // N выездов за день
+  photos: { on: true, xp: 20 },                              // фото в каждом акте
+  shift: { on: true, xp: 20, hours: 4 },                     // N часов смены в эфире
+  office: { lat: null, lon: null, radius: 150, label: 'Офис' },
+};
+async function questsCfg() {
+  const c = (await getSetting('quests_cfg')) || {};
+  return Object.fromEntries(Object.entries(DEFAULT_QUESTS).map(([k, d]) => [k, { ...d, ...(c[k] || {}) }]));
+}
+const hmMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '')); return m ? +m[1] * 60 + +m[2] : null; };
+const localMin = (iso = now()) => { const [h, m] = new Date(iso).toLocaleTimeString('en-GB', { timeZone: TZN, hour: '2-digit', minute: '2-digit', hour12: false }).split(':'); return (+h % 24) * 60 + +m; };
+function distM(a, b) {
+  const R = 6371000; const rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat); const dLon = rad(b.lon - a.lon);
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return Math.round(2 * R * Math.asin(Math.sqrt(x)));
+}
+/** «Утренний кофе в офисе»: точка рядом с офисом в утреннем окне → квест засчитан (один раз в день). */
+async function checkCoffee(tgId, lat, lon, { notify = false } = {}) {
+  const q = await questsCfg();
+  const c = q.coffee; const o = q.office;
+  if (!c.on || o.lat == null || o.lon == null) return { ok: false, reason: 'off' };
+  const t = localMin(); const from = hmMin(c.from) ?? 450; const to = hmMin(c.to) ?? 570;
+  if (t < from || t > to) return { ok: false, reason: 'time', from: c.from, to: c.to };
+  const d = distM({ lat: Number(o.lat), lon: Number(o.lon) }, { lat: Number(lat), lon: Number(lon) });
+  if (d > (Number(o.radius) || 150)) return { ok: false, reason: 'far', distance: d };
+  const fresh = await awardXp(tgId, 'quest', Number(c.xp) || 25, `quest:${todayLocal()}:coffee`, 'Утренний кофе в офисе');
+  if (fresh && notify && botEnabled) sendMessage(tgId, `☕️ <b>Доброе утро!</b> Утренний кофе в офисе засчитан — <b>+${Number(c.xp) || 25} XP</b>.`).catch(() => {});
+  return { ok: true, fresh, xp: Number(c.xp) || 25 };
+}
+
+// Отметиться «Я в офисе» из приложения (геопозиция телефона)
+route('POST', '/api/me/checkin', async ({ body, user }) => {
+  const lat = Number(body.lat); const lon = Number(body.lon);
+  must(Number.isFinite(lat) && Number.isFinite(lon), 400, 'Нет геопозиции — разрешите её для Telegram');
+  const r = await checkCoffee(user.id, lat, lon);
+  if (r.reason === 'off') must(false, 400, 'Квест «Кофе в офисе» выключен или не задано место офиса');
+  if (r.reason === 'time') must(false, 400, `Кофе засчитывается утром, с ${r.from} до ${r.to}`);
+  if (r.reason === 'far') must(false, 400, `Вы в ${r.distance >= 1000 ? `${(r.distance / 1000).toFixed(1).replace('.', ',')} км` : `${r.distance} м`} от офиса — подойдите ближе`);
+  return { ok: true, fresh: r.fresh, xp: r.xp, game: await gameState(user.id) };
+});
+
+route('GET', '/api/admin/quests-settings', async () => ({ settings: await questsCfg() }), { access: 'admin' });
+route('PUT', '/api/admin/quests-settings', async ({ body, user }) => {
+  const c = await questsCfg();
+  for (const k of ['coffee', 'first_ontime', 'ontime', 'visits', 'photos', 'shift']) {
+    const b = body[k]; if (!b) continue;
+    if (b.on !== undefined) c[k].on = Boolean(b.on);
+    if (b.xp !== undefined) { const n = Math.round(Number(b.xp)); must(Number.isFinite(n) && n >= 0 && n <= 500, 400, 'Опыт — от 0 до 500'); c[k].xp = n; }
+  }
+  if (body.coffee) for (const f of ['from', 'to']) if (body.coffee[f] !== undefined) { must(hmMin(body.coffee[f]) != null, 400, 'Время в формате 07:30'); c.coffee[f] = body.coffee[f]; }
+  if (body.shift?.hours !== undefined) { const n = Math.round(Number(body.shift.hours)); must(n >= 1 && n <= 12, 400, 'Часов в эфире — от 1 до 12'); c.shift.hours = n; }
+  if (body.office) {
+    if (body.office.lat !== undefined || body.office.lon !== undefined) {
+      const lat = Number(body.office.lat); const lon = Number(body.office.lon);
+      must(Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180, 400, 'Некорректные координаты офиса');
+      c.office.lat = lat; c.office.lon = lon;
+    }
+    if (body.office.radius !== undefined) { const n = Math.round(Number(body.office.radius)); must(n >= 30 && n <= 2000, 400, 'Радиус — от 30 до 2000 м'); c.office.radius = n; }
+  }
+  await setSetting('quests_cfg', c);
+  await audit(user, 'Квесты: настройки', Object.entries(c).filter(([k, v]) => k !== 'office' && v.on).map(([k]) => k).join(', ') || 'все выключены');
+  return { ok: true, settings: c };
+}, { access: 'admin' });
+
 /** Всё игровое состояние сотрудника: уровень, квесты дня (с начислением XP за выполненные), серия, значки, смена. */
 async function gameState(tgId) {
   tgId = String(tgId);
@@ -4555,12 +4665,26 @@ async function gameState(tgId) {
   const plannedToday = (await db.query("SELECT planned_at FROM tasks WHERE tech_tg_id = $1 AND status NOT IN ('cancelled', 'void') AND planned_at IS NOT NULL", [tgId]))
     .filter((t) => dayOf(t.planned_at) === today).length;
   const timed = todays.filter((v) => v.planned_at && Number(v.has_time));
+  const qc = await questsCfg();
+  const nVisits = Math.max(3, Math.min(5, plannedToday || 3));
+  const firstTimed = [...timed].sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)))[0];
+  const coffeeDone = (await db.query('SELECT 1 AS x FROM xp_events WHERE tg_id = $1 AND ref = $2', [tgId, `quest:${today}:coffee`])).length > 0;
+  const [gl] = await db.query('SELECT day, minutes FROM geo_live WHERE tg_id = $1', [tgId]);
+  const shiftMin = gl?.day === today ? Number(gl.minutes) || 0 : 0;
+  const geoOn = (await features()).geo_shift !== false;
+  const officeSet = qc.office.lat != null && qc.office.lon != null;
   const quests = [
-    { id: 'visits', title: `${Math.max(3, Math.min(5, plannedToday || 3))} выезда сегодня`, target: Math.max(3, Math.min(5, plannedToday || 3)), progress: doneToday.length, xp: 50 },
-    { id: 'ontime', title: 'Приехать вовремя ко всем', target: Math.max(1, timed.length), progress: timed.filter(startedOnTime).length, xp: 30, need: timed.length > 0 },
-    { id: 'photos', title: 'Фото в каждом акте', target: Math.max(1, doneToday.length), progress: doneToday.filter((v) => (photoCounts[v.id] || 0) > 0).length, xp: 20, need: doneToday.length > 0 },
-  ].map((q) => ({ ...q, progress: Math.min(q.progress, q.target), done: q.need !== false && q.progress >= q.target }));
-  for (const q of quests) if (q.done) await awardXp(tgId, 'quest', q.xp, `quest:${today}:${q.id}`, q.title);
+    qc.coffee.on && officeSet && { id: 'coffee', icon: '☕️', title: 'Утренний кофе в офисе', hint: `с ${qc.coffee.from} до ${qc.coffee.to} — отметьтесь у офиса или пришлите геопозицию боту`,
+      target: 1, progress: coffeeDone ? 1 : 0, xp: qc.coffee.xp, manual: true, action: !coffeeDone && localMin() >= (hmMin(qc.coffee.from) ?? 0) && localMin() <= (hmMin(qc.coffee.to) ?? 0) ? 'checkin' : null },
+    qc.first_ontime.on && { id: 'first_ontime', icon: '⏱', title: 'Первую обработку начать вовремя', hint: `не позже ${ON_TIME_GRACE_MIN} мин от времени заявки`,
+      target: 1, progress: firstTimed && startedOnTime(firstTimed) ? 1 : 0, xp: qc.first_ontime.xp, need: Boolean(firstTimed) },
+    qc.ontime.on && { id: 'ontime', icon: '🎯', title: 'Все обработки начать вовремя', target: Math.max(1, timed.length), progress: timed.filter(startedOnTime).length, xp: qc.ontime.xp, need: timed.length > 0 },
+    qc.visits.on && { id: 'visits', icon: '🚗', title: `${nVisits} выезда сегодня`, target: nVisits, progress: doneToday.length, xp: qc.visits.xp },
+    qc.photos.on && { id: 'photos', icon: '📸', title: 'Фото в каждом акте', target: Math.max(1, doneToday.length), progress: doneToday.filter((v) => (photoCounts[v.id] || 0) > 0).length, xp: qc.photos.xp, need: doneToday.length > 0 },
+    qc.shift.on && geoOn && { id: 'shift', icon: '📍', title: `${qc.shift.hours} ч смены в эфире`, target: Number(qc.shift.hours) || 4, progress: Math.floor(shiftMin / 60), xp: qc.shift.xp },
+  ].filter(Boolean).map((q) => ({ ...q, progress: Math.min(q.progress, q.target), done: q.need !== false && q.progress >= q.target }));
+  // кофе засчитывается в момент отметки (checkCoffee), остальные — здесь
+  for (const q of quests) if (q.done && !q.manual) await awardXp(tgId, 'quest', q.xp, `quest:${today}:${q.id}`, q.title);
 
   const streak = onTimeStreaks(visits);
   const total = await xpTotal(tgId);
@@ -4646,8 +4770,10 @@ async function handleLocation(m, edited) {
     if (!g || String(g.msg_id) !== String(m.message_id)) return;
     const stillLive = Number(loc.live_period) > 0 || (m.edit_date && g.live_until && g.live_until > at);
     await db.query('UPDATE geo_live SET lat = $1, lon = $2, last_at = $3, live_until = $4 WHERE tg_id = $5', [lat, lon, at, stillLive ? g.live_until : at, tgId]);
+    await checkCoffee(tgId, lat, lon, { notify: true }).catch(() => {});
     return;
   }
+  await checkCoffee(tgId, lat, lon, { notify: true }).catch(() => {});
   const livePeriod = Number(loc.live_period) || 0;
   if (livePeriod > 0) {
     const secs = Math.min(livePeriod, 12 * 3600); // «пока не выключу» — считаем максимум 12 часов

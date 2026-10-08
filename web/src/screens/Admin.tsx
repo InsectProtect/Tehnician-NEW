@@ -17,6 +17,7 @@ import { ContestSettingsPanel, ContestWidget } from './Contest';
 import { AnnouncementBanners, OpenWork } from './Announce';
 import { GuardSettingsPanel, GuardWidget } from './Guard';
 import { LiveWidget } from './Play';
+import { QuestsSettingsPanel } from './QuestsSettings';
 import { PointsEditor } from '../components/PointsEditor';
 import { MediaGallery, MediaReviewWidget } from '../components/MediaUpload';
 import {
@@ -353,6 +354,11 @@ function Settings({ onConfigChanged }: { onConfigChanged: () => void }) {
       {f?.contest !== false && can(cfg, 'kpi') && (
         <Collapse id="contest" title="👑 Соревнование" hint="Рейтинг по баллам, корона и бонус победителю месяца">
           <ContestSettingsPanel />
+        </Collapse>
+      )}
+      {f?.game !== false && can(cfg, 'settings') && (
+        <Collapse id="quests" title="🎯 Квесты" hint="Кофе в офисе, начал вовремя, выезды, фото — опыт за каждый">
+          <QuestsSettingsPanel />
         </Collapse>
       )}
       {f?.geo_shift !== false && can(cfg, 'settings') && (
