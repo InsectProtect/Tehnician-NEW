@@ -138,7 +138,8 @@ export function initCar(ctx) {
       const left = next - km;
       return { id: it.id, label: it.label, interval, last_km: done ?? null, next_km: next, left, manual: Boolean(set), estimated: !set && done == null,
         state: left < 0 ? 'overdue' : left <= Math.max(1000, interval * 0.1) ? 'soon' : 'ok' };
-    }).sort((a, b) => a.left - b.left);
+    // сверху — просроченное, затем подходящее; внутри — по остатку км
+    }).sort((a, b) => ({ overdue: 0, soon: 1, ok: 2 }[a.state] - { overdue: 0, soon: 1, ok: 2 }[b.state]) || a.left - b.left);
   }
 
   function seasonTip(month) {
@@ -257,7 +258,7 @@ export function initCar(ctx) {
     const fuel = await db.query('SELECT id, km, amount, liters, ai_note, created_at, photo <> \'\' AS has_photo FROM car_fuel WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 15', [car.tg_id]);
     const expenses = await db.query('SELECT id, kind, amount, liters, km, note, created_at FROM car_expenses WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 20', [car.tg_id]);
     const tips = [];
-    for (const s of service.filter((x) => x.state !== 'ok').slice(0, 3)) tips.push({ id: s.id, title: s.state === 'overdue' ? `${s.label}: просрочено на ${kmS(-s.left)}` : `${s.label}: через ${kmS(s.left)}`, text: s.state === 'overdue' ? 'Запишитесь на сервис и отметьте «Сделал» с пробегом.' : 'Запланируйте замену заранее, чтобы не выпасть из графика заявок.' });
+    // просроченное/подходящее ТО показывается отдельной карточкой сверху (ServiceDueCard) — здесь только сезонные советы
     const season = seasonTip(lp().m);
     if (season) tips.push(season);
     let ai = [];
@@ -680,7 +681,9 @@ export function initCar(ctx) {
       const oil = (await serviceState(car)).find((s) => s.id === 'oil');
       const [last] = await db.query("SELECT status, day, points FROM car_checks WHERE tg_id = $1 AND status <> 'requested' ORDER BY requested_at DESC LIMIT 1", [u.tg_id]);
       const docs = (await docsOf(u.tg_id)).filter((x) => x.state !== 'ok');
-      items.push({ body: car.body || autoBody(car.make, car.model), docs_alert: docs.length ? { label: docs[0].label, days_left: docs[0].days_left, state: docs[0].state, count: docs.length } : null,
+      const due = (await serviceState(car)).filter((x) => x.state !== 'ok');
+      items.push({ service_due: due.length ? { overdue: due.filter((x) => x.state === 'overdue').length, soon: due.filter((x) => x.state === 'soon').length, first: due[0].label, left: due[0].left } : null,
+        body: car.body || autoBody(car.make, car.model), docs_alert: docs.length ? { label: docs[0].label, days_left: docs[0].days_left, state: docs[0].state, count: docs.length } : null,
         tg_id: u.tg_id, name: u.name, car: `${car.make} ${car.model || ''}`.trim(), year: car.year, plate: car.plate, mileage: Number(car.mileage), to_left: oil?.left ?? null, fuel_month: st.fuel_month, expenses_month: st.expenses_month, spend_month: st.spend_month, km_month: st.km_month, cost_km: st.cost_km, last_check: last ? { status: last.status, day: last.day, points: last.points == null ? null : Number(last.points) } : null });
     }
     const queue = await db.query("SELECT k.*, u.name FROM car_checks k LEFT JOIN users u ON u.tg_id = k.tg_id WHERE k.status IN ('flagged', 'review', 'checking') ORDER BY k.submitted_at DESC LIMIT 30");

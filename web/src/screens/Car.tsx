@@ -58,6 +58,7 @@ export function CarScreen() {
   const [sheet, setSheet] = useState<'' | 'car' | 'fuel' | 'km' | 'service' | 'check' | 'expense'>('');
   const [doc, setDoc] = useState<CarDoc | 'new' | null>(null);
   const [leftOf, setLeftOf] = useState<CarService | null>(null);
+  const [svcPreset, setSvcPreset] = useState<string | undefined>(undefined);
   const [flash, setFlash] = useState(0);
   const [delConfirm, setDelConfirm] = useState(false);
   const load = useCallback(() => api.car().then(setD).catch((e: Error) => toast(e.message, 'error')), [toast]);
@@ -105,6 +106,7 @@ export function CarScreen() {
       )}
 
       <DocsAlert docs={d.docs || []} onOpen={(x) => setDoc(x)} />
+      <ServiceDueCard service={d.service || []} onEdit={setLeftOf} onDone={(x) => { setSvcPreset(x.id); setSheet('service'); }} />
       <div className="overflow-hidden rounded-[22px] bg-card">
         <CarArt body={c.body} title={`${c.make} ${c.model}`} plate={c.plate} className="block aspect-[16/9] w-full" />
       <div className="p-4">
@@ -139,7 +141,7 @@ export function CarScreen() {
 
       <div className="mt-4 grid grid-cols-2 gap-2.5">
         <GameButton icon={<Fuel size={19} />} onClick={() => setSheet('fuel')}>Заправка</GameButton>
-        <GameButton tone="ghost" icon={<Wrench size={18} />} onClick={() => setSheet('service')}>Сделал ТО</GameButton>
+        <GameButton tone="ghost" icon={<Wrench size={18} />} onClick={() => { setSvcPreset(undefined); setSheet('service'); }}>Сделал ТО</GameButton>
       </div>
       <GameButton className="mt-2.5" tone="yellow" small icon={<Receipt size={17} />} onClick={() => setSheet('expense')}>Расход: мойка, AdBlue, парковка…</GameButton>
       <div className="mt-1.5 text-center text-[12px] text-muted">Заправка с чеком +10 XP · первая за неделю ещё +20 · пробег +5 · ТО +10 · фотопроверка до +30</div>
@@ -207,7 +209,7 @@ export function CarScreen() {
       <CarSheet open={sheet === 'car'} d={d} onClose={() => setSheet('')} onDone={done} />
       <FuelSheet open={sheet === 'fuel'} d={d} onClose={() => setSheet('')} onDone={done} />
       <KmSheet open={sheet === 'km'} d={d} onClose={() => setSheet('')} onDone={done} />
-      <ServiceSheet open={sheet === 'service'} d={d} onClose={() => setSheet('')} onDone={done} />
+      <ServiceSheet open={sheet === 'service'} d={d} preset={svcPreset} onClose={() => { setSheet(''); setSvcPreset(undefined); }} onDone={(r) => { setSvcPreset(undefined); done(r); }} />
       <ExpenseSheet open={sheet === 'expense'} d={d} onClose={() => setSheet('')} onDone={done} />
       {doc && <DocSheet d={d} doc={doc === 'new' ? null : doc} onClose={() => setDoc(null)} onDone={(r) => { setD(r); setDoc(null); haptic.success(); }} />}
       {leftOf && <LeftSheet x={leftOf} mileage={c.mileage} onClose={() => setLeftOf(null)} onDone={(r) => { setD(r); setLeftOf(null); }} />}
@@ -316,13 +318,13 @@ function KmSheet({ open, d, onClose, onDone }: SheetP) {
   );
 }
 
-function ServiceSheet({ open, d, onClose, onDone }: SheetP) {
+function ServiceSheet({ open, d, onClose, onDone, preset }: SheetP & { preset?: string }) {
   const toast = useToast();
   const [item, setItem] = useState('oil');
   const [v, setV] = useState('');
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) { setItem(d.service?.[0]?.id || 'oil'); setV(String(d.car?.mileage ?? '')); setAmount(''); } }, [open, d]);
+  useEffect(() => { if (open) { setItem(preset || d.service?.[0]?.id || 'oil'); setV(String(d.car?.mileage ?? '')); setAmount(''); } }, [open, d, preset]);
   return (
     <Sheet open={open} onClose={onClose} title="Сделал ТО">
       <div className="flex flex-col gap-3">
@@ -450,6 +452,33 @@ function ServiceList({ service, onEdit }: { service: NonNullable<CarRes['service
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/** Сверху экрана: что из ТО просрочено или подходит — с кнопками «Сделал» и «Уточнить». */
+function ServiceDueCard({ service, onDone, onEdit }: { service: CarService[]; onDone?: (x: CarService) => void; onEdit: (x: CarService) => void }) {
+  const due = service.filter((x) => x.state !== 'ok');
+  if (!due.length) return null;
+  const overdue = due.some((x) => x.state === 'overdue');
+  return (
+    <div className={cx('mb-3 overflow-hidden rounded-[22px] p-4 text-white', overdue ? 'shadow-[0_5px_0_#8A1C15]' : 'shadow-[0_5px_0_#8A5A00]')}
+      style={{ background: overdue ? 'linear-gradient(135deg,#D70015 0%,#FF453A 100%)' : 'linear-gradient(135deg,#E67E00 0%,#FFB800 100%)' }}>
+      <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-[0.12em] text-white/85"><Wrench size={15} />Пора на ТО · {due.length}</div>
+      <div className="mt-2 flex flex-col gap-2">
+        {due.slice(0, 5).map((x) => (
+          <div key={x.id} className="flex items-center gap-2 rounded-2xl bg-white/18 px-3 py-2.5 ring-1 ring-inset ring-white/25" style={{ background: 'rgba(255,255,255,0.16)' }}>
+            <button onClick={() => { haptic.tap(); onEdit(x); }} className="min-w-0 flex-1 text-left">
+              <div className="text-[14.5px] font-bold leading-snug">{x.label}</div>
+              <div className="text-[12.5px] text-white/90">{x.left < 0 ? `просрочено на ${km(-x.left)}` : `осталось ${km(x.left)}`} · на {km(x.next_km)}</div>
+            </button>
+            {onDone && (
+              <button onClick={() => { haptic.tap(); onDone(x); }} className="shrink-0 rounded-xl bg-white px-3 py-2 text-[13px] font-extrabold" style={{ color: overdue ? '#D70015' : '#8A5A00' }}>Сделал</button>
+            )}
+          </div>
+        ))}
+        {due.length > 5 && <div className="text-[12.5px] text-white/85">и ещё {due.length - 5} — в «Регламенте ТО» ниже</div>}
+      </div>
     </div>
   );
 }
@@ -706,6 +735,11 @@ export function CarsPanel() {
           <button key={i.tg_id} disabled={!i.car} onClick={() => setOpen(i.tg_id)} className="overflow-hidden rounded-[20px] bg-card text-left active:opacity-70 disabled:active:opacity-100">
             {i.car && <CarArt body={i.body} plate={i.plate} className="block aspect-[16/7] w-full" />}
             <div className="p-4">
+            {i.service_due && (
+              <div className={cx('mb-2 mr-1.5 inline-flex rounded-full px-2.5 py-1 text-[11.5px] font-bold', i.service_due.overdue ? 'bg-[#FF453A] text-white' : 'bg-[#FF9F0A]/15 text-[#C93400] dark:text-[#FF9F0A]')}>
+                🔧 {i.service_due.first}: {i.service_due.left < 0 ? `просрочено ${km(-i.service_due.left)}` : `через ${km(i.service_due.left)}`}{i.service_due.overdue + i.service_due.soon > 1 ? ` · ещё ${i.service_due.overdue + i.service_due.soon - 1}` : ''}
+              </div>
+            )}
             {i.docs_alert && (
               <div className={cx('mb-2 inline-flex rounded-full px-2.5 py-1 text-[11.5px] font-bold', DOC_TONE[i.docs_alert.state as CarDoc['state']]?.[0] || 'bg-fill')}>
                 🛡 {i.docs_alert.label}: {i.docs_alert.days_left < 0 ? 'истекло' : i.docs_alert.days_left === 0 ? 'сегодня' : `${daysRu(i.docs_alert.days_left)}`}{i.docs_alert.count > 1 ? ` · ещё ${i.docs_alert.count - 1}` : ''}
@@ -787,7 +821,6 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
   const [more, setMore] = useState(false);
   const load = useCallback(() => api.adminCar(tg).then(setD).catch((e: Error) => toast(e.message, 'error')), [tg, toast]);
   useEffect(() => { load(); }, [load]);
-  const overdue = d?.service?.filter((x) => x.state === 'overdue') || [];
   return (
     <Sheet open onClose={onClose} title={d?.user.name || 'Машина'}>
       {!d?.car ? <Spinner /> : (
@@ -801,11 +834,7 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
           </div>
 
           <DocsAlert docs={d.docs || []} onOpen={(x) => setDoc(x)} />
-          {overdue.length > 0 && (
-            <div className="rounded-[20px] bg-[#FF9F0A]/15 px-4 py-3 text-[13.5px] leading-snug ring-1 ring-inset ring-[#FF9F0A]/50">
-              <b className="text-[#C93400] dark:text-[#FF9F0A]">🔧 Просрочено ТО ({overdue.length}):</b> {overdue.map((x) => `${x.label} (${km(-x.left)})`).join(', ')}
-            </div>
-          )}
+          <ServiceDueCard service={d.service || []} onEdit={setLeftOf} />
 
           <div className="grid grid-cols-2 gap-2">
             <Tile label="До ТО (масло)" value={d.to ? (d.to.left < 0 ? `−${km(-d.to.left)}` : km(d.to.left)) : '—'} tone={d.to?.state === 'overdue' ? 'red' : d.to?.state === 'soon' ? 'orange' : 'green'} sub={d.to ? `на ${km(d.to.next_km)}` : undefined} />
