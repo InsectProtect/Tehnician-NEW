@@ -37,6 +37,29 @@ export const SERVICE_ITEMS = [
   { id: 'timing', label: 'Ремень / цепь ГРМ (проверка)', km: 90000, fuels: ICE },
   { id: 'dpf', label: 'Сажевый фильтр / EGR (чистка)', km: 100000, fuels: ['diesel'] },
 ];
+// Страховки и документы со сроком действия (Молдова)
+export const DOC_KINDS = {
+  rca: { label: 'RCA (ОСАГО)', icon: '🛡' },
+  casco: { label: 'CASCO (КАСКО)', icon: '🚘' },
+  green: { label: 'Carte Verde', icon: '🌍' },
+  revizie: { label: 'Техосмотр (Revizia tehnică)', icon: '🔍' },
+  vignette: { label: 'Виньетка', icon: '🎫' },
+  other: { label: 'Другой документ', icon: '📄' },
+};
+const DOC_REMIND_DAYS = [30, 7, 1, 0];
+// Тип кузова — для иллюстрации машины. Определяется по модели, можно выбрать вручную.
+export const BODIES = { van: 'Каблук / компактвэн', bigvan: 'Фургон', sedan: 'Седан', hatch: 'Хэтчбек', wagon: 'Универсал', suv: 'Кроссовер / SUV', pickup: 'Пикап' };
+const BODY_HINTS = [
+  ['bigvan', /transit(?!.*connect)|sprinter|crafter|master|ducato|boxer|jumper|movano|vivaro|trafic|vito|transporter|\bt[4-6]\b|daily|iveco|gazel|газел/i],
+  ['van', /caddy|connect|kangoo|berlingo|partner|doblo|combo|citan|dokker|rifter|courier|nemo|bipper|fiorino|townstar|proace city|каблук/i],
+  ['pickup', /hilux|l200|ranger|amarok|navara|d-?max|tundra|tacoma|пикап/i],
+  ['suv', /duster|rav ?4|tiguan|sportage|tucson|qashqai|x-?trail|kuga|forester|outlander|cr-?v|vitara|niva|нива|patriot|kodiaq|karoq|sorento|santa fe/i],
+  ['wagon', /combi|kombi|variant|touring|universal|универсал|estate|sw\b|break/i],
+  ['hatch', /golf|polo|sandero|fabia|clio|corsa|astra|focus|fiesta|yaris|i20|i30|rio|ceed|208|308|c3|micra|jazz/i],
+  ['sedan', /logan|octavia|passat|camry|corolla|jetta|superb|mondeo|elantra|solaris|cerato|accent|vesta|granta|приора|седан/i],
+];
+const autoBody = (make, model) => { const t = `${make} ${model}`; return BODY_HINTS.find(([, re]) => re.test(t))?.[0] || 'van'; };
+
 // Прочие расходы (кроме топлива)
 export const EXPENSE_KINDS = {
   wash: { label: 'Мойка', icon: '🧽' },
@@ -154,9 +177,10 @@ export function initCar(ctx) {
     for (const e of exMonth) byKind[e.kind] = Math.round((byKind[e.kind] || 0) + Number(e.amount));
     const exAmount = Math.round(sum(exMonth, 'amount'));
     const svcMonth = Math.round(sum(await db.query('SELECT amount FROM car_service WHERE tg_id = $1 AND created_at >= $2', [car.tg_id, from]), 'amount'));
+    const docsMonth = Math.round(sum(await db.query('SELECT amount FROM car_docs WHERE tg_id = $1 AND created_at >= $2', [car.tg_id, from]), 'amount'));
     return {
       expenses_month: exAmount, expenses_by_kind: byKind, expenses_prev_month: Math.round(sum(ex.filter((e) => e.created_at < from), 'amount')),
-      service_month: svcMonth, spend_month: Math.round(monthAmount) + exAmount + svcMonth,
+      service_month: svcMonth, docs_month: docsMonth, spend_month: Math.round(monthAmount) + exAmount + svcMonth + docsMonth,
       mileage: Number(car.mileage), km_total: Math.max(0, Number(car.mileage) - Number(car.mileage_start)), km_month: kmMonth,
       fuel_month: Math.round(monthAmount), fuel_total: Math.round(sum(fuel, 'amount')), refuels_month: inMonth.length,
       month_label: MONTHS_RU[m - 1], prev_month_label: MONTHS_RU[pm - 1], fuel_prev_month: Math.round(sum(prevMonth, 'amount')),
@@ -183,13 +207,47 @@ export function initCar(ctx) {
     return out;
   }
 
+  /** Документы машины со сроками: дней до окончания и состояние (ok / soon ≤30 / urgent ≤7 / expired). */
+  async function docsOf(tg) {
+    const rows = await db.query('SELECT * FROM car_docs WHERE tg_id = $1 ORDER BY expires', [String(tg)]);
+    const today = lp().day;
+    const dayMs = (d) => Date.parse(`${d}T00:00:00Z`);
+    return rows.map((d) => {
+      const left = Math.round((dayMs(d.expires) - dayMs(today)) / 86400000);
+      return {
+        id: d.id, kind: d.kind, label: DOC_KINDS[d.kind]?.label || d.kind, icon: DOC_KINDS[d.kind]?.icon || '📄', number: d.number, company: d.company,
+        starts: d.starts, expires: d.expires, amount: d.amount == null ? null : Number(d.amount), note: d.note, days_left: left,
+        state: left < 0 ? 'expired' : left <= 7 ? 'urgent' : left <= 30 ? 'soon' : 'ok', created_at: d.created_at,
+      };
+    });
+  }
+  /** Затраты на ТО: всего, за месяц и по пунктам. */
+  async function serviceCosts(tg) {
+    const rows = await db.query('SELECT item, amount, created_at FROM car_service WHERE tg_id = $1', [String(tg)]);
+    const [y, m] = lp().month.split('-').map(Number);
+    const from = zonedIso(y, m, 1, 0, 0);
+    const yearFrom = zonedIso(y, 1, 1, 0, 0);
+    const by = {};
+    let total = 0; let month = 0; let year = 0;
+    for (const r of rows) {
+      const a = Number(r.amount) || 0;
+      total += a; if (r.created_at >= from) month += a; if (r.created_at >= yearFrom) year += a;
+      if (a) by[r.item] = (by[r.item] || 0) + a;
+    }
+    const docsYear = (await db.query('SELECT amount, created_at FROM car_docs WHERE tg_id = $1 AND created_at >= $2', [String(tg), yearFrom])).reduce((s2, d) => s2 + (Number(d.amount) || 0), 0);
+    return {
+      total: Math.round(total), month: Math.round(month), year: Math.round(year), docs_year: Math.round(docsYear), count: rows.length,
+      by_item: Object.entries(by).map(([id, v]) => ({ id, label: SERVICE_ITEMS.find((i) => i.id === id)?.label || id, amount: Math.round(v) })).sort((a, b) => b.amount - a.amount),
+    };
+  }
+
   async function fullFor(tg) {
     const c = await cfg();
     const car = await carOf(tg);
     const checks = await db.query('SELECT * FROM car_checks WHERE tg_id = $1 ORDER BY requested_at DESC LIMIT 10', [String(tg)]);
     const pending = checks.find((x) => x.status === 'requested');
     const delReq = await pendingDeleteReq(tg);
-    if (!car) return { on: c.on, expense_kinds: EXPENSE_KINDS, car: null, pending: pending ? await checkOut(pending) : null, photos_need: c.photos, fuels: FUELS, items: SERVICE_ITEMS.map(({ id, label }) => ({ id, label })), ai: aiOn(), delete_request: delReq ? { status: delReq.status } : null };
+    if (!car) return { on: c.on, expense_kinds: EXPENSE_KINDS, bodies: BODIES, doc_kinds: DOC_KINDS, car: null, pending: pending ? await checkOut(pending) : null, photos_need: c.photos, fuels: FUELS, items: SERVICE_ITEMS.map(({ id, label }) => ({ id, label })), ai: aiOn(), delete_request: delReq ? { status: delReq.status } : null };
     refreshAiTip(car).catch(() => {});
     const service = await serviceState(car);
     const fuel = await db.query('SELECT id, km, amount, liters, ai_note, created_at, photo <> \'\' AS has_photo FROM car_fuel WHERE tg_id = $1 ORDER BY created_at DESC LIMIT 15', [car.tg_id]);
@@ -204,7 +262,9 @@ export function initCar(ctx) {
     const oil = service.find((s) => s.id === 'oil');
     return {
       on: c.on, ai: aiOn(), photos_need: c.photos, fuels: FUELS, items: SERVICE_ITEMS.map(({ id, label }) => ({ id, label })),
-      car: { make: car.make, model: car.model, year: car.year == null ? null : Number(car.year), plate: car.plate, fuel: car.fuel, mileage: Number(car.mileage), mileage_start: Number(car.mileage_start), mileage_at: car.mileage_at, service_interval: Number(car.service_interval) },
+      car: { make: car.make, model: car.model, year: car.year == null ? null : Number(car.year), plate: car.plate, fuel: car.fuel, mileage: Number(car.mileage), mileage_start: Number(car.mileage_start), mileage_at: car.mileage_at, service_interval: Number(car.service_interval), body: car.body || autoBody(car.make, car.model), body_auto: !car.body },
+      bodies: BODIES, doc_kinds: DOC_KINDS, docs: await docsOf(car.tg_id),
+      service_costs: await serviceCosts(car.tg_id),
       to: oil ? { left: oil.left, next_km: oil.next_km, interval: oil.interval, state: oil.state } : null,
       stats: await stats(car), service, tips,
       fuel: fuel.map((f) => ({ id: f.id, km: Number(f.km), amount: f.amount == null ? null : Number(f.amount), liters: f.liters == null ? null : Number(f.liters), ai_note: f.ai_note, created_at: f.created_at, photo: Number(f.has_photo) || f.has_photo === true ? photoUrl('f', f.id) : null })),
@@ -227,15 +287,16 @@ export function initCar(ctx) {
     const year = num(body.year); must(year == null || (year >= 1970 && year <= lp().y + 1), 400, 'Некорректный год');
     const mileage = Math.round(num(body.mileage, -1)); must(mileage >= 0 && mileage < 2_000_000, 400, 'Укажите пробег');
     const fuel = FUELS[body.fuel] ? body.fuel : 'petrol';
+    const carBody = BODIES[body.body] ? body.body : '';
     const interval = clamp(Math.round(num(body.service_interval, (await cfg()).service_interval)), 3000, 30000);
     const cur = await carOf(user.id);
     if (cur) {
       must(mileage >= Number(cur.mileage) || user.isAdmin, 400, `Пробег не может уменьшиться (сейчас ${kmS(cur.mileage)})`);
-      await db.query('UPDATE cars SET make = $1, model = $2, year = $3, plate = $4, fuel = $5, mileage = $6, service_interval = $7, updated_at = $8, mileage_at = CASE WHEN mileage <> $6 THEN $8 ELSE mileage_at END WHERE tg_id = $9',
-        [make, str(body.model, 60), year, str(body.plate, 20).toUpperCase(), fuel, mileage, interval, now(), String(user.id)]);
+      await db.query('UPDATE cars SET make = $1, model = $2, year = $3, plate = $4, fuel = $5, mileage = $6, service_interval = $7, updated_at = $8, mileage_at = CASE WHEN mileage <> $6 THEN $8 ELSE mileage_at END, body = $10 WHERE tg_id = $9',
+        [make, str(body.model, 60), year, str(body.plate, 20).toUpperCase(), fuel, mileage, interval, now(), String(user.id), body.body !== undefined ? carBody : (cur.body || '')]);
     } else {
-      await db.query('INSERT INTO cars (tg_id, make, model, year, plate, fuel, mileage_start, mileage, mileage_at, service_interval, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$8,$8)',
-        [String(user.id), make, str(body.model, 60), year, str(body.plate, 20).toUpperCase(), fuel, mileage, now(), interval]);
+      await db.query('INSERT INTO cars (tg_id, make, model, year, plate, fuel, mileage_start, mileage, mileage_at, service_interval, created_at, updated_at, body) VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$8,$8,$10)',
+        [String(user.id), make, str(body.model, 60), year, str(body.plate, 20).toUpperCase(), fuel, mileage, now(), interval, carBody]);
       await awardXp(user.id, 'car', 30, 'car:new', 'Добавил свой авто');
       await audit(user, 'Добавил авто', `${make} ${str(body.model, 60)}`, `${year || ''} · ${kmS(mileage)}`);
     }
@@ -515,6 +576,69 @@ export function initCar(ctx) {
     return { ok: true, ...(await fullFor(e.tg_id)) };
   });
 
+  // ---------- страховки и документы со сроком ----------
+  async function saveDoc(tg, body, actor) {
+    const kind = String(body.kind || '');
+    must(DOC_KINDS[kind], 400, 'Выберите вид документа');
+    const isDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ''));
+    must(isDay(body.expires), 400, 'Укажите, до какого числа действует');
+    must(!body.starts || isDay(body.starts), 400, 'Некорректная дата начала');
+    must(!body.starts || body.starts <= body.expires, 400, 'Начало позже окончания');
+    const amount = num(body.amount);
+    must(amount == null || (amount >= 0 && amount < 1000000), 400, 'Некорректная стоимость');
+    const note = str(body.note, 200);
+    must(kind !== 'other' || note.length >= 2, 400, 'Напишите, что за документ');
+    if (body.id) {
+      const [d] = await db.query('SELECT * FROM car_docs WHERE id = $1 AND tg_id = $2', [String(body.id), String(tg)]);
+      must(d, 404, 'Документ не найден');
+      await db.query('UPDATE car_docs SET kind = $1, number = $2, company = $3, starts = $4, expires = $5, amount = $6, note = $7, reminded = $8 WHERE id = $9',
+        [kind, str(body.number, 60), str(body.company, 80), body.starts || null, body.expires, amount, note, d.expires === body.expires ? d.reminded : '', d.id]);
+    } else {
+      await db.query('INSERT INTO car_docs (id, tg_id, kind, number, company, starts, expires, amount, note, created_at, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+        [uid(), String(tg), kind, str(body.number, 60), str(body.company, 80), body.starts || null, body.expires, amount, note, now(), actor.name || '']);
+    }
+    await audit(actor, 'Авто: документ', DOC_KINDS[kind].label, `до ${body.expires}${amount ? ` · ${amount} лей` : ''}`);
+  }
+  route('POST', '/api/car/docs', async ({ user, body }) => {
+    await carGuard();
+    must(await carOf(user.id), 400, 'Сначала добавьте свой авто');
+    await saveDoc(user.id, body, user);
+    return fullFor(user.id);
+  });
+  route('POST', '/api/admin/cars/:tg/docs', async ({ user, params, body }) => {
+    must(await carOf(params.tg), 404, 'У сотрудника нет машины');
+    await saveDoc(params.tg, body, user);
+    return fullFor(params.tg);
+  }, { access: 'admin' });
+  route('DELETE', '/api/car/docs/:id', async ({ user, params }) => {
+    const [d] = await db.query('SELECT * FROM car_docs WHERE id = $1', [params.id]);
+    must(d && (d.tg_id === String(user.id) || user.isAdmin), 404, 'Документ не найден');
+    await db.query('DELETE FROM car_docs WHERE id = $1', [d.id]);
+    await audit(user, 'Авто: документ удалён', DOC_KINDS[d.kind]?.label || d.kind, `до ${d.expires}`);
+    return fullFor(d.tg_id);
+  });
+
+  /** Раз в час: напоминания об окончании страховок/документов — за 30, 7, 1 день и в день окончания (сотруднику и офису). */
+  async function docsTick() {
+    if (!botEnabled) return;
+    const today = lp().day;
+    const dayMs = (d) => Date.parse(`${d}T00:00:00Z`);
+    const rows = await db.query("SELECT d.*, u.name FROM car_docs d LEFT JOIN users u ON u.tg_id = d.tg_id WHERE d.expires >= $1", [today]);
+    for (const d of rows) {
+      const left = Math.round((dayMs(d.expires) - dayMs(today)) / 86400000);
+      // все пороги, до которых уже дошли; если хоть один не отправлен — одно сообщение, отмечаем все (без пачки напоминаний сразу)
+      const sent = String(d.reminded).split(',').filter(Boolean);
+      const due = DOC_REMIND_DAYS.filter((x) => left <= x).map(String);
+      if (!due.some((x) => !sent.includes(x))) continue;
+      await db.query('UPDATE car_docs SET reminded = $1 WHERE id = $2', [[...new Set([...sent, ...due])].join(','), d.id]);
+      const lbl = DOC_KINDS[d.kind]?.label || d.kind;
+      const when = left === 0 ? 'заканчивается <b>сегодня</b>' : left === 1 ? 'заканчивается <b>завтра</b>' : `заканчивается через <b>${left} дн.</b> (${d.expires.split('-').reverse().join('.')})`;
+      if (/^\d+$/.test(String(d.tg_id))) sendMessage(d.tg_id, `${DOC_KINDS[d.kind]?.icon || '📄'} <b>${escHtml(lbl)}</b> на вашу машину ${when}. Продлите вовремя и внесите новый срок в «Мой авто».`).catch(() => {});
+      if (left <= 7) for (const tg of await staffAndAdmins()) if (/^\d+$/.test(tg)) sendMessage(tg, `🚗 У <b>${escHtml(d.name || d.tg_id)}</b>: ${escHtml(lbl)} ${when}.`).catch(() => {});
+    }
+  }
+  setInterval(() => { docsTick().catch((e) => console.error('car docs tick:', e.message)); }, 60 * 60000).unref?.();
+
   route('GET', '/api/admin/cars', async () => {
     const c = await cfg();
     const users = await db.query("SELECT tg_id, name, role FROM users WHERE status = 'active' AND role IN ('tech', 'specialist') ORDER BY name");
@@ -525,7 +649,9 @@ export function initCar(ctx) {
       const st = await stats(car);
       const oil = (await serviceState(car)).find((s) => s.id === 'oil');
       const [last] = await db.query("SELECT status, day, points FROM car_checks WHERE tg_id = $1 AND status <> 'requested' ORDER BY requested_at DESC LIMIT 1", [u.tg_id]);
-      items.push({ tg_id: u.tg_id, name: u.name, car: `${car.make} ${car.model || ''}`.trim(), year: car.year, plate: car.plate, mileage: Number(car.mileage), to_left: oil?.left ?? null, fuel_month: st.fuel_month, expenses_month: st.expenses_month, spend_month: st.spend_month, km_month: st.km_month, cost_km: st.cost_km, last_check: last ? { status: last.status, day: last.day, points: last.points == null ? null : Number(last.points) } : null });
+      const docs = (await docsOf(u.tg_id)).filter((x) => x.state !== 'ok');
+      items.push({ body: car.body || autoBody(car.make, car.model), docs_alert: docs.length ? { label: docs[0].label, days_left: docs[0].days_left, state: docs[0].state, count: docs.length } : null,
+        tg_id: u.tg_id, name: u.name, car: `${car.make} ${car.model || ''}`.trim(), year: car.year, plate: car.plate, mileage: Number(car.mileage), to_left: oil?.left ?? null, fuel_month: st.fuel_month, expenses_month: st.expenses_month, spend_month: st.spend_month, km_month: st.km_month, cost_km: st.cost_km, last_check: last ? { status: last.status, day: last.day, points: last.points == null ? null : Number(last.points) } : null });
     }
     const queue = await db.query("SELECT k.*, u.name FROM car_checks k LEFT JOIN users u ON u.tg_id = k.tg_id WHERE k.status IN ('flagged', 'review', 'checking') ORDER BY k.submitted_at DESC LIMIT 30");
     const delRows = await db.query("SELECT d.*, u.name FROM car_delete_requests d LEFT JOIN users u ON u.tg_id = d.tg_id WHERE d.status = 'pending' ORDER BY d.created_at DESC LIMIT 20");

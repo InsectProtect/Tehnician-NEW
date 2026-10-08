@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Camera, Car as CarIcon, Fuel, Gauge, Receipt, Sparkles, Trash2, Wrench, X } from 'lucide-react';
+import { Camera, Car as CarIcon, Fuel, Gauge, Plus, Receipt, Sparkles, Trash2, Wrench, X } from 'lucide-react';
 import { api } from '../api';
 import { useConfig } from '../config';
 import { compressImage } from '../image';
 import { haptic, openLink } from '../telegram';
-import type { CarCheck, CarDetail, CarExpense, CarFleet, CarRes, CarSettings } from '../types';
+import type { CarCheck, CarDetail, CarDoc, CarExpense, CarFleet, CarRes, CarServiceCosts, CarSettings } from '../types';
+import { CarArt } from '../components/CarArt';
 import { Button, Chips, Collapse, ConfirmSheet, Field, Input, Screen, Sheet, Spinner, Toggle, cx, useToast } from '../components/ui';
 import { GameButton, XpChip } from '../components/game';
 
@@ -55,6 +56,7 @@ export function CarScreen() {
   const toast = useToast();
   const [d, setD] = useState<CarRes | null>(null);
   const [sheet, setSheet] = useState<'' | 'car' | 'fuel' | 'km' | 'service' | 'check' | 'expense'>('');
+  const [doc, setDoc] = useState<CarDoc | 'new' | null>(null);
   const [flash, setFlash] = useState(0);
   const [delConfirm, setDelConfirm] = useState(false);
   const load = useCallback(() => api.car().then(setD).catch((e: Error) => toast(e.message, 'error')), [toast]);
@@ -101,7 +103,10 @@ export function CarScreen() {
         </button>
       )}
 
-      <div className="rounded-[22px] bg-card p-4">
+      <DocsAlert docs={d.docs || []} onOpen={(x) => setDoc(x)} />
+      <div className="overflow-hidden rounded-[22px] bg-card">
+        <CarArt body={c.body} title={`${c.make} ${c.model}`} plate={c.plate} className="block aspect-[16/9] w-full" />
+      <div className="p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[19px] font-extrabold">{c.make} {c.model}</div>
@@ -117,6 +122,7 @@ export function CarScreen() {
           </div>
           <button onClick={() => setSheet('km')} className="rounded-xl bg-fill px-3 py-2 text-[13.5px] font-bold">Новый пробег</button>
         </div>
+      </div>
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2.5">
@@ -148,17 +154,15 @@ export function CarScreen() {
         </Block>
       )}
 
-      <Block title="Регламент ТО">
-        <div className="flex flex-col divide-y divide-dashed divide-line">
-          {d.service!.map((x) => (
-            <div key={x.id} className="flex items-center gap-3 py-2">
-              <span className={cx('h-2.5 w-2.5 shrink-0 rounded-full', x.state === 'overdue' ? 'bg-[#FF453A]' : x.state === 'soon' ? 'bg-[#FF9F0A]' : 'bg-[#34C759]')} />
-              <div className="min-w-0 flex-1 text-[14px]">{x.label}<div className="text-[11.5px] text-muted">каждые {km(x.interval)}{x.last_km != null ? ` · делали на ${km(x.last_km)}` : ''}</div></div>
-              <div className={cx('shrink-0 text-[13.5px] font-semibold', x.state === 'overdue' && 'text-[#D70015] dark:text-[#FF453A]')}>{x.left < 0 ? `просрочено ${km(-x.left)}` : `через ${km(x.left)}`}</div>
-            </div>
-          ))}
-        </div>
+      <Block title="Страховки и документы" right={<button onClick={() => { haptic.tap(); setDoc('new'); }} className="flex items-center gap-1 text-[13px] font-semibold text-accent-ink"><Plus size={15} />Добавить</button>}>
+        <DocsList docs={d.docs || []} onOpen={(x) => setDoc(x)} />
       </Block>
+
+      <Block title="Регламент ТО">
+        <ServiceList service={d.service || []} />
+      </Block>
+
+      {d.service_costs && <ServiceCostsCard c={d.service_costs} />}
 
       <Block title="Заправки" right={<span className="text-[12px] text-muted">всего {lei(s.fuel_total)}</span>}>
         {!d.fuel?.length ? <div className="text-[14px] text-muted">Пока нет. Каждую заправку — с фото чека.</div> : (
@@ -202,6 +206,7 @@ export function CarScreen() {
       <KmSheet open={sheet === 'km'} d={d} onClose={() => setSheet('')} onDone={done} />
       <ServiceSheet open={sheet === 'service'} d={d} onClose={() => setSheet('')} onDone={done} />
       <ExpenseSheet open={sheet === 'expense'} d={d} onClose={() => setSheet('')} onDone={done} />
+      {doc && <DocSheet d={d} doc={doc === 'new' ? null : doc} onClose={() => setDoc(null)} onDone={(r) => { setD(r); setDoc(null); haptic.success(); }} />}
       {d.pending && <CheckSheet open={sheet === 'check'} d={d} onClose={() => setSheet('')} onDone={(xp) => { setSheet(''); haptic.success(); setFlash(xp); toast('Фото отправлены менеджеру на проверку', 'ok'); load(); }} />}
       {delConfirm && (
         <ConfirmSheet title="Удалить авто?" confirmLabel="Отправить запрос" danger={false}
@@ -222,7 +227,7 @@ function CarSheet({ open, d, onClose, onDone }: SheetP) {
   useEffect(() => {
     if (!open) return;
     const c = d.car;
-    setF({ make: c?.make || '', model: c?.model || '', year: c?.year ? String(c.year) : '', plate: c?.plate || '', fuel: c?.fuel || 'petrol', mileage: c ? String(c.mileage) : '', service_interval: String(c?.service_interval || 10000) });
+    setF({ make: c?.make || '', model: c?.model || '', year: c?.year ? String(c.year) : '', plate: c?.plate || '', fuel: c?.fuel || 'petrol', mileage: c ? String(c.mileage) : '', service_interval: String(c?.service_interval || 10000), body: c && !c.body_auto ? c.body || '' : '' });
   }, [open, d.car]);
   const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
   async function save() {
@@ -240,6 +245,11 @@ function CarSheet({ open, d, onClose, onDone }: SheetP) {
         </div>
         <Field label="Пробег, км"><Input inputMode="numeric" value={f.mileage || ''} onChange={(e) => set('mileage', e.target.value.replace(/\D/g, ''))} placeholder="184 500" /></Field>
         <Field label="Топливо"><Chips options={Object.entries(d.fuels).map(([id, label]) => ({ id, label }))} value={f.fuel || 'petrol'} onChange={(v) => set('fuel', v)} columns={3} /></Field>
+        {d.bodies && (
+          <Field label="Кузов (для картинки)">
+            <Chips options={[{ id: '', label: 'Авто по модели' }, ...Object.entries(d.bodies).map(([id, label]) => ({ id, label }))]} value={f.body || ''} onChange={(v) => set('body', v)} columns={2} />
+          </Field>
+        )}
         <Field label="Замена масла каждые, км"><Chips options={['7000', '10000', '15000'].map((x) => ({ id: x, label: `${Number(x).toLocaleString('ru-RU')}` }))} value={f.service_interval || '10000'} onChange={(v) => set('service_interval', v)} columns={3} /></Field>
         <Button onClick={save} loading={busy}>Сохранить</Button>
       </div>
@@ -323,6 +333,142 @@ function ServiceSheet({ open, d, onClose, onDone }: SheetP) {
   );
 }
 
+const DOC_TONE: Record<CarDoc['state'], [string, string]> = {
+  ok: ['bg-[#34C759]/15 text-[#1E7A35] dark:text-[#30D158]', '#34C759'],
+  soon: ['bg-[#FF9F0A]/15 text-[#C93400] dark:text-[#FF9F0A]', '#FF9F0A'],
+  urgent: ['bg-[#FF453A]/15 text-[#D70015] dark:text-[#FF453A]', '#FF453A'],
+  expired: ['bg-[#FF453A] text-white', '#FF453A'],
+};
+const daysRu = (n: number) => { const a = Math.abs(n); const w = a % 10 === 1 && a % 100 !== 11 ? 'день' : [2, 3, 4].includes(a % 10) && ![12, 13, 14].includes(a % 100) ? 'дня' : 'дней'; return `${a} ${w}`; };
+const docLeft = (x: CarDoc) => (x.days_left < 0 ? `истекло ${daysRu(x.days_left)} назад` : x.days_left === 0 ? 'истекает сегодня' : `ещё ${daysRu(x.days_left)}`);
+const ddmm = (d: string | null) => (d ? d.split('-').reverse().join('.') : '');
+
+/** Баннер: страховка/документ истёк или истекает в ближайшие 7 дней. */
+function DocsAlert({ docs, onOpen }: { docs: CarDoc[]; onOpen?: (x: CarDoc) => void }) {
+  const bad = docs.filter((x) => x.state === 'urgent' || x.state === 'expired');
+  if (!bad.length) return null;
+  return (
+    <div className="mb-3 flex flex-col gap-2">
+      {bad.map((x) => (
+        <button key={x.id} onClick={() => onOpen?.(x)} className="flex items-center gap-3 rounded-[20px] bg-[#FF453A] px-4 py-3 text-left text-white shadow-[0_4px_0_#8A1C15] active:translate-y-[2px]">
+          <span className="text-[24px]">{x.icon}</span>
+          <div className="min-w-0 flex-1"><div className="text-[15px] font-extrabold">{x.label}: {docLeft(x)}</div><div className="text-[12.5px] text-white/85">до {ddmm(x.expires)} — продлите и обновите срок</div></div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DocsList({ docs, onOpen }: { docs: CarDoc[]; onOpen?: (x: CarDoc) => void }) {
+  if (!docs.length) return <div className="text-[14px] text-muted">Добавьте RCA, CASCO, Carte Verde, техосмотр — приложение напомнит за 30, 7 и 1 день до окончания.</div>;
+  return (
+    <div className="flex flex-col gap-2">
+      {docs.map((x) => {
+        const total = x.starts ? Math.max(1, (Date.parse(x.expires) - Date.parse(x.starts)) / 86400000) : 365;
+        const pct = Math.max(0, Math.min(100, (x.days_left / total) * 100));
+        return (
+          <button key={x.id} onClick={() => onOpen?.(x)} className="rounded-2xl bg-fill p-3 text-left active:opacity-80">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-card text-[20px]">{x.icon}</span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[14.5px] font-semibold">{x.label}{x.company ? ` · ${x.company}` : ''}</div>
+                <div className="text-[12px] text-muted">до {ddmm(x.expires)}{x.number ? ` · № ${x.number}` : ''}{x.amount ? ` · ${lei(x.amount)}` : ''}</div>
+              </div>
+              <span className={cx('shrink-0 rounded-full px-2.5 py-1 text-[11.5px] font-bold', DOC_TONE[x.state][0])}>{docLeft(x)}</span>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-card"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: DOC_TONE[x.state][1] }} /></div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function DocSheet({ d, doc, tg, onClose, onDone }: { d: CarRes; doc: CarDoc | null; tg?: string; onClose: () => void; onDone: (r: CarRes) => void }) {
+  const toast = useToast();
+  const kinds = d.doc_kinds || {};
+  const [f, setF] = useState<Record<string, string>>({ kind: doc?.kind || 'rca', number: doc?.number || '', company: doc?.company || '', starts: doc?.starts || '', expires: doc?.expires || '', amount: doc?.amount != null ? String(doc.amount) : '', note: doc?.note || '' });
+  const [busy, setBusy] = useState(false);
+  const [del, setDel] = useState(false);
+  const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
+  // «на год» — от даты начала (или сегодня)
+  const plusYear = () => { const base = f.starts || new Date().toISOString().slice(0, 10); const dt0 = new Date(`${base}T00:00:00Z`); dt0.setUTCFullYear(dt0.getUTCFullYear() + 1); dt0.setUTCDate(dt0.getUTCDate() - 1); set('expires', dt0.toISOString().slice(0, 10)); if (!f.starts) set('starts', base); };
+  return (
+    <Sheet open onClose={onClose} title={doc ? 'Документ' : 'Страховка / документ'}>
+      <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-3 gap-2">
+          {Object.entries(kinds).map(([id, x]) => (
+            <button key={id} onClick={() => { haptic.tap(); set('kind', id); }} className={cx('flex flex-col items-center gap-1 rounded-2xl px-1.5 py-2.5 text-center text-[12px] font-semibold leading-tight', f.kind === id ? 'bg-ink text-card' : 'bg-fill')}>
+              <span className="text-[20px]">{x.icon}</span>{x.label}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Действует с"><Input type="date" value={f.starts} onChange={(e) => set('starts', e.target.value)} /></Field>
+          <Field label="Действует до"><Input type="date" value={f.expires} onChange={(e) => set('expires', e.target.value)} /></Field>
+        </div>
+        <button onClick={plusYear} className="-mt-1 self-start text-[13px] font-semibold text-accent-ink">+ на год</button>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Номер полиса"><Input value={f.number} onChange={(e) => set('number', e.target.value)} placeholder="необязательно" /></Field>
+          <Field label="Стоимость, лей"><Input inputMode="decimal" value={f.amount} onChange={(e) => set('amount', e.target.value)} placeholder="необязательно" /></Field>
+        </div>
+        <Field label="Страховая / где делали"><Input value={f.company} onChange={(e) => set('company', e.target.value)} placeholder="например, Moldasig" /></Field>
+        {f.kind === 'other' && <Field label="Что за документ"><Input value={f.note} onChange={(e) => set('note', e.target.value)} /></Field>}
+        <Button loading={busy} disabled={!f.expires} onClick={async () => { setBusy(true); try { onDone(await api.carDocSave({ ...f, id: doc?.id }, tg)); } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(false); } }}>Сохранить</Button>
+        {doc && (del
+          ? <Button variant="danger" onClick={async () => { try { onDone(await api.carDocDelete(doc.id)); } catch (e) { toast((e as Error).message, 'error'); } }}>Точно удалить</Button>
+          : <Button variant="plain" onClick={() => setDel(true)}><span className="text-[#D70015] dark:text-[#FF453A]">Удалить документ</span></Button>)}
+      </div>
+    </Sheet>
+  );
+}
+
+function ServiceList({ service }: { service: NonNullable<CarRes['service']> }) {
+  return (
+    <div className="flex flex-col divide-y divide-dashed divide-line">
+      {service.map((x) => {
+        const done = Math.max(0, Math.min(100, ((x.interval - Math.max(0, x.left)) / x.interval) * 100));
+        const color = x.state === 'overdue' ? '#FF453A' : x.state === 'soon' ? '#FF9F0A' : '#34C759';
+        return (
+          <div key={x.id} className="py-2">
+            <div className="flex items-center gap-3">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />
+              <div className="min-w-0 flex-1 text-[14px]">{x.label}<div className="text-[11.5px] text-muted">каждые {km(x.interval)}{x.last_km != null ? ` · делали на ${km(x.last_km)}` : ' · ещё не отмечали'}</div></div>
+              <div className={cx('shrink-0 text-right text-[13px] font-semibold', x.state === 'overdue' && 'text-[#D70015] dark:text-[#FF453A]')}>{x.left < 0 ? `просрочено ${km(-x.left)}` : `через ${km(x.left)}`}<div className="text-[11px] font-normal text-muted">на {km(x.next_km)}</div></div>
+            </div>
+            <div className="ml-5 mt-1.5 h-1 overflow-hidden rounded-full bg-fill"><div className="h-full rounded-full" style={{ width: `${x.left < 0 ? 100 : done}%`, background: color }} /></div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ServiceCostsCard({ c }: { c: CarServiceCosts }) {
+  if (!c.count && !c.docs_year) return null;
+  const max = Math.max(1, ...c.by_item.map((x) => x.amount));
+  return (
+    <Block title="Затраты на ТО и страховки">
+      <div className="grid grid-cols-3 gap-2">
+        <div className="rounded-2xl bg-fill p-2.5"><div className="text-[11px] text-muted">ТО за месяц</div><div className="font-dot text-[18px] leading-tight">{lei(c.month)}</div></div>
+        <div className="rounded-2xl bg-fill p-2.5"><div className="text-[11px] text-muted">ТО за год</div><div className="font-dot text-[18px] leading-tight">{lei(c.year)}</div></div>
+        <div className="rounded-2xl bg-fill p-2.5"><div className="text-[11px] text-muted">Страховки за год</div><div className="font-dot text-[18px] leading-tight">{lei(c.docs_year)}</div></div>
+      </div>
+      {c.by_item.length > 0 && (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {c.by_item.slice(0, 8).map((x) => (
+            <div key={x.id} className="text-[12.5px]">
+              <div className="flex justify-between gap-2"><span className="truncate">{x.label}</span><b className="shrink-0">{lei(x.amount)}</b></div>
+              <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-fill"><div className="h-full rounded-full bg-[#34C759]" style={{ width: `${(x.amount / max) * 100}%` }} /></div>
+            </div>
+          ))}
+          <div className="mt-1 text-[11.5px] text-muted">Всего на ТО за всё время: {lei(c.total)} · записей: {c.count}</div>
+        </div>
+      )}
+    </Block>
+  );
+}
+
 const EXP_COLORS: Record<string, string> = { wash: '#2DA8E6', adblue: '#0A84FF', parking: '#AF52DE', repair: '#FF9F0A', other: '#8E8E93' };
 
 /** Все траты на авто за месяц: топливо + расходы + ТО — полоской по долям. */
@@ -333,6 +479,7 @@ function SpendCard({ d }: { d: CarRes }) {
     { label: '⛽ Топливо', v: s.fuel_month, c: '#F58220' },
     ...Object.entries(s.expenses_by_kind || {}).map(([k, v]) => ({ label: `${kinds[k]?.icon || '🧾'} ${kinds[k]?.label || k}`, v, c: EXP_COLORS[k] || '#8E8E93' })),
     ...(s.service_month ? [{ label: '🔧 ТО', v: s.service_month, c: '#34C759' }] : []),
+    ...(s.docs_month ? [{ label: '🛡 Страховки', v: s.docs_month, c: '#FF2E88' }] : []),
   ].filter((p) => p.v > 0);
   const total = s.spend_month ?? parts.reduce((a, p) => a + p.v, 0);
   if (!total) return null;
@@ -506,7 +653,14 @@ export function CarsPanel() {
       <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Машины сотрудников</div>
       <div className="grid gap-2.5 md:grid-cols-2">
         {d.items.map((i) => (
-          <button key={i.tg_id} disabled={!i.car} onClick={() => setOpen(i.tg_id)} className="rounded-[20px] bg-card p-4 text-left active:opacity-70 disabled:active:opacity-100">
+          <button key={i.tg_id} disabled={!i.car} onClick={() => setOpen(i.tg_id)} className="overflow-hidden rounded-[20px] bg-card text-left active:opacity-70 disabled:active:opacity-100">
+            {i.car && <CarArt body={i.body} plate={i.plate} className="block aspect-[16/7] w-full" />}
+            <div className="p-4">
+            {i.docs_alert && (
+              <div className={cx('mb-2 inline-flex rounded-full px-2.5 py-1 text-[11.5px] font-bold', DOC_TONE[i.docs_alert.state as CarDoc['state']]?.[0] || 'bg-fill')}>
+                🛡 {i.docs_alert.label}: {i.docs_alert.days_left < 0 ? 'истекло' : i.docs_alert.days_left === 0 ? 'сегодня' : `${daysRu(i.docs_alert.days_left)}`}{i.docs_alert.count > 1 ? ` · ещё ${i.docs_alert.count - 1}` : ''}
+              </div>
+            )}
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0"><div className="truncate text-[16px] font-semibold">{i.name}</div><div className="text-[13px] text-muted">{i.car ? [i.car, i.year, i.plate].filter(Boolean).join(' · ') : 'машина не добавлена'}</div></div>
               {i.last_check && <span className={cx('shrink-0 rounded-full px-2.5 py-1 text-[11.5px] font-bold', CHECK_STATUS[i.last_check.status as CarCheck['status']]?.[1] || 'bg-fill')}>{CHECK_STATUS[i.last_check.status as CarCheck['status']]?.[0] || i.last_check.status}</span>}
@@ -518,6 +672,7 @@ export function CarsPanel() {
                 <div><div className="text-muted">Траты с 1-го</div><b>{lei(i.spend_month ?? i.fuel_month)}</b>{!!i.expenses_month && <div className="text-[11px] text-muted">⛽ {lei(i.fuel_month)} · прочее {lei(i.expenses_month)}</div>}</div>
               </div>
             )}
+            </div>
           </button>
         ))}
       </div>
@@ -576,50 +731,88 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
   const toast = useToast();
   const [d, setD] = useState<CarDetail | null>(null);
   const [delConfirm, setDelConfirm] = useState(false);
+  const [doc, setDoc] = useState<CarDoc | 'new' | null>(null);
+  const [more, setMore] = useState(false);
   const load = useCallback(() => api.adminCar(tg).then(setD).catch((e: Error) => toast(e.message, 'error')), [tg, toast]);
   useEffect(() => { load(); }, [load]);
+  const overdue = d?.service?.filter((x) => x.state === 'overdue') || [];
   return (
     <Sheet open onClose={onClose} title={d?.user.name || 'Машина'}>
       {!d?.car ? <Spinner /> : (
         <div className="flex flex-col gap-3">
-          <div className="text-[15px] font-semibold">{d.car.make} {d.car.model} · {d.car.year} · {d.car.plate}</div>
+          <div className="-mt-2 overflow-hidden rounded-[22px] bg-card">
+            <CarArt body={d.car.body} title={`${d.car.make} ${d.car.model}`} plate={d.car.plate} className="block aspect-[16/9] w-full" />
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0 text-[13px] text-muted">{[d.car.year, d.fuels[d.car.fuel], d.car.plate].filter(Boolean).join(' · ')}</div>
+              <div className="shrink-0 text-right"><div className="font-dot text-[22px] leading-none">{Math.round(d.car.mileage).toLocaleString('ru-RU')}</div><div className="text-[11px] text-muted">км · обновлён {dt(d.car.mileage_at)}</div></div>
+            </div>
+          </div>
+
+          <DocsAlert docs={d.docs || []} onOpen={(x) => setDoc(x)} />
+          {overdue.length > 0 && (
+            <div className="rounded-[20px] bg-[#FF9F0A]/15 px-4 py-3 text-[13.5px] leading-snug ring-1 ring-inset ring-[#FF9F0A]/50">
+              <b className="text-[#C93400] dark:text-[#FF9F0A]">🔧 Просрочено ТО ({overdue.length}):</b> {overdue.map((x) => `${x.label} (${km(-x.left)})`).join(', ')}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-2">
-            <Tile label="Пробег" value={km(d.car.mileage)} sub={`с начала учёта ${km(d.stats!.km_total)}`} />
-            <Tile label="До ТО" value={d.to ? km(d.to.left) : '—'} tone={d.to?.state === 'overdue' ? 'red' : d.to?.state === 'soon' ? 'orange' : 'green'} />
+            <Tile label="До ТО (масло)" value={d.to ? (d.to.left < 0 ? `−${km(-d.to.left)}` : km(d.to.left)) : '—'} tone={d.to?.state === 'overdue' ? 'red' : d.to?.state === 'soon' ? 'orange' : 'green'} sub={d.to ? `на ${km(d.to.next_km)}` : undefined} />
+            <Tile label={`Пробег · ${d.stats!.month_label || 'месяц'}`} value={km(d.stats!.km_month)} sub={`с начала учёта ${km(d.stats!.km_total)}`} />
             <Tile label={`Топливо · ${d.stats!.month_label || 'месяц'}`} value={lei(d.stats!.fuel_month)}
               sub={`${d.stats!.fuel_prev_month ? `${d.stats!.prev_month_label}: ${lei(d.stats!.fuel_prev_month)} · ` : ''}всего ${lei(d.stats!.fuel_total)}`} />
             <Tile label="Цена км" value={d.stats!.cost_km != null ? `${String(d.stats!.cost_km).replace('.', ',')} лей` : '—'} sub={d.stats!.per100 != null ? `${String(d.stats!.per100).replace('.', ',')} л/100 км` : undefined} />
           </div>
-          <Button variant="secondary" icon={<Camera size={17} />} onClick={async () => { try { await api.requestCarCheck(tg); toast('Запрос отправлен сотруднику', 'ok'); load(); } catch (e) { toast((e as Error).message, 'error'); } }}>Запросить фото машины сейчас</Button>
-          <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Фотопроверки</div>
-          {(d.checks || []).map((k) => (
-            <div key={k.id} className="rounded-2xl bg-fill p-3">
-              <div className="flex items-center justify-between"><b className="text-[14px]">{k.day}</b><span className={cx('rounded-full px-2.5 py-1 text-[11.5px] font-bold', CHECK_STATUS[k.status][1])}>{CHECK_STATUS[k.status][0]}{k.points ? ` +${k.points} б` : ''}</span></div>
-              {k.ai_note && <div className="mt-1 whitespace-pre-line text-[12.5px] text-muted">{k.ai_note}</div>}
-              <PhotoGrid photos={k.photos || []} />
-            </div>
-          ))}
-          <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Заправки (чеки)</div>
-          <div className="grid grid-cols-4 gap-2">
-            {(d.fuel || []).map((f) => (
-              <button key={f.id} onClick={() => f.photo && openLink(f.photo)} className="overflow-hidden rounded-xl bg-fill text-left">
-                {f.photo && <img src={f.photo} alt="" className="aspect-square w-full object-cover" />}
-                <div className="px-1.5 py-1 text-[11px] leading-tight">{f.amount != null ? lei(f.amount) : '—'}<br /><span className="text-muted">{km(f.km)}</span></div>
-              </button>
-            ))}
-          </div>
-          <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Другие расходы · {d.stats!.month_label}: {lei(d.stats!.expenses_month)}</div>
-          <ExpenseList d={d} items={d.expenses || []} admin onChanged={() => load()} />
+          <SpendCard d={d} />
+
+          <Block title="Страховки и документы" right={<button onClick={() => { haptic.tap(); setDoc('new'); }} className="flex items-center gap-1 text-[13px] font-semibold text-accent-ink"><Plus size={15} />Добавить</button>}>
+            <DocsList docs={d.docs || []} onOpen={(x) => setDoc(x)} />
+          </Block>
+          <Block title="Регламент ТО"><ServiceList service={d.service || []} /></Block>
+          {d.service_costs && <ServiceCostsCard c={d.service_costs} />}
           {!!d.service_log.length && (
-            <>
-              <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">ТО</div>
-              {d.service_log.map((s, i) => <div key={i} className="text-[13.5px]"><b>{s.label}</b> · {km(s.km)}{s.amount ? ` · ${lei(s.amount)}` : ''} · <span className="text-muted">{dt(s.created_at)}</span></div>)}
-            </>
+            <Block title="История ТО">
+              <div className="flex flex-col divide-y divide-dashed divide-line">
+                {d.service_log.map((s2, i) => (
+                  <div key={i} className="flex items-center gap-3 py-2 text-[13.5px]">
+                    <Wrench size={15} className="shrink-0 text-muted" />
+                    <div className="min-w-0 flex-1"><b>{s2.label}</b><div className="text-[12px] text-muted">{km(s2.km)} · {dt(s2.created_at)}{s2.note ? ` · ${s2.note}` : ''}</div></div>
+                    {s2.amount ? <b className="shrink-0">{lei(s2.amount)}</b> : <span className="shrink-0 text-[12px] text-muted">без суммы</span>}
+                  </div>
+                ))}
+              </div>
+            </Block>
           )}
-          <div className="text-[12px] text-muted">Баллы за чистую машину: {settings.points_min}–{settings.points_max}.</div>
+          <Block title={`Другие расходы · ${d.stats!.month_label}: ${lei(d.stats!.expenses_month)}`}>
+            <ExpenseList d={d} items={d.expenses || []} admin onChanged={() => load()} />
+          </Block>
+          <Block title="Заправки (чеки)">
+            <div className="grid grid-cols-4 gap-2">
+              {(d.fuel || []).slice(0, more ? 40 : 8).map((f) => (
+                <button key={f.id} onClick={() => f.photo && openLink(f.photo)} className="overflow-hidden rounded-xl bg-fill text-left">
+                  {f.photo && <img src={f.photo} alt="" className="aspect-square w-full object-cover" />}
+                  <div className="px-1.5 py-1 text-[11px] leading-tight">{f.amount != null ? lei(f.amount) : '—'}<br /><span className="text-muted">{km(f.km)}</span></div>
+                </button>
+              ))}
+            </div>
+            {(d.fuel || []).length > 8 && !more && <button onClick={() => setMore(true)} className="mt-2 text-[13px] font-semibold text-accent-ink">Показать все</button>}
+          </Block>
+          <Block title="Фотопроверки">
+            <Button variant="secondary" icon={<Camera size={17} />} onClick={async () => { try { await api.requestCarCheck(tg); toast('Запрос отправлен сотруднику', 'ok'); load(); } catch (e) { toast((e as Error).message, 'error'); } }}>Запросить фото машины сейчас</Button>
+            <div className="mt-2 flex flex-col gap-2">
+              {(d.checks || []).map((k) => (
+                <div key={k.id} className="rounded-2xl bg-fill p-3">
+                  <div className="flex items-center justify-between"><b className="text-[14px]">{new Date(k.day).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}</b><span className={cx('rounded-full px-2.5 py-1 text-[11.5px] font-bold', CHECK_STATUS[k.status][1])}>{CHECK_STATUS[k.status][0]}{k.points ? ` +${k.points} б` : ''}</span></div>
+                  {k.ai_note && <div className="mt-1 whitespace-pre-line text-[12.5px] text-muted">{k.ai_note}</div>}
+                  <PhotoGrid photos={k.photos || []} />
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 text-[12px] text-muted">Баллы за чистую машину: {settings.points_min}–{settings.points_max}.</div>
+          </Block>
           <Button variant="danger" icon={<Trash2 size={17} strokeWidth={1.9} />} onClick={() => setDelConfirm(true)}>Удалить машину</Button>
         </div>
       )}
+      {doc && d && <DocSheet d={d} tg={tg} doc={doc === 'new' ? null : doc} onClose={() => setDoc(null)} onDone={() => { setDoc(null); haptic.success(); load(); }} />}
       {delConfirm && (
         <ConfirmSheet title="Удалить машину?" confirmLabel="Удалить" danger
           text="Машина и её записи (заправки, ТО, фотопроверки) будут удалены немедленно."

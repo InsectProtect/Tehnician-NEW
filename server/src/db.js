@@ -491,6 +491,10 @@ const MIGRATIONS = [
   // v66: прочие расходы на авто — мойка, AdBlue, парковка, ремонт…
   "CREATE TABLE IF NOT EXISTS car_expenses (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, kind TEXT NOT NULL, amount REAL NOT NULL, liters REAL, km INTEGER, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)",
   'CREATE INDEX IF NOT EXISTS car_expenses_user_idx ON car_expenses (tg_id, created_at)',
+  // v67: тип кузова (для иллюстрации) и страховки/документы авто со сроком действия
+  "ALTER TABLE cars ADD COLUMN body TEXT NOT NULL DEFAULT ''",
+  "CREATE TABLE IF NOT EXISTS car_docs (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, kind TEXT NOT NULL, number TEXT NOT NULL DEFAULT '', company TEXT NOT NULL DEFAULT '', starts TEXT, expires TEXT NOT NULL, amount REAL, note TEXT NOT NULL DEFAULT '', reminded TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '')",
+  'CREATE INDEX IF NOT EXISTS car_docs_user_idx ON car_docs (tg_id, expires)',
 ];
 
 async function migrate(run) {
