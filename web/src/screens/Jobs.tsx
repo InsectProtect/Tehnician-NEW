@@ -5,6 +5,7 @@ import { useConfig } from '../config';
 import { haptic, openLink } from '../telegram';
 import { MULT_PRESETS } from './Tasks';
 import { useCrown } from './Contest';
+import { openPhotos } from '../components/PhotoViewer';
 import type { AdminTaskInput, Assignee, Audience, BoostWindow, Job, JobFile, JobInput, JobStatus } from '../types';
 import {
   Button, Chips, ConfirmSheet, Field, Input, MultiChips, Pill, SectionTitle, Segmented, Sheet, Spinner, Stepper, TextArea, cx, useToast,
@@ -788,7 +789,9 @@ function JobFiles({ job, canUpload }: { job: Job; canUpload: boolean }) {
             <div key={f.id} className="flex items-center gap-2 rounded-xl bg-card px-3 py-2">
               <span className="text-[18px]">{fileIcon(f)}</span>
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[14px] font-medium">{f.name}</div>
+                {f.kind === 'photo'
+                  ? <button onClick={() => { const ph = files.filter((x) => x.kind === 'photo'); openPhotos(ph.map((x) => x.url), ph.indexOf(f)); }} className="block max-w-full truncate text-left text-[14px] font-medium text-accent-ink">{f.name}</button>
+                  : <div className="truncate text-[14px] font-medium">{f.name}</div>}
                 <div className="text-[11.5px] text-muted">{fmtSize(f.size)}</div>
               </div>
               {f.download_url && (f.stored || f.size <= 20 * 1024 * 1024) && (

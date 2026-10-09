@@ -3,9 +3,10 @@ import { Camera, Car as CarIcon, Check, Fuel, Gauge, Plus, Receipt, Sparkles, Tr
 import { api } from '../api';
 import { useConfig } from '../config';
 import { compressImage } from '../image';
-import { haptic, openLink } from '../telegram';
+import { haptic } from '../telegram';
 import type { CarCheck, CarDetail, CarDoc, CarExpense, CarFleet, CarRes, CarService, CarServiceCosts, CarSettings } from '../types';
 import { CarArt } from '../components/CarArt';
+import { openPhotos } from '../components/PhotoViewer';
 import { Button, Chips, Collapse, ConfirmSheet, Field, Input, Screen, Sheet, Spinner, Toggle, cx, useToast } from '../components/ui';
 import { GameButton, XpChip } from '../components/game';
 
@@ -174,7 +175,7 @@ export function CarScreen() {
           <div className="flex flex-col divide-y divide-dashed divide-line">
             {d.fuel.map((f) => (
               <div key={f.id} className="flex items-center gap-3 py-2">
-                {f.photo ? <button onClick={() => openLink(f.photo!)} className="h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-fill"><img src={f.photo} alt="чек" className="h-full w-full object-cover" /></button> : <span className="h-11 w-11 rounded-lg bg-fill" />}
+                {f.photo ? <button onClick={() => { const ph = d.fuel!.map((x) => x.photo).filter(Boolean); openPhotos(ph, ph.indexOf(f.photo)); }} className="h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-fill"><img src={f.photo} alt="чек" className="h-full w-full object-cover" /></button> : <span className="h-11 w-11 rounded-lg bg-fill" />}
                 <div className="min-w-0 flex-1"><div className="text-[14.5px] font-semibold">{f.amount != null ? lei(f.amount) : 'сумма —'}{f.liters ? ` · ${String(f.liters).replace('.', ',')} л` : ''}</div><div className="text-[12px] text-muted">{dt(f.created_at)} · {km(f.km)}{f.ai_note ? ` · ${f.ai_note}` : ''}</div></div>
               </div>
             ))}
@@ -676,7 +677,7 @@ function CheckSheet({ open, d, onClose, onDone }: { open: boolean; d: CarRes; on
             <div className="grid grid-cols-4 gap-2">
               {ph[z.id].map((src, i) => (
                 <div key={i} className="relative aspect-square overflow-hidden rounded-xl bg-fill">
-                  <img src={src} alt="" className="h-full w-full object-cover" />
+                  <img src={src} alt="" onClick={() => openPhotos(ph[z.id], i)} className="h-full w-full object-cover" />
                   <button onClick={() => setPh((x) => ({ ...x, [z.id]: x[z.id].filter((_, j) => j !== i) }))} className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white"><X size={12} /></button>
                 </div>
               ))}
@@ -804,7 +805,7 @@ function PhotoGrid({ photos }: { photos: { id: string; zone: string; url: string
         return (
           <div key={z.id}>
             <div className="mb-1 text-[11.5px] font-bold uppercase tracking-[0.06em] text-muted">{z.label}</div>
-            <div className="grid grid-cols-5 gap-1.5">{list.map((p) => <button key={p.id} onClick={() => openLink(p.url)} className="aspect-square overflow-hidden rounded-lg bg-fill"><img src={p.url} alt="" className="h-full w-full object-cover" /></button>)}</div>
+            <div className="grid grid-cols-5 gap-1.5">{list.map((p) => <button key={p.id} onClick={() => openPhotos(list.map((x) => x.url), list.indexOf(p))} className="aspect-square overflow-hidden rounded-lg bg-fill"><img src={p.url} alt="" className="h-full w-full object-cover" /></button>)}</div>
           </div>
         );
       })}
@@ -869,7 +870,7 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
           <Block title="Заправки (чеки)">
             <div className="grid grid-cols-4 gap-2">
               {(d.fuel || []).slice(0, more ? 40 : 8).map((f) => (
-                <button key={f.id} onClick={() => f.photo && openLink(f.photo)} className="overflow-hidden rounded-xl bg-fill text-left">
+                <button key={f.id} onClick={() => { const ph = (d.fuel || []).map((x) => x.photo).filter(Boolean); openPhotos(ph, ph.indexOf(f.photo)); }} className="overflow-hidden rounded-xl bg-fill text-left">
                   {f.photo && <img src={f.photo} alt="" className="aspect-square w-full object-cover" />}
                   <div className="px-1.5 py-1 text-[11px] leading-tight">{f.amount != null ? lei(f.amount) : '—'}<br /><span className="text-muted">{km(f.km)}</span></div>
                 </button>

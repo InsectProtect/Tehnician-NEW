@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Camera, CheckCircle2, MessageSquareWarning, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Pencil, ScanLine, Send, Share2, Target, Trash2, X } from 'lucide-react';
+import { Camera, CheckCircle2, MessageSquareWarning, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Pencil, ScanLine, Send, Share2, Target, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { fmtDate, plural, useConfig } from '../config';
 import { callPhone, canScanQr, getLocation, haptic, openLink, prettyPhone, scanQr, useBackButton } from '../telegram';
 import type { Observation, Reward, Task, Trap, Visit } from '../types';
 import { QuestPath } from '../components/game';
+import { openPhotos } from '../components/PhotoViewer';
 import { RewardSheet } from './Play';
 import { ClientActions, dealLabel, fmtTaskDate, MULT_PRESETS, PhoneSheet } from './Tasks';
 import {
@@ -35,7 +36,6 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
   const cfg = useConfig();
   const toast = useToast();
   const [data, setData] = useState<{ visit: Visit; traps: Trap[]; observations: Observation[]; task: Task | null } | null>(null);
-  const [photo, setPhoto] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState('');
   const [sending, setSending] = useState(false);
   const [recsOpen, setRecsOpen] = useState(false);
@@ -720,7 +720,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
               {o.photos.length > 0 && (
                 <div className="mt-3 grid grid-cols-3 gap-2">
                   {o.photos.map((p) => (
-                    <button key={p.id} onClick={() => setPhoto(p.url)} className="overflow-hidden rounded-2xl bg-black/5">
+                    <button key={p.id} onClick={() => openPhotos(o.photos.map((x) => x.url), o.photos.indexOf(p))} className="overflow-hidden rounded-2xl bg-black/5">
                       <img src={p.url} alt="" loading="lazy" className="aspect-square w-full object-cover" />
                     </button>
                   ))}
@@ -873,14 +873,6 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
         />
       )}
 
-      {photo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black animate-fade" onClick={() => setPhoto(null)}>
-          <img src={photo} alt="" className="max-h-full max-w-full object-contain" />
-          <button aria-label="Закрыть" className="top-safe absolute right-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white">
-            <X size={18} strokeWidth={2} />
-          </button>
-        </div>
-      )}
 
       {/* Листы */}
       {sheet?.type === 'inspect' && inspectEl(sheet.trap, sheet.back)}

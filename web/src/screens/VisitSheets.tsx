@@ -7,6 +7,7 @@ import { plural, useConfig } from '../config';
 import { canScanQr, haptic } from '../telegram';
 import type { Observation, Reward, Trap, Visit, RemarkType } from '../types';
 import { QuestPath } from '../components/game';
+import { openPhotos } from '../components/PhotoViewer';
 import { compressImage } from '../image';
 import { PaymentPicker, defaultPayNote, defaultPayment, type PayState } from '../components/Payment';
 import { Button, Chips, Field, Input, Sheet, Stepper, TextArea, Toggle, cx, useToast } from '../components/ui';
@@ -126,7 +127,7 @@ export function InspectSheet({ visitId, trap, onClose, onSaved }: {
                       <div className="mb-3 grid grid-cols-3 gap-2">
                         {shots.map((x) => (
                           <div key={x.key} className="relative">
-                            <img src={x.data} alt="" className="aspect-square w-full rounded-2xl object-cover" />
+                            <img src={x.data} alt="" onClick={() => openPhotos(shots.map((y) => y.data), shots.indexOf(x))} className="aspect-square w-full rounded-2xl object-cover" />
                             <button onClick={() => setShots((all) => all.filter((y) => y.key !== x.key))} aria-label="Убрать"
                               className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/55 text-white">
                               <X size={15} strokeWidth={2.25} />
@@ -538,7 +539,7 @@ export function ObservationSheet({ visitId, onClose, onSaved }: {
             <div className="mb-3 grid grid-cols-3 gap-2">
               {shots.map((s) => (
                 <div key={s.key} className="relative">
-                  <img src={s.data} alt="" className="aspect-square w-full rounded-2xl object-cover" />
+                  <img src={s.data} alt="" onClick={() => openPhotos(shots.map((y) => y.data), shots.indexOf(s))} className="aspect-square w-full rounded-2xl object-cover" />
                   <button onClick={() => setShots((all) => all.filter((x) => x.key !== s.key))} aria-label="Убрать"
                     className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/55 text-white">
                     <X size={15} strokeWidth={2.25} />

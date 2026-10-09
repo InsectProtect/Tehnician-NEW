@@ -4,6 +4,7 @@ import { api, uploadMediaAny } from '../api';
 import { fmtDate, useConfig } from '../config';
 import { compressImage } from '../image';
 import { haptic, openLink } from '../telegram';
+import { openPhotos } from './PhotoViewer';
 import type { MediaPost, MediaSettings, MyMedia } from '../types';
 import { Button, Field, Input, Pill, Sheet, Spinner, cx, useToast } from './ui';
 
@@ -202,7 +203,7 @@ export function MediaReviewWidget({ onAll }: { onAll?: () => void }) {
               <div className="bg-black">
                 {m.kind === 'video'
                   ? (!m.stored && m.size > 20 * 1024 * 1024 ? <div className="p-6 text-center text-[13px] text-white/70">Видео больше 20 МБ — смотрите в чате Telegram</div> : <video src={m.url} controls playsInline preload="metadata" className="max-h-64 w-full" />)
-                  : <img src={m.url} alt="" className="max-h-64 w-full object-contain" />}
+                  : <img src={m.url} alt="" onClick={() => openPhotos(pending.filter((x) => x.kind !== 'video').map((x) => x.url), pending.filter((x) => x.kind !== 'video').indexOf(m))} className="max-h-64 w-full object-contain" />}
               </div>
               <div className="p-3">
                 <div className="font-semibold">{m.name} <span className="font-normal text-muted">· {fmtDate(m.created_at)}</span></div>
@@ -371,7 +372,7 @@ export function MediaGallery() {
       {view && (
         <Sheet open onClose={() => setView(null)} title={view.name}>
           <div className="overflow-hidden rounded-2xl bg-black">
-            {view.kind === 'video' ? <video src={view.url} controls autoPlay playsInline className="max-h-[65dvh] w-full" /> : <img src={view.url} alt="" className="max-h-[65dvh] w-full object-contain" />}
+            {view.kind === 'video' ? <video src={view.url} controls autoPlay playsInline className="max-h-[65dvh] w-full" /> : <img src={view.url} alt="" onClick={() => openPhotos(d!.items.filter((x) => x.kind !== 'video').map((x) => x.url), d!.items.filter((x) => x.kind !== 'video').indexOf(view))} className="max-h-[65dvh] w-full object-contain" />}
           </div>
           <div className="mt-2 text-[13px] text-muted">{[fmtDate(view.created_at), view.object, view.caption].filter(Boolean).join(' · ')}</div>
           <div className="mt-3 grid grid-cols-2 gap-2">
