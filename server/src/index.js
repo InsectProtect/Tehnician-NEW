@@ -2708,7 +2708,7 @@ route('POST', '/api/tasks/:id/assign', async ({ params, body, user }) => {
   await boostCongrats(nt);
   if (t.confirm_id) {
     editMessage(t.chat_id, t.confirm_id, `${taskSummary(nt, u.name)}\n\n✅ Отправлено технику (назначил ${escHtml(user.name)}).`,
-      { inline_keyboard: [[{ text: '❌ Отменить заявку', callback_data: `cancel:${t.id}` }]] }).catch(() => {});
+      taskKb(t)).catch(() => {});
   }
   return { ok: true };
 }, { access: 'admin' });
@@ -3437,7 +3437,7 @@ async function approveTask(t, who) {
   await audit({ id: 'bot', name: who }, 'Заявка подтверждена', `№ ${t.task_no} · ${t.company_name || t.address}`, `для: ${u?.name || ''}`);
   if (t.confirm_id) {
     editMessage(t.chat_id, t.confirm_id, `${taskSummary(nt, u?.name)}\n\n✅ Подтвердил ${escHtml(who)} · отправлено технику.`,
-      { inline_keyboard: [[{ text: '❌ Отменить заявку', callback_data: `cancel:${t.id}` }]] }).catch(() => {});
+      taskKb(t)).catch(() => {});
   }
   addNotification(t.tech_tg_id, 'task_new', `Заявка № ${t.task_no} · ${t.company_name || 'Физлицо'} · ${t.address}`, { task_id: t.id }).catch(() => {});
   await sendTaskAlert(nt);
@@ -5209,6 +5209,33 @@ async function handleUpdate(u) {
     }
   }
 
+  // ответ на вопрос бота (название фирмы / комментарий) или на копию заявки → комментарий к заявке
+  if (c.type !== 'private' && text && !text.startsWith('/') && !m.from?.is_bot && m.reply_to_message?.message_id
+    && !/^(отмена|отменить|отменяем|cancel|anulat|anulare|anulează)([\s!.,]|$)/i.test(text)) {
+    const rid = String(m.reply_to_message.message_id);
+    const who = [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' ') || 'Офис';
+    const [p] = await db.query('SELECT * FROM bot_prompts WHERE chat_id = $1 AND msg_id = $2', [String(c.id), rid]);
+    const [t] = p ? await db.query('SELECT * FROM tasks WHERE id = $1', [p.task_id])
+      : await db.query('SELECT * FROM tasks WHERE chat_id = $1 AND confirm_id = $2', [String(c.id), rid]);
+    if (t) {
+      if (p) await db.query('DELETE FROM bot_prompts WHERE chat_id = $1 AND msg_id = $2', [String(c.id), rid]);
+      if (p?.kind === 'company') {
+        const name = text.trim().slice(0, 200);
+        await db.query("UPDATE tasks SET company_name = $1, client_type = 'company', updated_at = $2 WHERE id = $3", [name, now(), t.id]);
+        await audit({ id: 'bot', name: who }, 'Заявка: название фирмы', `№ ${t.task_no}`, name);
+        await refreshTaskMsg(t.id, `🏢 Юрлицо: ${escHtml(name)} (${escHtml(who)}).`);
+        if (t.tech_tg_id) notifyTech(t.tech_tg_id, `🏢 Заявка № ${t.task_no} — <b>юрлицо</b>: ${escHtml(name)}.`, { kind: 'task_update', task_id: t.id });
+        await sendMessage(c.id, `✅ Заявка № ${t.task_no}: юрлицо «${escHtml(name)}».`, { threadId, replyTo: m.message_id }).catch(() => {});
+        log(`название фирмы → заявка № ${t.task_no}`);
+      } else {
+        await addOfficeNote(t, text.trim(), who);
+        await sendMessage(c.id, `💬 Комментарий добавлен к заявке № ${t.task_no} и отправлен технику.`, { threadId, replyTo: m.message_id }).catch(() => {});
+        log(`комментарий → заявка № ${t.task_no}`);
+      }
+      return;
+    }
+  }
+
   // сообщение в теме техника → заявка
   if (c.type === 'private' || !text || text.startsWith('/') || m.from?.is_bot) {
     if (c.type !== 'private' && !m.from?.is_bot) log(text ? 'команда — пропущено' : 'без текста — пропущено');
@@ -5931,13 +5958,14 @@ function taskSummary(t, techName) {
   const pests = taskPests(t);
   return [
     `📋 <b>Заявка № ${t.task_no}</b>${techName ? ` → ${escHtml(techName)}` : ''}`,
-    t.company_name ? `🏢 ${escHtml(t.company_name)}` : '👤 Физлицо',
+    t.company_name ? `🏢 ${escHtml(t.company_name)}` : t.client_type === 'company' ? '🏢 Юрлицо <i>(название уточняется)</i>' : '👤 Физлицо',
     t.address && `📍 ${escHtml(t.address)}`,
     t.planned_at ? `🗓 ${escHtml(fmtTaskDate(t.planned_at, t.has_time))}` : '🗓 <i>дата не указана</i>',
     (t.procedure || pests.length) && `🐞 ${escHtml([t.procedure, pests.join(', ')].filter(Boolean).join(' · '))}`,
     t.phone && `📞 ${escHtml(intlPhone(t.phone))}`,
     (t.stage || t.rooms || t.price) && `🧾 ${[t.stage && `этап ${t.stage.replace('/', ' из ')}`, t.rooms && `${t.rooms} комн.`, t.price != null && `${t.price} лей`].filter(Boolean).join(' · ')}`,
     t.comment && `💬 ${escHtml(t.comment)}`,
+    t.office_note && `📝 <b>Комментарии офиса:</b>\n${escHtml(t.office_note)}`,
     t.point_cat && `🏠 ${escHtml(pointCatLabel(t))}`,
     Number(t.mult) > 1 && `⚡ Повышенный коэффициент <b>${multRu(Number(t.mult))}</b> к баллам`,
   ].filter(Boolean).join('\n');
@@ -6002,7 +6030,7 @@ async function createTask({ parsed, tech, chatId, threadId, messageId, author, a
   try {
     if (!chatId) throw new Error('нет чата для копии заявки');
     const sent = await sendMessage(chatId, `${taskSummary(t, u.name)}\n\n${messageId ? '✅ Отправлено технику. Если что-то не так — исправьте своё сообщение.' : `✅ Создана в админ-панели (${escHtml(author || '')}) · отправлено сотруднику.`}`,
-      { threadId, replyTo: messageId, replyMarkup: { inline_keyboard: [[{ text: '❌ Отменить заявку', callback_data: `cancel:${t.id}` }]] } });
+      { threadId, replyTo: messageId, replyMarkup: taskKb(t) });
     if (sent?.message_id) await db.query('UPDATE tasks SET confirm_id = $1 WHERE id = $2', [String(sent.message_id), t.id]);
   } catch (e) { console.error('task confirm:', e.message); }
   addNotification(u.tg_id, 'task_new', `Заявка № ${t.task_no} · ${t.company_name || 'Физлицо'} · ${t.address}`, { task_id: t.id }).catch(() => {});
@@ -6077,7 +6105,7 @@ async function ackTask(t, who) {
   const [u] = await db.query('SELECT name FROM users WHERE tg_id = $1', [t.tech_tg_id]);
   if (t.confirm_id) {
     editMessage(t.chat_id, t.confirm_id, `${taskSummary(t, u?.name)}\n\n✅ Отправлено технику · 👀 ${escHtml(who || u?.name || '')} получил ${escHtml(new Date(at).toLocaleTimeString('ru-RU', { timeZone: TZN, hour: '2-digit', minute: '2-digit' }))}`,
-      { inline_keyboard: [[{ text: '❌ Отменить заявку', callback_data: `cancel:${t.id}` }]] }).catch(() => {});
+      taskKb(t)).catch(() => {});
   }
   return true;
 }
@@ -6175,7 +6203,7 @@ async function handleTaskEdit(m) {
   if (!['new', 'pending'].includes(t.status) || !parsed) return;
   await db.query(
     'UPDATE tasks SET company_name = $1, address = $2, planned_at = $3, has_time = $4, procedure = $5, pests = $6, phone = $7, comment = $8, updated_at = $9, reschedule_req = 0, rooms = $11, stage = $12, price = $13, mult = COALESCE($14, mult) WHERE id = $10',
-    [parsed.company, parsed.address, parsed.planned_at, parsed.has_time ? 1 : 0, parsed.procedure, JSON.stringify(parsed.pests), parsed.phone, parsed.comment, now(), t.id,
+    [t.client_type === 'person' ? '' : (parsed.company || (t.client_type === 'company' ? t.company_name : '')), parsed.address, parsed.planned_at, parsed.has_time ? 1 : 0, parsed.procedure, JSON.stringify(parsed.pests), parsed.phone, parsed.comment, now(), t.id,
       parsed.rooms || null, parsed.stage || '', parsed.price ?? null, parsed.mult || null],
   );
   sales.onTaskSaved(t.id).catch(() => {});
@@ -6183,7 +6211,7 @@ async function handleTaskEdit(m) {
   const [u] = await db.query('SELECT name FROM users WHERE tg_id = $1', [t.tech_tg_id]);
   if (t.confirm_id) {
     editMessage(t.chat_id, t.confirm_id, `${taskSummary(nt, u?.name)}\n\n✏️ Заявка обновлена.`,
-      { inline_keyboard: [[{ text: '❌ Отменить заявку', callback_data: `cancel:${t.id}` }]] }).catch(() => {});
+      taskKb(t)).catch(() => {});
   }
   notifyTech(t.tech_tg_id, `✏️ Заявка изменена\n${taskSummary(nt)}`, { kind: 'task_update', task_id: t.id });
   if (nt.status === 'new') await boostCongrats(nt);
@@ -6240,7 +6268,7 @@ async function confirmReschedule(t, who) {
   await audit({ id: 'bot', name: who }, 'Заявка перенесена', `№ ${t.task_no} → ${fmtTaskDate(t.reschedule_to, t.reschedule_has_time)}`);
   if (t.confirm_id) {
     editMessage(t.chat_id, t.confirm_id, `${taskSummary(nt, u?.name)}\n\n🔁 Перенесена по просьбе клиента.`,
-      { inline_keyboard: [[{ text: '❌ Отменить заявку', callback_data: `cancel:${t.id}` }]] }).catch(() => {});
+      taskKb(t)).catch(() => {});
   }
   notifyTech(t.tech_tg_id, `📅 Заявка № ${t.task_no} перенесена на <b>${escHtml(fmtTaskDate(t.reschedule_to, t.reschedule_has_time))}</b>\n${escHtml(t.company_name || '')} ${escHtml(t.address || '')}`,
     { kind: 'task_update', task_id: t.id });
@@ -6257,7 +6285,7 @@ async function restoreTask(t, who) {
   const [u] = await db.query('SELECT name FROM users WHERE tg_id = $1', [t.tech_tg_id]);
   if (t.confirm_id) {
     editMessage(t.chat_id, t.confirm_id, `${taskSummary(nt, u?.name)}\n\n♻️ Восстановлена (${escHtml(who)}).`,
-      { inline_keyboard: [[{ text: '❌ Отменить заявку', callback_data: `cancel:${t.id}` }]] }).catch(() => {});
+      taskKb(t)).catch(() => {});
   }
   addNotification(t.tech_tg_id, 'task_new', `Заявка № ${t.task_no} восстановлена`, { task_id: t.id }).catch(() => {});
   await sendTaskAlert(nt);
@@ -6265,6 +6293,46 @@ async function restoreTask(t, who) {
   return true;
 }
 const restoreKb = (t) => ({ inline_keyboard: [[{ text: '♻️ Восстановить заявку', callback_data: `restore:${t.id}` }]] });
+/** Тип клиента заявки: выбран в группе кнопкой, иначе — по наличию названия фирмы. */
+const clientTypeOf = (t) => t.client_type || (t.company_name ? 'company' : 'person');
+/** Кнопки под заявкой в группе: физлицо/юрлицо, комментарий, отмена. */
+function taskKb(t) {
+  const ct = clientTypeOf(t);
+  return { inline_keyboard: [
+    [{ text: `${ct === 'person' ? '✅ ' : ''}👤 Физлицо`, callback_data: `ctype:p:${t.id}` }, { text: `${ct === 'company' ? '✅ ' : ''}🏢 Юрлицо`, callback_data: `ctype:c:${t.id}` }],
+    [{ text: '💬 Комментарий', callback_data: `tcom:${t.id}` }, { text: '❌ Отменить', callback_data: `cancel:${t.id}` }],
+  ] };
+}
+const taskStatusLine = (t) => ({ new: '✅ Отправлено технику.', pending: '⏳ Ждёт подтверждения администратора.', in_progress: '🚗 Выезд начат.', open: '🙋 Ждёт, кто заберёт.' }[t.status] || '');
+/** Перерисовать сообщение-копию заявки в группе (после смены типа клиента / комментария). */
+async function refreshTaskMsg(taskId, extra = '') {
+  const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
+  if (!t?.confirm_id || !t.chat_id) return t;
+  const [u] = await db.query('SELECT name FROM users WHERE tg_id = $1', [t.tech_tg_id]);
+  await editMessage(t.chat_id, t.confirm_id, `${taskSummary(t, u?.name)}\n\n${[taskStatusLine(t), extra].filter(Boolean).join('\n')}`,
+    ['cancelled', 'done', 'void'].includes(t.status) ? undefined : taskKb(t)).catch(() => {});
+  return t;
+}
+/** Комментарий офиса к заявке: сохраняем отдельно от текста заявки (правка сообщения его не затирает), сообщаем технику. */
+async function addOfficeNote(t, text, who) {
+  const line = `${who}: ${text}`.slice(0, 600);
+  const note = [t.office_note, line].filter(Boolean).join('\n').slice(-2000);
+  await db.query('UPDATE tasks SET office_note = $1, updated_at = $2 WHERE id = $3', [note, now(), t.id]);
+  await audit({ id: 'bot', name: who }, 'Комментарий к заявке', `№ ${t.task_no} · ${t.company_name || t.address}`, text.slice(0, 200));
+  await refreshTaskMsg(t.id, `💬 Комментарий добавлен (${escHtml(who)}).`);
+  if (t.tech_tg_id && !['cancelled', 'done', 'void'].includes(t.status)) {
+    notifyTech(t.tech_tg_id, `💬 <b>Комментарий к заявке № ${t.task_no}</b> (${escHtml(who)})\n${escHtml(t.company_name || t.address || '')}\n\n${escHtml(text)}`, { kind: 'task_update', task_id: t.id });
+  }
+}
+/** Вопрос бота с полем ответа (ответить на сообщение) — запоминаем, к какой заявке он относится. */
+async function askInGroup(t, kind, html, placeholder) {
+  const sent = await sendMessage(t.chat_id, html, { threadId: t.thread_id, replyTo: t.confirm_id || t.message_id,
+    replyMarkup: { force_reply: true, selective: true, input_field_placeholder: placeholder } }).catch(() => null);
+  if (sent?.message_id) {
+    await db.query('DELETE FROM bot_prompts WHERE created_at < $1', [new Date(Date.now() - 3 * 86400000).toISOString()]);
+    await db.query('INSERT INTO bot_prompts (chat_id, msg_id, kind, task_id, created_at) VALUES ($1,$2,$3,$4,$5)', [String(t.chat_id), String(sent.message_id), kind, t.id, now()]);
+  }
+}
 
 const CANCEL_REASONS = ['Передумал', 'Обратился в другую компанию', 'Дорого', 'Не открыл / не отвечает', 'Проблема решена', 'Другое'];
 
@@ -6453,6 +6521,36 @@ async function handleCallback(q) {
     }
     return;
   }
+  if (data.startsWith('ctype:')) {
+    const [, kind, id] = data.split(':');
+    const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    if (!t) return answerCallback(q.id, 'Заявка не найдена');
+    if (['cancelled', 'done', 'void'].includes(t.status) || t.visit_id) return answerCallback(q.id, 'Заявка уже в работе или закрыта');
+    const who = [q.from?.first_name, q.from?.last_name].filter(Boolean).join(' ') || 'офис';
+    if (kind === 'p') {
+      // физлицо: название фирмы убираем (в акте будет «Persoană fizică» с телефоном)
+      await db.query("UPDATE tasks SET client_type = 'person', company_name = '', updated_at = $1 WHERE id = $2", [now(), t.id]);
+      await audit({ id: 'bot', name: who }, 'Заявка: физлицо', `№ ${t.task_no}`, t.company_name ? `было: ${t.company_name}` : '');
+      await refreshTaskMsg(t.id, `👤 Физлицо (${escHtml(who)}).`);
+      if (t.tech_tg_id) notifyTech(t.tech_tg_id, `👤 Заявка № ${t.task_no} — <b>физлицо</b>.\n${escHtml(t.address || '')}`, { kind: 'task_update', task_id: t.id });
+      return answerCallback(q.id, 'Отмечено: физлицо');
+    }
+    await db.query("UPDATE tasks SET client_type = 'company', updated_at = $1 WHERE id = $2", [now(), t.id]);
+    await audit({ id: 'bot', name: who }, 'Заявка: юрлицо', `№ ${t.task_no}`, t.company_name || 'название уточняется');
+    await refreshTaskMsg(t.id, `🏢 Юрлицо (${escHtml(who)}).`);
+    if (!t.company_name) {
+      await askInGroup(t, 'company', `🏢 <b>Заявка № ${t.task_no} — юрлицо.</b> Ответьте на это сообщение названием фирмы (например, SRL «Beta»).`, 'Название фирмы');
+      return answerCallback(q.id, 'Юрлицо — напишите название фирмы ответом');
+    }
+    if (t.tech_tg_id) notifyTech(t.tech_tg_id, `🏢 Заявка № ${t.task_no} — <b>юрлицо</b>: ${escHtml(t.company_name)}.`, { kind: 'task_update', task_id: t.id });
+    return answerCallback(q.id, 'Отмечено: юрлицо');
+  }
+  if (data.startsWith('tcom:')) {
+    const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [data.slice(5)]);
+    if (!t) return answerCallback(q.id, 'Заявка не найдена');
+    await askInGroup(t, 'comment', `💬 <b>Комментарий к заявке № ${t.task_no}</b> — напишите его ответом на это сообщение. Он уйдёт технику и сохранится в заявке.`, 'Комментарий к заказу');
+    return answerCallback(q.id, 'Напишите комментарий ответом на сообщение бота');
+  }
   if (data.startsWith('cancel:')) {
     const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [data.slice(7)]);
     if (!t) return answerCallback(q.id, 'Заявка не найдена');
@@ -6490,6 +6588,7 @@ function shapeTask(t, techName) {
     team: taskTeam(t).map((id) => ({ id, name: userNames[id] || id })),
     audience: t.audience || '', claimed_at: t.claimed_at || null, claim_bonus: Number(t.claim_bonus) || 0,
     crm_lead_id: t.crm_lead_id || '',
+    client_type: clientTypeOf(t), office_note: t.office_note || '',
     ...taskMult(t),
   };
 }

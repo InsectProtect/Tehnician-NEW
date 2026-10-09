@@ -46,6 +46,10 @@ export type Task = {
   stage?: string;
   price?: number | null;
   crm_lead_id?: string;
+  /** физлицо / юрлицо (выбрано кнопкой в группе или по названию фирмы) */
+  client_type?: 'person' | 'company';
+  /** комментарии офиса из группы (по строке «Имя: текст») */
+  office_note?: string;
 };
 
 export type CompanySettings = {
