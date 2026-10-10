@@ -18,3 +18,12 @@ export function qrSvg(text, { margin = 2, dark = '#000000', light = '#FFFFFF' } 
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="${light}"/><path d="${d}" fill="${dark}"/></svg>`;
 }
+
+/** Матрица модулей QR (true — тёмный). level: L | M | Q | H — чем выше, тем лучше читается повреждённая этикетка. */
+export function qrMatrix(text, level = 'M') {
+  const qr = new QRCode(-1, QRErrorCorrectLevel[level] ?? QRErrorCorrectLevel.M);
+  qr.addData(String(text));
+  qr.make();
+  const n = qr.getModuleCount();
+  return Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => qr.isDark(r, c)));
+}

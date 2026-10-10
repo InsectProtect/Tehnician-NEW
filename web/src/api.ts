@@ -1,5 +1,6 @@
 import { authHeader, setAppToken } from './telegram';
 import type {
+  LabelBatch, LabelsInfo, LabelsInput,
   PrepState, PrepTask, PrepTrap, CrmProvider, QuestsSettings,
   AdminStats, AdminVisit, BotStatus, KpiRes, MonthSummary, NotificationsRes, RemarksRes, TasksStats, PestsStats, AuditItem, Bootstrap, CompanySettings, Task, BootstrapPartial, Company, ImportStats, Invite, Lead, Observation, OfficeChat,
   RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup,
@@ -187,7 +188,9 @@ export const api = {
     request<{ ok: true; report_url: string; amo_error: string | null; office_sent: boolean; office_error: string | null; office_none?: boolean; reward?: Reward | null }>('POST', `/api/visits/${visitId}/finish`, { comment, ...extra }),
   stamp: () => request<{ mode: 'default' | 'custom' | 'off'; image: string | null }>('GET', '/api/admin/stamp'),
   setStamp: (data: { mode: 'default' | 'custom' | 'off'; image?: string }) => request<{ ok: true }>('PUT', '/api/admin/stamp', data),
-  labels: (count: number) => request<{ url: string }>('POST', '/api/labels', { count }),
+  labelsInfo: () => request<LabelsInfo>('GET', '/api/labels'),
+  labels: (body: LabelsInput) => request<LabelBatch>('POST', '/api/labels', body),
+  recodeTrap: (visitId: string, trapId: string, text: string) => request<{ trap: Trap; old_code: string }>('POST', `/api/visits/${visitId}/traps/${trapId}/recode`, { text }),
   jobs: (all = false) => request<{ items: Job[] }>('GET', `/api/jobs${all ? '' : '?all=0'}`),
   assignees: () => request<{ items: Assignee[] }>('GET', '/api/admin/assignees'),
   createJob: (tg_ids: string[], data: JobInput, audience?: Audience) => request<{ items: Job[] }>('POST', '/api/admin/jobs', audience ? { audience, ...data } : { tg_ids, ...data }),

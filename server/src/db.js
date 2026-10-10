@@ -501,6 +501,9 @@ const MIGRATIONS = [
   "ALTER TABLE tasks ADD COLUMN client_type TEXT NOT NULL DEFAULT ''",
   "ALTER TABLE tasks ADD COLUMN office_note TEXT NOT NULL DEFAULT ''",
   "CREATE TABLE IF NOT EXISTS bot_prompts (chat_id TEXT NOT NULL, msg_id TEXT NOT NULL, kind TEXT NOT NULL, task_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (chat_id, msg_id))",
+  // v73: партии QR-этикеток (перепечатать те же коды) и замена QR на станции (старые коды — история)
+  "CREATE TABLE IF NOT EXISTS qr_batches (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'new', codes TEXT NOT NULL, opts TEXT NOT NULL DEFAULT '{}', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)",
+  "ALTER TABLE traps ADD COLUMN old_codes TEXT NOT NULL DEFAULT ''",
 ];
 
 async function migrate(run) {

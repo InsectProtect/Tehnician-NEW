@@ -23,6 +23,7 @@ import { initCash } from './cash.js';
 import { PREMISES, REENTRY, reentryDefault } from './premises.js';
 import { reverseGeocode, forwardGeocode } from './geo.js';
 import { qrSvg } from './qr.js';
+import { LABEL_SIZES, labelsPdf } from './labels.js';
 import { resolveUser, shape as shapeUser, adminIds, ALL_PERMS, parsePerms, hashPin, verifyPin, checkSession, issueSession } from './users.js';
 import { sendDocument, getMe, getWebhookInfo, getChatMember, sendMedia, editCaption, fileUrl, tgCall } from './tgbot.js';
 import { visitPdf } from './reportpdf.js';
@@ -33,7 +34,7 @@ import { editMessage, answerCallback, deleteMessage } from './tgbot.js';
 import { storageOn, uploadMaxBytes, objectKey, headObject, getObject, deleteObject, objectUrl, presign } from './storage.js';
 import { buildRecommendations, PESTS_BY_PROCEDURE } from './recs.js';
 import { botEnabled, sendMessage, sendPhotos, discoverChats, escHtml, setWebhook, webhookSecret, chatTitle } from './tgbot.js';
-import { visitReportHtml, labelsHtml } from './pages.js';
+import { visitReportHtml } from './pages.js';
 import { importClients, searchLocalClients, getLocalClient, createClient } from './clients.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -3506,7 +3507,11 @@ route('POST', '/api/visits/:id/scan', async ({ params, body, user }) => {
   const code = parseTrapCode(body.text);
   must(code, 400, 'Это не QR-код ловушки');
   const [trap] = await db.query('SELECT * FROM traps WHERE code = $1', [code]);
-  if (!trap) return { state: 'new', code, next_number: await nextTrapNumber(v.object_id) };
+  if (!trap) {
+    const [old] = await db.query('SELECT number, code FROM traps WHERE old_codes LIKE $1 LIMIT 1', [`%${code}%`]);
+    if (old) return { state: 'replaced', code, number: Number(old.number), new_code: old.code };
+    return { state: 'new', code, next_number: await nextTrapNumber(v.object_id) };
+  }
   // станция из запаса — сканируют на объекте, значит ставят здесь
   if (trap.object_id === STOCK_ID && v.status === 'open') {
     await fromStock([trap.id], v.object_id);
@@ -3561,8 +3566,7 @@ route('POST', '/api/visits/:id/traps', async ({ params, body, user }) => {
   must(!target || tgt, 400, 'Неизвестное назначение станции');
   must(tgt ? tgt.devices.includes(kind) : TRAP_KINDS.includes(kind), 400, 'Выберите тип ловушки');
   const number = Math.max(1, Math.floor(Number(body.number)) || (await nextTrapNumber(v.object_id)));
-  const [exists] = await db.query('SELECT id FROM traps WHERE code = $1', [code]);
-  must(!exists, 409, 'Эта этикетка уже привязана');
+  must(!(await codeUsed(code)), 409, 'Эта этикетка уже привязана (или снята при замене QR) — возьмите новую');
   const id = uid();
   await db.query(
     'INSERT INTO traps (id, code, object_id, number, kind, location, active, created_at, target) VALUES ($1,$2,$3,$4,$5,$6,1,$7,$8)',
@@ -3752,7 +3756,9 @@ route('POST', '/api/tasks/:id/prep/traps', async ({ params, body, user }) => {
     await db.query('UPDATE tasks SET prep_skip = 0 WHERE id = $1', [t.id]); t.prep_skip = 0;
     return { ...(await prepState(o, t)), from_stock: true };
   }
-  if (body.check) return { ...(await prepState(o, t)), new_code: !exists, busy: exists ? `${exists.company_name || ''}, ${exists.address || ''}` : '' };
+  const retired = !exists && (await codeUsed(code));
+  if (body.check) return { ...(await prepState(o, t)), new_code: !exists && !retired, busy: exists ? `${exists.company_name || ''}, ${exists.address || ''}` : retired ? 'этикетка снята при замене QR' : '' };
+  must(!retired, 409, `Этикетка ${code} снята при замене QR — возьмите новую`);
   must(!exists, 409, exists ? `Этикетка ${code} уже привязана: ${exists.company_name || ''}, ${exists.address || ''}` : '');
   const kind = str(body.kind, 100);
   const target = str(body.target, 20);
@@ -3803,6 +3809,25 @@ route('POST', '/api/visits/:id/traps/:trapId/install', async ({ params, body, us
   await db.query('UPDATE traps SET prepared = 0, location = $1, installed_at = $2 WHERE id = $3', [location, now(), tr.id]);
   if (v.monitoring == null || Number(v.monitoring) === 0) await db.query('UPDATE visits SET monitoring = 1 WHERE id = $1', [v.id]);
   return { trap: { id: tr.id, code: tr.code, number: Number(tr.number), kind: tr.kind, target: tr.target || '', location, prepared: false, inspection: null } };
+});
+
+// QR на станции повреждён/потерян — наклеили новую этикетку: станция та же (номер, история осмотров), меняется только код.
+route('POST', '/api/visits/:id/traps/:trapId/recode', async ({ params, body, user }) => {
+  const v = await getWorkVisit(params.id, user);
+  must(v.status === 'open', 409, 'Выезд уже завершён');
+  const [tr] = await db.query('SELECT * FROM traps WHERE id = $1 AND object_id = $2', [params.trapId, v.object_id]);
+  must(tr, 404, 'Станция не относится к этому объекту');
+  const code = parseTrapCode(body.text);
+  must(code, 400, 'Это не QR-код этикетки');
+  must(code !== tr.code, 400, 'Это тот же QR, что и был на станции — отсканируйте новую этикетку');
+  const [busy] = await db.query('SELECT t.number, o.company_name FROM traps t LEFT JOIN objects o ON o.id = t.object_id WHERE t.code = $1', [code]);
+  must(!busy, 409, busy ? `Эта этикетка уже на станции № ${busy.number}${busy.company_name ? ` (${busy.company_name})` : ''}` : '');
+  must(!(await codeUsed(code)), 409, 'Эта этикетка уже снята при замене — возьмите новую');
+  const old = [tr.old_codes, tr.code].filter(Boolean).join(' ').trim();
+  await db.query('UPDATE traps SET code = $1, old_codes = $2 WHERE id = $3', [code, old, tr.id]);
+  await audit(user, 'Замена QR на станции', `№ ${tr.number} · ${v.company_name}`, `${tr.code} → ${code}`);
+  const [row] = (await visitRows(v, { all: true })).filter((r) => r.id === tr.id);
+  return { trap: shapeRow(row), old_code: tr.code };
 });
 
 route('PATCH', '/api/traps/:id', async ({ params, body }) => {
@@ -4316,10 +4341,72 @@ route('POST', '/api/visits/:id/share', async ({ params, user, body, req }) => {
   return { ok: true, url, text, phone, file_name: pdfName(done), bot: botUsername, qr_svg: qrSvg(url) };
 });
 
-route('POST', '/api/labels', async ({ body }) => {
-  const count = Math.max(1, Math.min(120, Math.floor(Number(body.count)) || 21));
-  return { url: `/r/labels/${count}?${signLink(`labels:${count}`)}` };
-}, { access: 'admin' }); // печатать QR-этикетки может только администратор
+// ---------- QR-этикетки (v73) ----------
+// Партия = список кодов + оформление. Ссылка на PDF стабильна: перепечатка даёт те же коды (раньше коды менялись при каждом открытии).
+const labelsPath = (id) => `/r/labels/${id}.pdf?${signLink(`labels:${id}`, 90 * 86400)}`;
+async function labelOpts(body) {
+  const saved = (await getSetting('labels_cfg')) || {};
+  const company = await companySettings();
+  return {
+    size: LABEL_SIZES[body.size] ? body.size : saved.size || 's',
+    brand: body.brand !== undefined ? str(body.brand, 40) : saved.brand ?? (BRAND || company.name || ''),
+    phone: body.phone !== undefined ? str(body.phone, 30) : saved.phone ?? '',
+    warn: body.warn !== undefined ? Boolean(body.warn) : saved.warn ?? true,
+    lines: body.lines !== undefined ? Boolean(body.lines) : saved.lines ?? true,
+  };
+}
+const shapeBatch = (b) => {
+  const codes = JSON.parse(b.codes || '[]');
+  const opts = JSON.parse(b.opts || '{}');
+  return { id: b.id, kind: b.kind, count: codes.length, size: opts.size, first: codes[0]?.code || '', created_at: b.created_at, created_by: b.created_by, url: labelsPath(b.id) };
+};
+/** Код, который уже где-то был: на станции сейчас или снят при замене QR. */
+async function codeUsed(code) {
+  const [t] = await db.query('SELECT id FROM traps WHERE code = $1 OR old_codes LIKE $2 LIMIT 1', [code, `%${code}%`]);
+  return Boolean(t);
+}
+
+route('GET', '/api/labels', async () => {
+  const rows = await db.query('SELECT * FROM qr_batches ORDER BY created_at DESC LIMIT 12');
+  const opts = await labelOpts({});
+  return { sizes: Object.entries(LABEL_SIZES).map(([id, x]) => ({ id, title: x.title, hint: x.hint, per_sheet: x.cols * x.rows })), opts, batches: rows.map(shapeBatch) };
+}, { access: 'admin' });
+
+// Новая партия (только админ) или перепечатка кодов существующих станций ({ trap_ids } — любой сотрудник, для своей работы)
+route('POST', '/api/labels', async ({ body, user }) => {
+  const opts = await labelOpts(body);
+  let codes; let kind = 'new';
+  if (Array.isArray(body.trap_ids) && body.trap_ids.length) {
+    const ids = body.trap_ids.slice(0, 120).map((x) => str(x, 64));
+    const rows = await db.query(
+      `SELECT t.code, t.number, o.company_name FROM traps t LEFT JOIN objects o ON o.id = t.object_id WHERE t.id IN (${ids.map((_, i) => `$${i + 1}`).join(',')}) ORDER BY t.number`, ids,
+    );
+    must(rows.length, 404, 'Станции не найдены');
+    codes = rows.map((r) => ({ code: r.code, number: Number(r.number) || 0, note: String(r.company_name || '').slice(0, 24) }));
+    kind = 'reprint';
+    if (body.size === undefined) opts.size = 'm';
+  } else {
+    must(user.isAdmin, 403, 'Новые этикетки печатает администратор');
+    const count = Math.max(1, Math.min(240, Math.floor(Number(body.count)) || 24));
+    const start = Math.max(0, Math.floor(Number(body.start)) || 0);
+    const set = new Set();
+    codes = [];
+    while (codes.length < count) {
+      const code = newTrapCode();
+      if (set.has(code) || (await codeUsed(code))) continue;
+      set.add(code);
+      codes.push({ code, number: start ? start + codes.length : 0 });
+    }
+    // запоминаем оформление — в следующий раз не вводить заново
+    await setSetting('labels_cfg', { size: opts.size, brand: opts.brand, phone: opts.phone, warn: opts.warn, lines: opts.lines });
+  }
+  const id = uid();
+  await db.query('INSERT INTO qr_batches (id, kind, codes, opts, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6)',
+    [id, kind, JSON.stringify(codes), JSON.stringify(opts), user.name || String(user.id), now()]);
+  if (kind === 'new') await audit(user, 'QR-этикетки', `${codes.length} шт.`, LABEL_SIZES[opts.size].title);
+  const [b] = await db.query('SELECT * FROM qr_batches WHERE id = $1', [id]);
+  return shapeBatch(b);
+});
 
 // ---------- Telegram webhook ----------
 // Команды: /office — в группе (или теме) подключает её как чат офиса; /start — в личке кнопка приложения.
@@ -6790,14 +6877,18 @@ a{display:flex;align-items:center;justify-content:center;gap:10px;height:56px;bo
     res.end(buf);
     return true;
   }
-  m = url.pathname.match(/^\/r\/labels\/(\d+)$/);
+  m = url.pathname.match(/^\/r\/labels\/([\w-]+)\.pdf$/);
   if (m) {
     if (!verifyLink(`labels:${m[1]}`, url.searchParams.get('exp'), url.searchParams.get('sig'))) return sendText(res, 403, 'Ссылка недействительна');
-    const items = Array.from({ length: Number(m[1]) }, () => {
-      const code = newTrapCode();
-      return { code, payload: qrPayload(code) };
-    });
-    return sendHtml(res, labelsHtml(items));
+    const [b] = await db.query('SELECT * FROM qr_batches WHERE id = $1', [m[1]]);
+    if (!b) return sendText(res, 404, 'Партия не найдена');
+    const opts = JSON.parse(b.opts || '{}');
+    const items = JSON.parse(b.codes || '[]').map((c) => ({ ...c, payload: qrPayload(c.code) }));
+    const pdf = labelsPdf(items, opts);
+    const name = `QR-${b.kind === 'reprint' ? 'zamena' : 'etichete'}-${items.length}.pdf`;
+    res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': pdf.length, 'Cache-Control': 'no-store', 'Content-Disposition': `inline; filename="${name}"` });
+    res.end(pdf);
+    return true;
   }
   return false;
 }

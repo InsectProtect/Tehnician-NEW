@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  AlertTriangle, Bell, ChevronDown, Maximize2, Minimize2, CalendarClock, Camera, CheckCircle2, ClipboardList, Inbox, LayoutDashboard, MapPin, Play, Plus, Printer, QrCode, RotateCw,
+  AlertTriangle, Bell, ChevronDown, Maximize2, Minimize2, CalendarClock, Camera, CheckCircle2, ClipboardList, Inbox, LayoutDashboard, MapPin, Play, Plus, QrCode, RotateCw,
 } from 'lucide-react';
 import { api } from '../api';
-import { fmtDate, plural, useConfig } from '../config';
-import { askWriteAccess, canFullscreen, getThemePref, haptic, isDesktopTg, isFullscreen, isTelegram, onFullscreenChange, openLink, setThemePref, toggleFullscreen, type ThemePref } from '../telegram';
+import { fmtDate, useConfig } from '../config';
+import { askWriteAccess, canFullscreen, getThemePref, haptic, isDesktopTg, isFullscreen, isTelegram, onFullscreenChange, setThemePref, toggleFullscreen, type ThemePref } from '../telegram';
 import type { AnnulRequest, Lead, MonthSummary, Payment, Task, VisitSummary } from '../types';
 import { PAYMENT_UI } from '../components/Payment';
 import { MonthCard, NotificationsSheet } from './Notifications';
@@ -17,12 +17,13 @@ import { AppLogoutButtons } from './AppLogin';
 import { CancelledTasks, NowWidget, TaskList, TaskSheet } from './Tasks';
 import { ClientsSheet } from './ClientsSheet';
 import { OfficeSheet } from './OfficeSheet';
+import { LabelsSheet } from './Labels';
 import {
   Button, Chips, Empty, Field, Group, IconBadge, Input, LargeTitle, MultPill, Pill, Row, Screen, SectionTitle, Segmented, Sheet, Spinner, Toggle, cx, useToast,
 } from '../components/ui';
 
 /** Меняется с каждым архивом — по ней видно, какая версия реально открыта на телефоне. */
-export const APP_VERSION = '2026.10.09-v72';
+export const APP_VERSION = '2026.10.10-v73';
 
 const isToday = (iso: string | null) => !!iso && new Date(iso).toDateString() === new Date().toDateString();
 
@@ -465,42 +466,8 @@ function LeadSheet({ lead, onClose, onStarted }: { lead: Lead; onClose: () => vo
   );
 }
 
-/* ---------- Печать этикеток ---------- */
-
-export function LabelsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const toast = useToast();
-  const [count, setCount] = useState('21');
-  const [busy, setBusy] = useState(false);
-
-  async function print() {
-    setBusy(true);
-    try {
-      const { url } = await api.labels(Number(count));
-      openLink(url);
-      onClose();
-    } catch (e) {
-      toast((e as Error).message, 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Sheet open={open} onClose={onClose} title="QR-этикетки">
-      <p className="mb-5 text-[15px] leading-relaxed text-muted">
-        Каждая этикетка — уникальный код. Наклейте её на ловушку и отсканируйте в выезде: ловушка привяжется к адресу объекта.
-      </p>
-      <Chips
-        options={['21', '42', '63', '84'].map((c) => ({ id: c, label: `${c} шт. · ${Number(c) / 21} ${plural(Number(c) / 21, ['лист', 'листа', 'листов'])}` }))}
-        value={count}
-        onChange={setCount}
-      />
-      <Button className="mt-6" onClick={print} loading={busy} icon={<Printer size={20} strokeWidth={1.75} />}>
-        Открыть для печати
-      </Button>
-    </Sheet>
-  );
-}
+/* ---------- Печать этикеток — screens/Labels.tsx ---------- */
+export { LabelsSheet };
 
 /** Заявка из темы, написанная не админом: подтвердить → уйдёт технику. */
 function PendingTask({ t, onDone }: { t: Task; onDone: () => void }) {

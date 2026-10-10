@@ -249,7 +249,14 @@ export type ScanResult =
   | { state: 'found'; trap: Trap }
   | { state: 'new'; code: string; next_number: number }
   | { state: 'other_object'; code: string; object?: { company_name: string; address: string } }
-  | { state: 'inactive'; code: string };
+  | { state: 'inactive'; code: string }
+  | { state: 'replaced'; code: string; number: number; new_code: string };
+
+export type LabelSize = 's' | 'm' | 'l';
+export interface LabelOpts { size: LabelSize; brand: string; phone: string; warn: boolean; lines: boolean }
+export interface LabelBatch { id: string; kind: 'new' | 'reprint'; count: number; size: LabelSize; first: string; created_at: string; created_by: string; url: string }
+export interface LabelsInfo { sizes: { id: LabelSize; title: string; hint: string; per_sheet: number }[]; opts: LabelOpts; batches: LabelBatch[] }
+export type LabelsInput = Partial<LabelOpts> & { count?: number; start?: number; trap_ids?: string[] };
 
 export type InspectionInput = {
   trap_id: string;

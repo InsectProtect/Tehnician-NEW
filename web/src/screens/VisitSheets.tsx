@@ -16,8 +16,8 @@ import { Button, Chips, Field, Input, Sheet, Stepper, TextArea, Toggle, cx, useT
 
 const BLOCKED = ['damaged', 'missing', 'no_access'];
 
-export function InspectSheet({ visitId, trap, onClose, onSaved }: {
-  visitId: string; trap: Trap; onClose: () => void; onSaved: (scanNext: boolean) => void;
+export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
+  visitId: string; trap: Trap; onClose: () => void; onSaved: (scanNext: boolean) => void; onQr?: () => void;
 }) {
   const cfg = useConfig();
   const toast = useToast();
@@ -168,6 +168,11 @@ export function InspectSheet({ visitId, trap, onClose, onSaved }: {
         <Button variant={canScanQr() ? 'secondary' : 'primary'} disabled={invalid} loading={busy === 'save'} onClick={() => save(false)}>
           Записать
         </Button>
+        {onQr && (
+          <button onClick={onQr} className="w-full py-2 text-center text-[14px] font-medium text-accent-ink">
+            QR на станции повреждён? Заменить этикетку
+          </button>
+        )}
       </div>
     </Sheet>
   );

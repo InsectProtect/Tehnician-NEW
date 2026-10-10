@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Camera, CheckCircle2, MessageSquareWarning, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Pencil, ScanLine, Send, Share2, Target, Trash2 } from 'lucide-react';
+import { Camera, CheckCircle2, MessageSquareWarning, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Pencil, Printer, RefreshCw, ScanLine, Send, Share2, Target, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { fmtDate, plural, useConfig } from '../config';
 import { callPhone, canScanQr, getLocation, haptic, openLink, prettyPhone, scanQr, useBackButton } from '../telegram';
@@ -22,6 +22,7 @@ import { takePendingScan } from '../pendingScan';
 type SheetState =
   | null
   | { type: 'inspect'; trap: Trap; back?: boolean }
+  | { type: 'qr'; trap: Trap; back?: boolean } // QR станции: заменить повреждённую этикетку / перепечатать
   | { type: 'scanned'; trap: Trap } // отсканирована станция этого объекта: пока не подтверждено «я на объекте» — спрашиваем
   | { type: 'service'; focusId?: string } // список всех станций объекта к обслуживанию
   | { type: 'register'; code: string; next: number }
@@ -77,6 +78,8 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       else if (r.state === 'new') setSheet({ type: 'register', code: r.code, next: r.next_number });
       else if (r.state === 'other_object')
         setSheet({ type: 'message', title: 'Ловушка другого объекта', text: `Этикетка ${r.code} привязана к адресу: ${r.object?.company_name ?? ''}, ${r.object?.address ?? ''}. Вы оформляете выезд по другому адресу — сверьте объект.` });
+      else if (r.state === 'replaced')
+        setSheet({ type: 'message', title: 'Старая этикетка', text: `QR ${r.code} заменён: у станции № ${r.number} теперь код ${r.new_code}. Снимите старую наклейку, чтобы не путать, и сканируйте новую.` });
       else setSheet({ type: 'message', title: 'Ловушка снята', text: `Ловушка ${r.code} отключена на этом объекте.` });
     } catch (e) {
       haptic.error();
@@ -222,6 +225,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       visitId={id}
       trap={trap}
       onClose={() => setSheet(back ? { type: 'service', focusId: trap.id } : null)}
+      onQr={() => setSheet({ type: 'qr', trap, back })}
       onSaved={(next) => {
         load();
         if (next) { setSheet(null); setTimeout(startScan, 350); }
@@ -354,7 +358,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           }
           right={t.prepared ? <Pill tone="blue">Установить</Pill> : t.inspection ? <Pill tone={statusTone(t.inspection.status)}>{statusLabel(t.inspection.status)}</Pill> : <Pill>Не проверена</Pill>}
           chevron={false}
-          onClick={isOpen ? () => (t.prepared ? setSheet({ type: 'install', trap: t }) : t.inspection ? setSheet({ type: 'inspect', trap: t }) : toast('Отсканируйте QR-код на станции')) : undefined}
+          onClick={isOpen ? () => (t.prepared ? setSheet({ type: 'install', trap: t }) : t.inspection ? setSheet({ type: 'inspect', trap: t }) : setSheet({ type: 'qr', trap: t })) : undefined}
         />
       ))}
     </Group>
@@ -876,6 +880,15 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
 
       {/* Листы */}
       {sheet?.type === 'inspect' && inspectEl(sheet.trap, sheet.back)}
+      {sheet?.type === 'qr' && (
+        <TrapQrSheet
+          visitId={id}
+          trap={sheet.trap}
+          onClose={() => setSheet(sheet.back ? { type: 'service', focusId: sheet.trap.id } : null)}
+          onScan={() => { setSheet(null); setTimeout(startScan, 250); }}
+          onRecoded={(trap) => { load(); setSheet(trap.prepared ? { type: 'install', trap, back: sheet.back } : { type: 'inspect', trap, back: sheet.back }); }}
+        />
+      )}
       {sheet?.type === 'scanned' && (onSite ? inspectEl(sheet.trap) : (
         <Sheet open onClose={() => setSheet(null)} title="Вы на объекте?">
           <div className="-mt-3 mb-5 rounded-2xl bg-card px-4 py-3.5">
@@ -1131,6 +1144,81 @@ function ServiceSheet({ traps, focusId, statusLabel, targetLabel, trapResult, on
       <div className="mt-4 space-y-2">
         {left > 0 && <Button onClick={onScan} icon={<ScanLine size={20} strokeWidth={1.75} />}>Сканировать следующую</Button>}
         <Button variant={left > 0 ? 'plain' : 'primary'} onClick={onClose}>{left > 0 ? 'Закрыть' : 'Готово'}</Button>
+      </div>
+    </Sheet>
+  );
+}
+
+/**
+ * QR станции: повреждённую/потерянную этикетку меняют на новую прямо на объекте — станция та же
+ * (номер, место, история осмотров), меняется только код. Можно и перепечатать этот же код (PDF).
+ */
+function TrapQrSheet({ visitId, trap, onClose, onScan, onRecoded }: {
+  visitId: string; trap: Trap; onClose: () => void; onScan: () => void; onRecoded: (t: Trap) => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState<'' | 'scan' | 'manual' | 'print'>('');
+  const [manual, setManual] = useState(false);
+  const [code, setCode] = useState('PT-');
+
+  async function recode(text: string, how: 'scan' | 'manual') {
+    setBusy(how);
+    try {
+      const r = await api.recodeTrap(visitId, trap.id, text);
+      haptic.success();
+      playSound('qr');
+      toast(`QR заменён: ${r.old_code} → ${r.trap.code}`);
+      onRecoded(r.trap);
+    } catch (e) {
+      haptic.error();
+      toast((e as Error).message, 'error');
+      setBusy('');
+    }
+  }
+  async function scanNew() {
+    if (!canScanQr()) { setManual(true); return; }
+    const text = await scanQr();
+    if (text) await recode(text, 'scan');
+  }
+  async function reprint() {
+    setBusy('print');
+    try {
+      const b = await api.labels({ trap_ids: [trap.id] });
+      openLink(b.url);
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  return (
+    <Sheet open onClose={onClose} title={`Станция № ${trap.number}`}>
+      <div className="-mt-3 mb-5 rounded-2xl bg-card px-4 py-3.5">
+        <div className="text-[16px] font-semibold">{trap.location || trap.kind}</div>
+        <div className="mt-0.5 text-[13.5px] text-muted">{trap.location ? trap.kind : ''}</div>
+        <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-fill px-2.5 py-1 font-mono text-[14px] tracking-wider"><ScanLine size={15} strokeWidth={1.75} />{trap.code}</div>
+      </div>
+      <div className="space-y-2.5">
+        {!trap.inspection && !trap.prepared && (
+          <Button onClick={onScan} icon={<ScanLine size={20} strokeWidth={1.75} />}>Сканировать QR станции</Button>
+        )}
+        <Button variant={!trap.inspection && !trap.prepared ? 'secondary' : 'primary'} loading={busy === 'scan'} onClick={scanNew} icon={<RefreshCw size={19} strokeWidth={1.75} />}>
+          QR повреждён — наклеить новый
+        </Button>
+        <p className="px-1 text-[13px] leading-snug text-muted">
+          Наклейте чистую этикетку поверх старой (или рядом) и отсканируйте её — станция сохранит номер и историю, старый код перестанет работать.
+        </p>
+        {manual || !canScanQr() ? (
+          <form onSubmit={(e) => { e.preventDefault(); recode(code, 'manual'); }} className="space-y-2.5 pt-1">
+            <Input icon={<Keyboard size={18} strokeWidth={1.75} />} autoCapitalize="characters" autoComplete="off" placeholder="Код новой этикетки PT-XXXXXX"
+              value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} className="font-mono tracking-wider" />
+            <Button type="submit" variant="secondary" loading={busy === 'manual'} disabled={code.replace(/[^A-Z0-9]/g, '').length < 8}>Привязать новый код</Button>
+          </form>
+        ) : (
+          <Button variant="plain" onClick={() => setManual(true)} icon={<Keyboard size={18} strokeWidth={1.75} />}>Ввести код новой этикетки</Button>
+        )}
+        <Button variant="plain" loading={busy === 'print'} onClick={reprint} icon={<Printer size={18} strokeWidth={1.75} />}>Напечатать этот же QR заново</Button>
       </div>
     </Sheet>
   );
