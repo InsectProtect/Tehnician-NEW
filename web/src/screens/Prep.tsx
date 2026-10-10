@@ -47,18 +47,16 @@ export function PrepButton() {
       {tasks && !task && !stockOpen && (
         <Sheet open onClose={() => setTasks(null)} title="Подготовить ловушки">
           <p className="-mt-3 mb-4 text-[14.5px] leading-relaxed text-muted">
-            Выберите заявку — станции привяжутся к её объекту. Можно готовить и для коллеги: на месте он отсканирует каждую и отметит, где поставил.
+            Выберите заявку — станции привяжутся к её объекту. Можно готовить и для коллеги, или просто на склад — без объекта.
           </p>
-          {stock > 0 && (
-            <div className="mb-5">
-              <Group>
-                <Row left={<IconBadge tone="orange"><Archive size={18} strokeWidth={1.75} /></IconBadge>}
-                  title={`В запасе: ${stock} ${plural(stock, ['станция', 'станции', 'станций'])}`}
-                  subtitle="Готовы, но без объекта — заберите на любую заявку"
-                  onClick={() => { haptic.tap(); setStockOpen(true); }} />
-              </Group>
-            </div>
-          )}
+          <div className="mb-5">
+            <Group>
+              <Row left={<IconBadge tone="orange"><Archive size={18} strokeWidth={1.75} /></IconBadge>}
+                title={stock > 0 ? `На склад · в запасе ${stock} ${plural(stock, ['станция', 'станции', 'станций'])}` : 'На склад — без объекта'}
+                subtitle="Подготовить станции заранее, не назначая на объект — потом забрать на любую заявку"
+                onClick={() => { haptic.tap(); setStockOpen(true); }} />
+            </Group>
+          </div>
           {tasks.length ? (
             <>
               {[{ title: 'Мои заявки', list: tasks.filter((t) => t.mine) }, { title: 'Заявки коллег', list: tasks.filter((t) => !t.mine) }]
@@ -87,7 +85,7 @@ export function PrepButton() {
             </>
           ) : (
             <div className="rounded-2xl bg-card p-4 text-[14.5px] leading-relaxed text-muted">
-              Открытых заявок нет. Сначала объект должен появиться в заявках — попросите офис добавить её, и ловушки можно будет подготовить.
+              Открытых заявок нет. Можно подготовить станции на склад (выше) — а когда появится заявка, забрать их на объект.
             </div>
           )}
           <Button variant="plain" className="mt-3" onClick={() => setTasks(null)}>Закрыть</Button>
@@ -392,19 +390,108 @@ function StockSheet({ pick, onPick, onClose }: { pick?: boolean; onPick?: (ids: 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const targetLabel = (id: string) => cfg.stationTargets.find((x) => x.id === id)?.label ?? '';
 
+  // v74: подготовка на склад — скан этикетки → против кого/устройство (запоминаются для следующей)
+  const [code, setCode] = useState<string | null>(null);
+  const [manual, setManual] = useState(false);
+  const [target, setTarget] = useState(() => { try { return localStorage.getItem('stock_target') || ''; } catch { return ''; } });
+  const [kind, setKind] = useState(() => { try { return localStorage.getItem('stock_kind') || ''; } catch { return ''; } });
+  const [busy, setBusy] = useState(false);
+  const tgt = cfg.stationTargets.find((x) => x.id === target);
+
+  async function gotCode(text: string) {
+    try {
+      const r = await api.stockCheck(text);
+      if (!r.new_code) { haptic.error(); toast(`${r.code}: ${r.busy}`, 'error'); return; }
+      haptic.success(); playSound('qr');
+      setCode(r.code);
+    } catch (e) { haptic.error(); toast((e as Error).message, 'error'); }
+  }
+  async function scan() {
+    if (!canScanQr()) { setManual(true); return; }
+    const t = await scanQr();
+    if (t) await gotCode(t);
+  }
+  async function save(next: boolean) {
+    if (!code) return;
+    setBusy(true);
+    try {
+      const r = await api.stockAdd(code, target, kind);
+      try { localStorage.setItem('stock_target', target); localStorage.setItem('stock_kind', kind); } catch { /* не критично */ }
+      haptic.success();
+      setList(r.traps);
+      setCode(null);
+      toast(`На складе: ${r.traps.length}`);
+      if (next) setTimeout(scan, 300);
+    } catch (e) { haptic.error(); toast((e as Error).message, 'error'); } finally { setBusy(false); }
+  }
+
   async function remove(id: string) {
     if (confirmDel !== id) { haptic.tap(); setConfirmDel(id); return; }
     try { await api.prepRemove(id); haptic.success(); setConfirmDel(''); load(); } catch (e) { toast((e as Error).message, 'error'); }
   }
 
+  if (manual) return <ManualSheet onClose={() => setManual(false)} onSubmit={(c) => { setManual(false); gotCode(c); }} />;
+
+  if (code) {
+    return (
+      <Sheet open onClose={() => setCode(null)} title="Станция на склад">
+        <p className="-mt-3 mb-6 text-[15px] leading-relaxed text-muted">
+          Этикетка <b className="font-mono font-semibold text-ink">{code}</b> уйдёт в запас без объекта. Номер станции присвоится, когда её заберут на заявку.
+        </p>
+        <div className="space-y-6">
+          <Field label="Против кого">
+            <Chips options={cfg.stationTargets.map((x) => ({ id: x.id, label: x.label }))} value={target}
+              onChange={(v) => { haptic.tap(); setTarget(v); if (!cfg.stationTargets.find((x) => x.id === v)?.devices.includes(kind)) setKind(''); }} columns={1} />
+          </Field>
+          {tgt && (
+            <Field label="Устройство">
+              <div className="grid gap-2">
+                {tgt.devices.map((dv) => (
+                  <button key={dv} onClick={() => { haptic.tap(); setKind(dv); }}
+                    className={cx('flex min-h-[52px] items-center rounded-xl px-4 py-3 text-left text-[15px] font-medium transition',
+                      kind === dv ? 'bg-ink text-card' : 'bg-card ring-1 ring-inset ring-line')}>
+                    {dv}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          )}
+        </div>
+        <div className="mt-7 space-y-2">
+          <Button disabled={!tgt || !tgt.devices.includes(kind)} loading={busy} onClick={() => save(true)} icon={<ScanLine size={20} strokeWidth={1.75} />}>
+            На склад и сканировать следующую
+          </Button>
+          <Button variant="secondary" disabled={!tgt || !tgt.devices.includes(kind) || busy} onClick={() => save(false)}>На склад</Button>
+        </div>
+      </Sheet>
+    );
+  }
+
+  // сводка запаса: назначение · устройство → сколько
+  const summary = Object.entries((list || []).reduce<Record<string, number>>((a, t) => {
+    const k = [targetLabel(t.target), t.kind].filter(Boolean).join(' · ');
+    a[k] = (a[k] || 0) + 1; return a;
+  }, {}));
+
   return (
-    <Sheet open onClose={onClose} title={pick ? 'Взять из запаса' : 'Запас станций'}>
+    <Sheet open onClose={onClose} title={pick ? 'Взять из запаса' : 'Склад станций'}>
       <p className="-mt-3 mb-4 text-[14.5px] leading-relaxed text-muted">
         {pick ? 'Отметьте станции — они привяжутся к объекту заявки. Можно и просто отсканировать этикетку станции из запаса.'
-          : 'Готовые станции без объекта: клиент отказался или подготовили лишние. Заберите их на заявку в «Подготовке ловушек».'}
+          : 'Готовые станции без объекта. Готовьте заранее — потом заберите на заявку в «Подготовке ловушек» или просто отсканируйте станцию на объекте.'}
       </p>
+      {!pick && (
+        <div className="mb-4 space-y-2">
+          <Button onClick={scan} icon={<ScanLine size={20} strokeWidth={1.75} />}>Подготовить на склад — сканировать</Button>
+          <Button variant="plain" onClick={() => setManual(true)} icon={<Keyboard size={18} strokeWidth={1.75} />}>Ввести код вручную</Button>
+        </div>
+      )}
+      {!pick && summary.length > 1 && (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {summary.map(([k, n]) => <Pill key={k}>{k}: {n}</Pill>)}
+        </div>
+      )}
       {!list ? <div className="h-16 animate-pulse rounded-xl bg-card" /> : list.length === 0 ? (
-        <div className="rounded-xl bg-card p-4 text-[14.5px] text-muted">Запас пуст.</div>
+        <div className="rounded-xl bg-card p-4 text-[14.5px] text-muted">{pick ? 'Запас пуст.' : 'На складе пока пусто — наклейте этикетку на станцию и отсканируйте.'}</div>
       ) : (
         <>
           {pick && (

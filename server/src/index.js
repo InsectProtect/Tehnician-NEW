@@ -3682,6 +3682,32 @@ route('GET', '/api/prep/stock', async ({ user }) => {
   return { traps: rows.map(shapePrepTrap) };
 });
 
+// v74: подготовить станции сразу на склад (в запас) — без заявки и объекта; потом забирают на любую заявку или сканируют на объекте
+route('POST', '/api/prep/stock/traps', async ({ body, user }) => {
+  must(canPrep(user), 403, 'Готовить ловушки могут дезинсекторы и специалисты');
+  const code = parseTrapCode(body.code);
+  must(code, 400, 'Это не QR-код ловушки');
+  const [exists] = await db.query('SELECT t.object_id, t.number, o.company_name, o.address FROM traps t LEFT JOIN objects o ON o.id = t.object_id WHERE t.code = $1', [code]);
+  const busy = exists
+    ? exists.object_id === STOCK_ID ? 'эта станция уже в запасе' : `уже привязана: ${exists.company_name || ''}, ${exists.address || ''}`
+    : (await codeUsed(code)) ? 'этикетка снята при замене QR' : '';
+  if (body.check) return { code, new_code: !busy, busy };
+  must(!busy, 409, `Этикетка ${code}: ${busy}`);
+  const target = str(body.target, 20);
+  const kind = str(body.kind, 100);
+  const tgt = STATION_TARGETS.find((x) => x.id === target);
+  must(tgt, 400, 'Выберите, против кого станция');
+  must(tgt.devices.includes(kind), 400, 'Выберите устройство');
+  await stockObject();
+  await db.query(
+    "INSERT INTO traps (id, code, object_id, number, kind, location, active, created_at, target, prepared, prepared_by) VALUES ($1,$2,$3,0,$4,'',1,$5,$6,1,$7)",
+    [uid(), code, STOCK_ID, kind, now(), target, String(user.id)],
+  );
+  await refreshUserNames();
+  const rows = await db.query('SELECT * FROM traps WHERE object_id = $1 AND active = 1 ORDER BY target, kind, created_at', [STOCK_ID]);
+  return { traps: rows.map(shapePrepTrap) };
+});
+
 // Количество подготовленных к заявке: меньше — лишние уходят в запас; больше — берём из запаса (сколько есть)
 route('PUT', '/api/tasks/:id/prep/count', async ({ params, body, user }) => {
   const t = await prepTask(params.id, user);

@@ -171,6 +171,8 @@ export const api = {
     request<{ trap: Trap }>('POST', `/api/visits/${visitId}/traps`, data),
   prepTasks: () => request<{ items: PrepTask[]; stock: number }>('GET', '/api/prep/tasks'),
   prepStock: () => request<{ traps: PrepTrap[] }>('GET', '/api/prep/stock'),
+  stockCheck: (code: string) => request<{ code: string; new_code: boolean; busy: string }>('POST', '/api/prep/stock/traps', { code, check: true }),
+  stockAdd: (code: string, target: string, kind: string) => request<{ traps: PrepTrap[] }>('POST', '/api/prep/stock/traps', { code, target, kind }),
   prepCount: (taskId: string, count: number) => request<PrepState>('PUT', `/api/tasks/${taskId}/prep/count`, { count }),
   prepFromStock: (taskId: string, ids: string[]) => request<PrepState>('POST', `/api/tasks/${taskId}/prep/from-stock`, { ids }),
   prepCancel: (taskId: string, mode: 'stock' | 'keep') => request<PrepState>('POST', `/api/tasks/${taskId}/prep/cancel`, { mode }),
