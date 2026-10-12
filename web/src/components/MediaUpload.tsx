@@ -11,7 +11,7 @@ import { Button, Field, Input, Pill, Sheet, Spinner, cx, useToast } from './ui';
 const n = (x: number | null | undefined) => String(Math.round((x ?? 0) * 100) / 100).replace('.', ',');
 
 /** Специалист: карточка «Видео и фото с объектов» — сколько баллов за месяц и кнопка «Добавить». */
-export function MediaCard({ visitId, compact }: { visitId?: string; compact?: boolean }) {
+export function MediaCard({ visitId, compact, label, className }: { visitId?: string; compact?: boolean; label?: string; className?: string }) {
   const [d, setD] = useState<{ settings: MediaSettings; month_points: number; items: MyMedia[] } | null>(null);
   const [open, setOpen] = useState(false);
   const load = useCallback(() => { api.myMedia().then(setD).catch(() => {}); }, []);
@@ -20,8 +20,8 @@ export function MediaCard({ visitId, compact }: { visitId?: string; compact?: bo
   if (compact) {
     return (
       <>
-        <Button variant="secondary" icon={<Video size={18} strokeWidth={1.75} />} onClick={() => { haptic.tap(); setOpen(true); }}>
-          Добавить видео / фото{s ? ` · +${n(s.per_item)} б` : ''}
+        <Button variant="secondary" className={className} icon={<Video size={18} strokeWidth={1.75} />} onClick={() => { haptic.tap(); setOpen(true); }}>
+          {label || 'Добавить видео / фото'}{s ? ` · +${n(s.per_item)} б` : ''}
         </Button>
         {open && <UploadSheet visitId={visitId} settings={s} onClose={() => setOpen(false)} onDone={() => { setOpen(false); load(); }} />}
       </>

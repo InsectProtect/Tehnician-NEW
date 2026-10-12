@@ -341,6 +341,60 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
     </div>
   );
 
+  // v77: одно место для фото — замечания в акт и видео/фото для офиса (KPI) рядом, вверху выезда
+  const photosBlock = (
+    <div className="mb-4">
+      <SectionTitle>Фото и видео{observations.length ? ` · замечаний ${observations.length}` : ''}</SectionTitle>
+      {observations.length > 0 && (
+        <div className="space-y-2.5">
+          {observations.map((o) => (
+            <div key={o.id} className="rounded-2xl bg-card p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[16px] font-semibold">{o.category}</div>
+                  <div className="text-[13px] text-muted">{fmtDate(o.created_at)}</div>
+                </div>
+                {isOpen && (
+                  confirmDel === o.id ? (
+                    <button onClick={() => removeObservation(o.id)} className="shrink-0 rounded-2xl bg-[#FF3B30]/12 px-3 py-1.5 text-[14px] font-medium text-[#D70015] dark:text-[#FF453A]">Удалить?</button>
+                  ) : (
+                    <button onClick={() => removeObservation(o.id)} aria-label="Удалить" className="shrink-0 p-1 text-muted"><Trash2 size={18} strokeWidth={1.75} /></button>
+                  )
+                )}
+              </div>
+              {o.comment && <p className="mt-2 whitespace-pre-line text-[15px] leading-relaxed">{o.comment}</p>}
+              {o.photos.length > 0 && (
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {o.photos.map((p) => (
+                    <button key={p.id} onClick={() => openPhotos(o.photos.map((x) => x.url), o.photos.indexOf(p))} className="overflow-hidden rounded-2xl bg-black/5">
+                      <img src={p.url} alt="" loading="lazy" className="aspect-square w-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {isOpen && (
+        <>
+          {observations.length === 0 && visit.needs_assessment && !st && (
+            <p className="mb-3 px-1 text-[13.5px] leading-relaxed text-muted">
+              Помещение не подготовлено или заражение сильное — сфотографируйте и опишите: замечание попадёт в акт.
+            </p>
+          )}
+          <div className={cx('grid gap-2', !cfg.isAdmin && 'grid-cols-2', observations.length > 0 && 'mt-3')}>
+            <Button variant="secondary" className="px-2 text-[14px]" onClick={() => setSheet({ type: 'observation' })} icon={<Camera size={18} strokeWidth={1.75} />}>
+              В акт
+            </Button>
+            {!cfg.isAdmin && <MediaCard visitId={visit.id} compact label="Офису" className="px-2 text-[14px]" />}
+          </div>
+          <div className="mt-1.5 px-1 text-[12px] leading-snug text-muted">«В акт» — замечание с фото и описанием для клиента. «Офису» — видео/фото работы, за хорошие — баллы.</div>
+        </>
+      )}
+    </div>
+  );
+
   const trapList = traps.length === 0 ? (
     trapFocus ? (
       <Empty icon={<Target size={44} strokeWidth={1.25} />} title="Станций пока нет" text="Отсканируйте QR-этикетку на станции — она привяжется к юрлицу и адресу." />
@@ -419,7 +473,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           {q && !st && <div className="mt-2 px-1 text-[12.5px] leading-snug text-muted">Клиент получит одну страницу: адрес, тип вредителя, подписи и печать. Отметьте вредителей и категорию объекта — и завершайте.</div>}
         </div>
       )}
-      {isOpen && !cfg.isAdmin && <div className="mb-4"><MediaCard visitId={visit.id} compact /></div>}
+      {isOpen && photosBlock}
       {isOpen && visit.suggest_stations && !st && (
         <div className="mb-4 rounded-[22px] bg-card p-5">
           <div className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-muted">
@@ -736,53 +790,8 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       </>
       )}
 
-      {/* Замечания с фото — доступны и в быстром акте: попадут отдельным приложением */}
-      <SectionTitle>Замечания и фото{observations.length ? ` · ${observations.length}` : ''}</SectionTitle>
-      {observations.length > 0 && (
-        <div className="space-y-2.5">
-          {observations.map((o) => (
-            <div key={o.id} className="rounded-2xl bg-card p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[16px] font-semibold">{o.category}</div>
-                  <div className="text-[13px] text-muted">{fmtDate(o.created_at)}</div>
-                </div>
-                {isOpen && (
-                  confirmDel === o.id ? (
-                    <button onClick={() => removeObservation(o.id)} className="shrink-0 rounded-2xl bg-[#FF3B30]/12 px-3 py-1.5 text-[14px] font-medium text-[#D70015] dark:text-[#FF453A]">Удалить?</button>
-                  ) : (
-                    <button onClick={() => removeObservation(o.id)} aria-label="Удалить" className="shrink-0 p-1 text-muted"><Trash2 size={18} strokeWidth={1.75} /></button>
-                  )
-                )}
-              </div>
-              {o.comment && <p className="mt-2 whitespace-pre-line text-[15px] leading-relaxed">{o.comment}</p>}
-              {o.photos.length > 0 && (
-                <div className="mt-3 grid grid-cols-3 gap-2">
-                  {o.photos.map((p) => (
-                    <button key={p.id} onClick={() => openPhotos(o.photos.map((x) => x.url), o.photos.indexOf(p))} className="overflow-hidden rounded-2xl bg-black/5">
-                      <img src={p.url} alt="" loading="lazy" className="aspect-square w-full object-cover" />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {isOpen && (
-        <>
-          {observations.length === 0 && visit.needs_assessment && (
-            <p className="mb-3 px-1 text-[14px] leading-relaxed text-muted">
-              Если помещение не подготовлено или заражение сильное — сфотографируйте и опишите ситуацию. Фото уйдут в офис вместе с отчётом.
-            </p>
-          )}
-          <Button variant="secondary" className={observations.length ? 'mt-3' : undefined} onClick={() => setSheet({ type: 'observation' })}
-            icon={<Camera size={19} strokeWidth={1.75} />}>
-            Добавить замечание с фото
-          </Button>
-        </>
-      )}
-      {!isOpen && observations.length === 0 && <p className="px-1 text-[15px] text-muted">Замечаний нет</p>}
+      {/* Замечания с фото: в открытом выезде — блок «Фото и видео» вверху; здесь — только просмотр завершённого */}
+      {!isOpen && observations.length > 0 && photosBlock}
 
       {/* Ловушки */}
       {showTraps && (
