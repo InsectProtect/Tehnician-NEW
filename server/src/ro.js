@@ -56,6 +56,7 @@ export const roTrapKind = map({
   'Клеевая ловушка (насекомые)': 'Capcană adezivă (insecte)',
   'Инсектицидная лампа': 'Lampă insecticidă',
   'Феромонная ловушка': 'Capcană cu feromoni',
+  'Эко-станция (картон, клей)': 'Stație eco (carton, adeziv)',
 });
 
 export const roTrapStatus = map({

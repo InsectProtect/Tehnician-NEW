@@ -18,33 +18,58 @@ type Mode = 'view' | 'place' | 'draw';
 type Tool = 'rect' | 'line' | 'door' | 'gate' | 'text' | 'spot' | 'erase';
 /** Что ставим заранее (без QR): назначение + устройство. */
 const SPOT_TYPES = [
-  { id: 'rod', target: 'rodents', kind: 'Родентицидная станция', label: '● Грызуны' },
-  { id: 'glue', target: 'crawling', kind: 'Клеевая ловушка', label: '◆ Ползающие' },
-  { id: 'fly', target: 'flying', kind: 'Феромонная ловушка', label: '▲ Летающие' },
+  { id: 'rod', target: 'rodents', kind: 'Родентицидная станция', label: '● Грызуны · яд' },
+  { id: 'rglue', target: 'rodents', kind: 'Клеевая ловушка', label: '● Грызуны · липучка' },
+  { id: 'eco', target: 'rodents', kind: 'Эко-станция (картон, клей)', label: '● Грызуны · эко' },
+  { id: 'glue', target: 'crawling', kind: 'Клеевая ловушка', label: '◆ Ползающие · липучка' },
+  { id: 'fer', target: 'crawling', kind: 'Феромонная ловушка', label: '◆ Ползающие · феромон' },
+  { id: 'fly', target: 'flying', kind: 'Феромонная ловушка', label: '▲ Летающие · феромон' },
   { id: 'lamp', target: 'flying', kind: 'Инсектицидная лампа', label: '✦ Лампа' },
 ];
 const isLamp = (kind: string) => /ламп/i.test(kind || '');
+/** Устройство станции → цвет обводки и подпись на плане. */
+export function deviceStyle(kind: string): { color: string; tag: string; name: string } {
+  const k = kind || '';
+  if (/ламп/i.test(k)) return { color: '#E0A100', tag: 'лампа', name: 'лампа' };
+  if (/эко/i.test(k)) return { color: '#A2845E', tag: 'эко', name: 'эко-картон с липучкой' };
+  if (/родентиц|яд|отрав/i.test(k)) return { color: '#7D3CFF', tag: 'яд', name: 'с отравой' };
+  if (/феромон/i.test(k)) return { color: '#1FA6BF', tag: 'фер', name: 'феромон' };
+  if (/клеев|липуч/i.test(k)) return { color: '#0A84FF', tag: 'клей', name: 'с липучкой' };
+  return { color: '#636366', tag: '', name: k };
+}
+const LEGEND_DEVICES = ['Родентицидная станция', 'Клеевая ловушка', 'Эко-станция (картон, клей)', 'Феромонная ловушка', 'Инсектицидная лампа'];
 
 const STATUS_FILL: Record<string, string> = { ok: '#34C759', replaced: '#34C759', activity: '#FF3B30', damaged: '#1D1D1F', missing: '#1D1D1F', no_access: '#FF9500' };
 const R = 28; // радиус точки станции в единицах плана
 const snap = (v: number) => Math.round(v / 10) * 10;
 
 /** Значок станции: грызуны — круг, ползающие — ромб, летающие — треугольник. */
-function Marker({ t, x, y, fill, ring, dim, onClick }: { t: PlanTrap; x: number; y: number; fill: string; ring?: boolean; dim?: boolean; onClick?: () => void }) {
+function Marker({ t, x, y, fill: fill0, ring, dim, onClick }: { t: PlanTrap; x: number; y: number; fill: string; ring?: boolean; dim?: boolean; onClick?: () => void }) {
+  const dev = deviceStyle(t.kind);
+  let fill = fill0;
+  // без результатов проверки (подготовка, план) — заливка цветом устройства
+  if (fill === '#0066CC') fill = dev.color;
   const txt = fill === '#E5E5EA' || fill === '#FFFFFF' ? '#1D1D1F' : '#FFFFFF';
+  const sw = 6;
   const shape = isLamp(t.kind)
-    ? <g><circle cx={x} cy={y} r={R * 1.05} fill={fill} stroke="#fff" strokeWidth={4} />{[0, 45, 90, 135, 180, 225, 270, 315].map((a) => <line key={a} x1={x + Math.cos((a * Math.PI) / 180) * R * 1.25} y1={y + Math.sin((a * Math.PI) / 180) * R * 1.25} x2={x + Math.cos((a * Math.PI) / 180) * R * 1.65} y2={y + Math.sin((a * Math.PI) / 180) * R * 1.65} stroke={fill === '#FFFFFF' || fill === '#E5E5EA' ? '#8E8E93' : fill} strokeWidth={5} strokeLinecap="round" />)}</g>
+    ? <g><circle cx={x} cy={y} r={R * 1.05} fill={fill} stroke={dev.color} strokeWidth={sw} />{[0, 45, 90, 135, 180, 225, 270, 315].map((a) => <line key={a} x1={x + Math.cos((a * Math.PI) / 180) * R * 1.25} y1={y + Math.sin((a * Math.PI) / 180) * R * 1.25} x2={x + Math.cos((a * Math.PI) / 180) * R * 1.65} y2={y + Math.sin((a * Math.PI) / 180) * R * 1.65} stroke={fill === '#FFFFFF' || fill === '#E5E5EA' ? '#8E8E93' : fill} strokeWidth={5} strokeLinecap="round" />)}</g>
     : t.target === 'crawling'
-    ? <rect x={x - R * 0.85} y={y - R * 0.85} width={R * 1.7} height={R * 1.7} rx={5} transform={`rotate(45 ${x} ${y})`} fill={fill} stroke="#fff" strokeWidth={4} />
+    ? <rect x={x - R * 0.85} y={y - R * 0.85} width={R * 1.7} height={R * 1.7} rx={5} transform={`rotate(45 ${x} ${y})`} fill={fill} stroke={dev.color} strokeWidth={sw} />
     : t.target === 'flying'
-      ? <path d={`M${x} ${y - R * 1.15} L${x + R * 1.1} ${y + R * 0.8} L${x - R * 1.1} ${y + R * 0.8} Z`} fill={fill} stroke="#fff" strokeWidth={4} strokeLinejoin="round" />
-      : <circle cx={x} cy={y} r={R} fill={fill} stroke="#fff" strokeWidth={4} />;
+      ? <path d={`M${x} ${y - R * 1.15} L${x + R * 1.1} ${y + R * 0.8} L${x - R * 1.1} ${y + R * 0.8} Z`} fill={fill} stroke={dev.color} strokeWidth={sw} strokeLinejoin="round" />
+      : <circle cx={x} cy={y} r={R} fill={fill} stroke={dev.color} strokeWidth={sw} />;
   return (
     <g onClick={onClick ? (e) => { e.stopPropagation(); onClick(); } : undefined} style={{ cursor: onClick ? 'pointer' : undefined }} opacity={dim ? 0.45 : 1}>
       {ring && <circle cx={x} cy={y} r={R * 2} fill="#0066CC" opacity={0.18}><animate attributeName="r" values={`${R * 1.4};${R * 2.3};${R * 1.4}`} dur="1.6s" repeatCount="indefinite" /></circle>}
       {ring && <circle cx={x} cy={y} r={R * 1.45} fill="none" stroke="#0066CC" strokeWidth={5} />}
       {shape}
       <text x={x} y={y + 9.5} textAnchor="middle" fontSize={27} fontWeight={800} fill={txt} fontFamily="-apple-system,system-ui,sans-serif" style={{ pointerEvents: 'none' }}>{t.number || '•'}</text>
+      {dev.tag && (
+        <g style={{ pointerEvents: 'none' }}>
+          <rect x={x - (dev.tag.length * 12.5 + 16) / 2} y={y + R + 7} width={dev.tag.length * 12.5 + 16} height={30} rx={15} fill={dev.color} stroke="#fff" strokeWidth={3} />
+          <text x={x} y={y + R + 29} textAnchor="middle" fontSize={22} fontWeight={700} fill="#fff" fontFamily="-apple-system,system-ui,sans-serif">{dev.tag}</text>
+        </g>
+      )}
     </g>
   );
 }
@@ -500,7 +525,10 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                     <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#1D1D1F]" />повреждена</span>
                   </>
                 ) : <span>Тап по станции — подробности</span>}
-                <span className="ml-auto">● грызуны ◆ ползающие ▲ летающие ✦ лампа</span>
+                <span className="ml-auto">● грызуны ◆ ползающие ▲ летающие</span>
+                <span className="flex w-full flex-wrap gap-x-3.5 gap-y-1 pt-0.5">
+                  {LEGEND_DEVICES.map((k) => { const st = deviceStyle(k); return <span key={k}><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full" style={{ background: st.color }} />{st.name}</span>; })}
+                </span>
                 {spots.length > 0 && <span className="w-full"><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full border-2 border-dashed border-[#0066CC]" />запланировано, ещё без QR: {spots.length}</span>}
                 {unplaced.length > 0 && <button onClick={() => { setMode('place'); setSel(unplaced[0].id); }} className="w-full pt-1 text-left font-medium text-accent-ink"><MapPin size={13} className="inline -translate-y-px" /> Не на плане: {unplaced.length} — отметить</button>}
               </div>
@@ -546,7 +574,8 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                     <div className="mt-2 flex gap-1.5 overflow-x-auto">
                       {SPOT_TYPES.map((x) => (
                         <button key={x.id} onClick={() => { haptic.tap(); setSpotType(x.id); }}
-                          className={cx('shrink-0 rounded-full px-3 py-1.5 text-[13px] font-medium', spotType === x.id ? 'bg-accent text-white' : 'bg-card ring-1 ring-inset ring-line')}>{x.label}</button>
+                          className={cx('shrink-0 rounded-full px-3 py-1.5 text-[13px] font-medium', spotType === x.id ? 'bg-ink text-card' : 'bg-card ring-1 ring-inset ring-line')}>
+                          <i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full" style={{ background: deviceStyle(x.kind).color }} />{x.label.slice(2)}</button>
                       ))}
                     </div>
                   )}
