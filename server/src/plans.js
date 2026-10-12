@@ -39,8 +39,24 @@ function cleanDrawing(list, h) {
   return out;
 }
 
+// Адрес → ключ для сравнения: без «str./ул./mun.», диакритики и пунктуации — «str. Ismail 33» ≈ «strada Ismail, 33»
+const STOP = new Set(['str', 'strada', 'stradela', 'ul', 'ulica', 'улица', 'ул', 'mun', 'municipiul', 'or', 'oras', 'orasul', 'bd', 'bul', 'bulevardul', 'bdul', 'sos', 'soseaua', 'calea', 'aleea', 'piata', 'nr', 'ap', 'apt', 'bl', 'sc', 'et', 'кв', 'дом', 'chisinau', 'кишинев', 'кишинёв', 'moldova', 'republica', 'md', 'sat', 'satul', 'com', 'r', 'rl', 'raionul']);
+export function addrKey(a) {
+  const t = String(a || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zа-яё0-9/]+/gi, ' ').split(/\s+/).filter(Boolean);
+  return t.filter((w) => !STOP.has(w) && !/^md\d+$/.test(w));
+}
+export function sameAddress(a, b) {
+  const x = addrKey(a); const y = addrKey(b);
+  if (!x.length || !y.length) return false;
+  const nx = x.filter((w) => /\d/.test(w)); const ny = y.filter((w) => /\d/.test(w));
+  const wx = x.filter((w) => !/\d/.test(w) && w.length >= 3); const wy = y.filter((w) => !/\d/.test(w) && w.length >= 3);
+  const numOk = nx.length && ny.length ? nx[0] === ny[0] : nx.length === ny.length;
+  return numOk && wx.some((w) => wy.includes(w));
+}
+
 export function initPlans(ctx) {
-  const { db, route, must, str, uid, now, audit, signLink, verifyLink, sendText } = ctx;
+  const { db, route, must, str, uid, now, audit, signLink, verifyLink, sendText, taskObject } = ctx;
+  const isDraft = (id) => /^draft-[\w]{6,40}$/.test(String(id || ''));
 
   const imgPath = (p) => `/r/plan/${p.id}.jpg?${signLink(`plan:${p.id}:${p.updated_at}`, 30 * 86400)}&v=${encodeURIComponent(p.updated_at)}`;
   const shape = (p) => {
@@ -51,6 +67,8 @@ export function initPlans(ctx) {
   const canEdit = (user) => user.isAdmin || ['tech', 'specialist'].includes(user.role);
 
   async function objectOf(id) {
+    // план, нарисованный заранее, до привязки к клиенту: «черновой объект»
+    if (isDraft(id)) return { id: String(id), company_name: 'Новый план', address: '', draft: true };
     const [o] = await db.query('SELECT id, company_name, address FROM objects WHERE id = $1', [str(id, 64)]);
     must(o, 404, 'Объект не найден');
     return o;
@@ -76,8 +94,32 @@ export function initPlans(ctx) {
     must(iw > 0 && ih > 0, 400, 'Не удалось прочитать картинку');
     return { data: m[1], h: Math.max(200, Math.min(3000, Math.round((W * ih) / iw))) };
   }
+  /**
+   * Автопривязка: у объекта ещё нет плана, а заранее нарисованный план привязан к «соседнему» объекту того же клиента
+   * (или к клиенту с тем же названием) с похожим адресом — переносим план сюда. Так план находит обработку,
+   * даже если адрес в заявке записан чуть иначе («str. Ismail 33» / «strada Ismail, 33»).
+   */
+  async function adoptPlans(objectId) {
+    if (isDraft(objectId) || objectId === 'stock') return;
+    const [o] = await db.query('SELECT id, company_id, company_name, address FROM objects WHERE id = $1', [objectId]);
+    if (!o) return;
+    const norm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[«»"'`,.]/g, ' ').replace(/\s+/g, ' ').trim();
+    const cands = await db.query(
+      `SELECT DISTINCT o.id, o.company_id, o.company_name, o.address FROM objects o JOIN object_plans p ON p.object_id = o.id WHERE o.id <> $1`, [objectId],
+    );
+    // физлицо: «Persoană fizică · 069 123 456» — сравниваем по последним 8 цифрам телефона
+    const key = (n0) => (/persoan|физлиц/i.test(n0 || '') ? `pf:${String(n0).replace(/\D/g, '').slice(-8)}` : norm(n0));
+    const hit = cands.find((c) => (c.company_id === o.company_id || (key(c.company_name) && key(c.company_name) === key(o.company_name))) && sameAddress(c.address, o.address));
+    if (!hit) return;
+    // станций у того объекта нет (план рисовали заранее) — переносим; если станции есть, это реальный другой объект
+    const [{ n }] = await db.query('SELECT COUNT(*) AS n FROM traps WHERE object_id = $1 AND active = 1', [hit.id]);
+    if (Number(n) > 0) return;
+    await db.query('UPDATE object_plans SET object_id = $1 WHERE object_id = $2', [objectId, hit.id]);
+  }
+
   async function objectPlans(objectId) {
-    const plans = await db.query('SELECT * FROM object_plans WHERE object_id = $1 ORDER BY sort, created_at', [objectId]);
+    let plans = await db.query('SELECT * FROM object_plans WHERE object_id = $1 ORDER BY sort, created_at', [objectId]);
+    if (!plans.length) { await adoptPlans(objectId); plans = await db.query('SELECT * FROM object_plans WHERE object_id = $1 ORDER BY sort, created_at', [objectId]); }
     const traps = await db.query(
       'SELECT id, code, number, kind, target, location, prepared, plan_id, plan_x, plan_y FROM traps WHERE object_id = $1 AND active = 1 ORDER BY number, created_at', [objectId],
     );
@@ -164,6 +206,32 @@ export function initPlans(ctx) {
     return objectPlans(t.object_id);
   });
 
+  // Черновые планы (нарисованы заранее, ещё не привязаны к клиенту)
+  route('GET', '/api/plans/drafts', async ({ user }) => {
+    must(canEdit(user), 403, 'Нет доступа');
+    const rows = await db.query("SELECT object_id, MIN(created_at) AS created_at, MAX(updated_at) AS updated_at, COUNT(*) AS n, MAX(created_by) AS created_by FROM object_plans WHERE object_id LIKE 'draft-%' GROUP BY object_id ORDER BY MAX(updated_at) DESC LIMIT 20");
+    return { items: rows.map((x) => ({ id: x.object_id, plans: Number(x.n), created_at: x.created_at, updated_at: x.updated_at, created_by: x.created_by })) };
+  });
+  // Привязать черновик к клиенту: юрлицо (название) или физлицо (телефон) + фактический адрес объекта
+  route('POST', '/api/plans/attach', async ({ body, user }) => {
+    must(canEdit(user), 403, 'Нет доступа');
+    const draft = String(body.draft || '');
+    must(isDraft(draft), 400, 'Нет черновика');
+    const [{ n }] = await db.query('SELECT COUNT(*) AS n FROM object_plans WHERE object_id = $1', [draft]);
+    must(Number(n) > 0, 400, 'Сначала нарисуйте план');
+    const person = body.kind === 'person';
+    const company = person ? '' : str(body.company, 120);
+    const phone = str(body.phone, 30);
+    const address = str(body.address, 200);
+    must(person || company.length >= 2, 400, 'Укажите название юрлица');
+    must(!person || phone.replace(/\D/g, '').length >= 6, 400, 'Укажите телефон клиента — по нему план найдёт обработку');
+    must(address.length >= 3, 400, 'Укажите фактический адрес объекта');
+    const o = await taskObject({ id: `plan-${draft}`, company_name: company, phone }, address);
+    await db.query('UPDATE object_plans SET object_id = $1 WHERE object_id = $2', [o.id, draft]);
+    await audit(user, 'План объекта привязан', `${o.company_name} · ${o.address}`, `${n} план(а)`);
+    return { object: { id: o.id, company_name: o.company_name, address: o.address } };
+  });
+
   /** Свободные запланированные точки объекта (для подсказки при установке). */
   async function freeSpots(objectId) {
     const rows = await db.query('SELECT drawing FROM object_plans WHERE object_id = $1', [objectId]);
@@ -185,5 +253,5 @@ export function initPlans(ctx) {
     return true;
   }
 
-  return { handleRaw, objectPlans, freeSpots };
+  return { handleRaw, objectPlans, freeSpots, adoptPlans };
 }

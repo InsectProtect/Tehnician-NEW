@@ -103,8 +103,49 @@ function Drawing({ shapes, h, onErase }: { shapes: PlanShape[]; h: number; onEra
   );
 }
 
-export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId, onOpenTrap, onClose }: {
+/** Привязка заранее нарисованного плана: юрлицо/физлицо + фактический адрес объекта. */
+function AttachForm({ draft, onDone, onCancel }: { draft: string; onDone: (o: { company_name: string; address: string }) => void; onCancel: () => void }) {
+  const toast = useToast();
+  const [kind, setKind] = useState<'company' | 'person'>('company');
+  const [company, setCompany] = useState('');
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ok = address.trim().length >= 3 && (kind === 'company' ? company.trim().length >= 2 : phone.replace(/\D/g, '').length >= 6);
+  async function save() {
+    setBusy(true);
+    try {
+      const r = await api.attachPlan({ draft, kind, company: company.trim(), phone: phone.trim(), address: address.trim() });
+      haptic.success();
+      onDone(r.object);
+    } catch (e) { toast((e as Error).message, 'error'); setBusy(false); }
+  }
+  return (
+    <div className="fixed inset-0 z-[55] flex items-end bg-black/40" onClick={onCancel}>
+      <div className="w-full rounded-t-[26px] bg-page px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-4" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-1 flex items-center justify-between"><div className="text-[18px] font-semibold">Чей это объект?</div><button onClick={onCancel} className="p-1 text-muted"><X size={18} /></button></div>
+        <div className="mb-3 text-[13.5px] leading-snug text-muted">Когда по этому клиенту и адресу начнётся обработка — план подтянется в выезд сам.</div>
+        <div className="mb-3 flex rounded-xl bg-fill p-1">
+          {([['company', 'Юрлицо'], ['person', 'Физлицо']] as const).map(([k, l]) => (
+            <button key={k} onClick={() => { haptic.tap(); setKind(k); }} className={cx('flex-1 rounded-lg py-2 text-[14px] font-semibold', kind === k ? 'bg-card shadow-sm' : 'text-muted')}>{l}</button>
+          ))}
+        </div>
+        <div className="space-y-2">
+          {kind === 'company'
+            ? <Input autoFocus placeholder="Название юрлица (SRL «…»)" value={company} onChange={(e) => setCompany(e.target.value)} />
+            : <Input autoFocus inputMode="tel" placeholder="Телефон клиента" value={phone} onChange={(e) => setPhone(e.target.value)} />}
+          <Input placeholder="Фактический адрес объекта (str. …, nr.)" value={address} onChange={(e) => setAddress(e.target.value)} />
+        </div>
+        <Button className="mt-4" loading={busy} disabled={!ok} onClick={save} icon={<Check size={19} />}>Привязать план</Button>
+      </div>
+    </div>
+  );
+}
+
+export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId, onOpenTrap, onClose, draft: isDraftPlan }: {
   objectId: string; title?: string;
+  /** план рисуют заранее, без клиента: после рисования — «Чей это объект?» */
+  draft?: boolean;
   /** станции выезда (с результатами проверки) — для цвета точек */
   traps?: Trap[];
   /** подсветить станцию (только что отсканирована) */
@@ -135,6 +176,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
   const [newOpen, setNewOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [rename, setRename] = useState<string | null>(null);
+  const [attachOpen, setAttachOpen] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
   const camRef = useRef<HTMLInputElement>(null);
@@ -360,7 +402,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
         <button onClick={() => { if (dirty) saveDrawing(); onClose(); }} aria-label="Закрыть" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-card ring-1 ring-inset ring-line"><X size={18} /></button>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[17px] font-semibold leading-tight">План объекта</div>
-          <div className="truncate text-[12.5px] text-muted">{title || d?.object?.company_name || ''}</div>
+          <div className="truncate text-[12.5px] text-muted">{isDraftPlan ? 'Нарисован заранее · ещё не привязан к клиенту' : title || d?.object?.company_name || ''}</div>
         </div>
         {plan && mode === 'view' && (
           <>
@@ -429,6 +471,9 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
 
           {/* нижняя панель */}
           <div className="border-t border-line bg-page px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2.5">
+            {isDraftPlan && mode !== 'draw' && (
+              <Button className="mb-2.5" onClick={() => { if (dirty) saveDrawing(); setAttachOpen(true); }} icon={<Check size={19} />}>Готово — указать клиента и адрес</Button>
+            )}
             {mode === 'view' && (cardTrap ? (
               <div className="rounded-2xl bg-card p-3.5">
                 <div className="flex items-start gap-3">
@@ -527,6 +572,10 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
         </>
       )}
 
+      {attachOpen && (
+        <AttachForm draft={objectId} onCancel={() => setAttachOpen(false)}
+          onDone={(o) => { setAttachOpen(false); toast(`План привязан: ${o.company_name} · ${o.address}`); onClose(); }} />
+      )}
       {newOpen && (
         <div className="fixed inset-0 z-[55] flex items-end bg-black/40" onClick={() => setNewOpen(false)}>
           <div className="w-full rounded-t-[26px] bg-page px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-4" onClick={(e) => e.stopPropagation()}>

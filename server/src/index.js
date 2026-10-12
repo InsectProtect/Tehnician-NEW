@@ -3246,7 +3246,7 @@ route('GET', '/api/visits/:id', async ({ params, user }) => {
       office_configured: Boolean(await officeChat()),
       is_company: !isIndividual(v.company_name),
       object_id: v.object_id,
-      plans_count: Number((await db.query('SELECT COUNT(*) AS n FROM object_plans WHERE object_id = $1', [v.object_id]))[0]?.n) || 0,
+      plans_count: (v.status === 'open' ? await plans.adoptPlans(v.object_id).catch(() => {}) : null, Number((await db.query('SELECT COUNT(*) AS n FROM object_plans WHERE object_id = $1', [v.object_id]))[0]?.n) || 0),
       plan_spots: await plans.freeSpots(v.object_id),
       approval: v.approval || '',
       approval_note: v.approval_note || '',
@@ -4718,7 +4718,7 @@ route('POST', '/api/hooks/crm/:token', async ({ params, body }) => {
   return { ok: true, id: t.id, task_no: Number(t.task_no), assigned_to: tech?.name || null, open: !tech };
 }, { access: 'public' });
 // Касса: наличные на руках у сотрудника, сдача кассы и выдача под отчёт — server/src/cash.js
-const plans = initPlans({ db, route, must, str, uid, now, audit, signLink, verifyLink, sendText });
+const plans = initPlans({ db, route, must, str, uid, now, audit, signLink, verifyLink, sendText, taskObject });
 const cash = initCash({ db, route, must, str, uid, now, audit, notifyTech, escHtml, getSetting, setSetting });
 
 // Привязка заявки к лиду CRM (например, ID сделки amoCRM) — необязательное поле, задаёт менеджер/администратор.

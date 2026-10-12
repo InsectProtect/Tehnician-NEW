@@ -190,6 +190,9 @@ export const api = {
     request<{ ok: true; report_url: string; amo_error: string | null; office_sent: boolean; office_error: string | null; office_none?: boolean; reward?: Reward | null }>('POST', `/api/visits/${visitId}/finish`, { comment, ...extra }),
   stamp: () => request<{ mode: 'default' | 'custom' | 'off'; image: string | null }>('GET', '/api/admin/stamp'),
   setStamp: (data: { mode: 'default' | 'custom' | 'off'; image?: string }) => request<{ ok: true }>('PUT', '/api/admin/stamp', data),
+  planDrafts: () => request<{ items: { id: string; plans: number; created_at: string; updated_at: string; created_by: string }[] }>('GET', '/api/plans/drafts'),
+  attachPlan: (body: { draft: string; kind: 'company' | 'person'; company?: string; phone?: string; address: string }) =>
+    request<{ object: { id: string; company_name: string; address: string } }>('POST', '/api/plans/attach', body),
   objectPlans: (objectId: string) => request<PlansRes>('GET', `/api/objects/${objectId}/plans`),
   addPlan: (objectId: string, body: { title?: string; image?: string; orient?: 'land' | 'port' }) => request<PlansRes>('POST', `/api/objects/${objectId}/plans`, body),
   savePlan: (planId: string, body: { title?: string; drawing?: PlanShape[]; image?: string | null }) => request<{ plan: ObjectPlan }>('PUT', `/api/plans/${planId}`, body),
