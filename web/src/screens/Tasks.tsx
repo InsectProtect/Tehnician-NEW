@@ -8,18 +8,19 @@ import { Button, Chips, Field, Group, IconBadge, Input, Label, MultPill, Pill, R
 import { AddressFields, joinAddress, splitAddress } from '../components/AddressFields';
 import { QuestPath } from '../components/game';
 import { RouteCard } from './Play';
+import { LOC } from '../locale';
 
 const TZ = 'Europe/Chisinau';
 export const fmtTaskDate = (t: Pick<Task, 'planned_at' | 'has_time'>) =>
   t.planned_at
-    ? new Date(t.planned_at).toLocaleString('ru-RU', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short', ...(t.has_time ? { hour: '2-digit', minute: '2-digit' } : {}) })
+    ? new Date(t.planned_at).toLocaleString(LOC, { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short', ...(t.has_time ? { hour: '2-digit', minute: '2-digit' } : {}) })
     : 'Дата не указана';
 
 const dayKey = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-CA', { timeZone: TZ }) : '');
 export const isTodayTask = (t: Task) => dayKey(t.planned_at) === dayKey(new Date().toISOString());
 export const isOverdue = (t: Task) => !!t.planned_at && dayKey(t.planned_at) < dayKey(new Date().toISOString());
 
-const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('ru-RU', { timeZone: TZ, hour: '2-digit', minute: '2-digit' });
+const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString(LOC, { timeZone: TZ, hour: '2-digit', minute: '2-digit' });
 
 /** Перерисовка раз в 30 секунд — чтобы подсветка времени менялась сама. */
 export function useNow(ms = 30000) {
@@ -104,7 +105,7 @@ type Tab = 'today' | 'tomorrow' | 'future';
 
 const addDays = (n: number) => dayKey(new Date(Date.now() + n * 86400000).toISOString());
 const dayTitle = (key: string) => {
-  const s = new Date(`${key}T12:00:00`).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+  const s = new Date(`${key}T12:00:00`).toLocaleDateString(LOC, { weekday: 'long', day: 'numeric', month: 'long' });
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
@@ -319,7 +320,7 @@ export function TaskSheet({ task, onClose, onStarted, onCancelled }: {
         <div className="mb-4 rounded-2xl bg-[#FF9500]/12 px-4 py-3 text-[14px]">🙋 Ждёт, кто заберёт{task.audience ? ` (${task.audience === 'all' ? 'все сотрудники' : task.audience === 'tech' ? 'дезинсекторы' : 'специалисты'})` : ''}{(task.claim_bonus ?? 0) > 0 ? ` · бонус +${String(task.claim_bonus).replace('.', ',')} б` : ''}.</div>
       )}
       {task.claimed_at && task.status !== 'open' && (
-        <div className="mb-4 rounded-2xl bg-[#34C759]/12 px-4 py-3 text-[14px]">🙋 Забрал(а) <b>{task.tech_name}</b> · {new Date(task.claimed_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{(task.claim_bonus ?? 0) > 0 ? ` · бонус +${String(task.claim_bonus).replace('.', ',')} б после выезда` : ''}</div>
+        <div className="mb-4 rounded-2xl bg-[#34C759]/12 px-4 py-3 text-[14px]">🙋 Забрал(а) <b>{task.tech_name}</b> · {new Date(task.claimed_at).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{(task.claim_bonus ?? 0) > 0 ? ` · бонус +${String(task.claim_bonus).replace('.', ',')} б после выезда` : ''}</div>
       )}
       {!task.ack_at && task.tech_id === cfg.user.id && <AckButton task={task} onDone={onCancelled} />}
       {!task.ack_at && task.status !== 'open' && task.tech_id !== cfg.user.id && (
@@ -738,7 +739,7 @@ function Step({ n, done, title, value, children }: { n: number; done: boolean; t
 export function dealLabel(t: { rooms?: number | null; stage?: string; price?: number | null; sotki?: number | null }, short = false) {
   const [a, b] = (t.stage || '').split('/');
   const stage = t.stage ? (short ? t.stage : `Этап ${a} из ${b}`) : '';
-  return [stage, t.rooms ? `${t.rooms} комн.` : '', t.sotki ? `${String(t.sotki).replace('.', ',')} сот.` : '', t.price != null ? `${t.price.toLocaleString('ru-RU')} лей` : ''].filter(Boolean).join(' · ');
+  return [stage, t.rooms ? `${t.rooms} комн.` : '', t.sotki ? `${String(t.sotki).replace('.', ',')} сот.` : '', t.price != null ? `${t.price.toLocaleString(LOC)} лей` : ''].filter(Boolean).join(' · ');
 }
 
 /* ---------- Повышенный коэффициент заявки ---------- */

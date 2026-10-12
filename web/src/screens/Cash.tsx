@@ -4,14 +4,15 @@ import { api } from '../api';
 import { haptic } from '../telegram';
 import type { CashMe, CashOverview } from '../types';
 import { Button, ConfirmSheet, Empty, Field, Group, Input, Row, SectionTitle, Sheet, Spinner, cx, useToast } from '../components/ui';
+import { LOC } from '../locale';
 
 /* ================================================================================================
  * «Касса» (v52): сколько наличных сейчас на руках у сотрудника (из оплат cash в выездах),
  * сдача кассы администратору/менеджеру и выдача из кассы под отчёт (с одобрением).
  * ================================================================================================ */
 
-const lei = (n: number) => `${(Math.round(n * 100) / 100).toLocaleString('ru-RU')} лей`;
-const dt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
+const lei = (n: number) => `${(Math.round(n * 100) / 100).toLocaleString(LOC)} лей`;
+const dt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
 
 /* ---------------- Сотрудник: виджет на главной ---------------- */
 

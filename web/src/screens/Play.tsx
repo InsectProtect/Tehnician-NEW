@@ -21,6 +21,7 @@ import { ScanButton } from './ScanStart';
 import { PrepButton } from './Prep';
 import { PestMask } from '../components/PestMask';
 import { LevelsSheet } from '../components/LevelsSheet';
+import { LOC } from '../locale';
 
 /*
  * Сотрудник: вкладки «Сегодня / Входящие / Лига / Профиль», игровой слой (опыт, уровни, квесты, значки),
@@ -148,7 +149,7 @@ export function ShiftCard() {
           </span>
           <div className="min-w-0 flex-1">
             <div className="text-[15px] font-extrabold">Смена в эфире</div>
-            <div className="text-[12.5px] text-[#248A3D] dark:text-[#A7E2B8]">геопозиция у бота · {Math.floor(s.minutes / 60)} ч {s.minutes % 60} мин · до {s.until ? new Date(s.until).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—'}</div>
+            <div className="text-[12.5px] text-[#248A3D] dark:text-[#A7E2B8]">геопозиция у бота · {Math.floor(s.minutes / 60)} ч {s.minutes % 60} мин · до {s.until ? new Date(s.until).toLocaleTimeString(LOC, { hour: '2-digit', minute: '2-digit' }) : '—'}</div>
           </div>
           {game.enabled && <span className="font-dot text-[24px] font-bold text-[#9A7A00] dark:text-[#FFD23F]">+{hoursDone * s.xp_per_hour}</span>}
         </div>
@@ -188,7 +189,7 @@ const COLORS: Record<InboxItem['color'], { box: string; btn: 'orange' | 'red' | 
 const TYPE_LABEL: Record<InboxItem['type'], string> = { call: 'Вызов', task: 'Заявка', note: 'Офис', job: 'Поручение', ann: 'Объявление' };
 const ago = (iso: string) => {
   const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  return m < 1 ? 'только что' : m < 60 ? `${m} мин назад` : m < 1440 ? `${Math.floor(m / 60)} ч назад` : new Date(iso).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+  return m < 1 ? 'только что' : m < 60 ? `${m} мин назад` : m < 1440 ? `${Math.floor(m / 60)} ч назад` : new Date(iso).toLocaleDateString(LOC, { day: 'numeric', month: 'short' });
 };
 
 /** Карточка уведомления офиса с действием («Принял / Понял / Беру»). */
@@ -497,7 +498,7 @@ export function LeagueScreen() {
 }
 
 /** Язык интерфейса (RU/RO) — своя настройка у каждого сотрудника; сохраняется на сервере (users.lang). */
-function LanguageCard() {
+export function LanguageCard() {
   const cfg = useConfig();
   const toast = useToast();
   const [lang, setLang] = useState<'ru' | 'ro'>(cfg.user.lang || 'ru');
@@ -505,12 +506,14 @@ function LanguageCard() {
   return (
     <div className="rounded-[20px] border-2 border-line bg-card px-4 py-3.5">
       <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Язык интерфейса</div>
+      <div translate="no">
       <Segmented<'ru' | 'ro'> options={[{ id: 'ru', label: 'Русский' }, { id: 'ro', label: 'Română' }]} value={lang}
         onChange={async (v) => {
           haptic.tap(); setLang(v); setBusy(true);
-          try { await api.setLang(v); window.location.reload(); }
+          try { await api.setLang(v); try { localStorage.setItem('lang', v); } catch { /* */ } window.location.reload(); }
           catch (e) { toast((e as Error).message, 'error'); setBusy(false); }
         }} />
+      </div>
       {busy && <div className="mt-1.5 text-[12px] text-muted">Применяем…</div>}
     </div>
   );
@@ -562,7 +565,7 @@ export function ProfileScreen({ onOpenVisit, version }: { onOpenVisit: (id: stri
             {game.recent.slice(0, 6).map((r, i) => (
               <div key={i} className={cx('flex items-center gap-3 px-3.5 py-2.5 text-[14px]', i > 0 && 'border-t border-line')}>
                 <span className="min-w-0 flex-1 truncate">{r.note || r.kind}</span>
-                <span className="shrink-0 text-[12px] text-muted">{new Date(r.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                <span className="shrink-0 text-[12px] text-muted">{new Date(r.at).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                 <XpChip xp={r.xp} />
               </div>
             ))}
@@ -616,7 +619,7 @@ export function RouteCard({ task }: { task: Task }) {
   const marks: MapMark[] = [];
   if (r.dest) marks.push({ id: 'dest', ...r.dest, tone: 'dest', text: task.company_name || 'клиент' });
   if (r.me) marks.push({ id: 'me', ...r.me, tone: 'me', label: '▲' });
-  const hhmm = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—');
+  const hhmm = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString(LOC, { hour: '2-digit', minute: '2-digit' }) : '—');
   return (
     <div className="mb-4 space-y-3">
       {marks.length > 0 && <TileMap marks={marks} height={220} line={r.me && r.dest ? [r.me, r.dest] : null} />}
@@ -731,7 +734,7 @@ const agoText = (iso: string) => {
   if (m < 60) return `${m} мин назад`;
   const h = Math.floor(m / 60);
   if (h < 24) return `${h} ч ${m % 60} мин назад`;
-  return new Date(iso).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 };
 
 /** Нажали на сотрудника в «Кто где» — карта: где он сейчас (или последняя точка) и куда едет / где работает. */

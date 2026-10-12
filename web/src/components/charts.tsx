@@ -1,4 +1,5 @@
 import { cx } from './ui';
+import { LOC } from '../locale';
 
 export function Tile({ label, value, tone, hint, onClick }: {
   label: string; value: string | number; tone?: 'red' | 'orange' | 'green' | 'blue'; hint?: string; onClick?: () => void;
@@ -40,7 +41,7 @@ export function Bars({ title, items }: { title: string; items: { name: string; n
 
 export function Daily({ days, title = 'Выезды по дням' }: { days: { date: string; n: number }[]; title?: string }) {
   const max = Math.max(1, ...days.map((d) => d.n));
-  const fmt = (s: string) => new Date(`${s}T12:00:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+  const fmt = (s: string) => new Date(`${s}T12:00:00`).toLocaleDateString(LOC, { day: 'numeric', month: 'short' });
   return (
     <div className="rounded-2xl bg-card p-4">
       <div className="mb-3 text-[15px] font-semibold">{title}</div>

@@ -7,6 +7,7 @@ import { callPhone, haptic, prettyPhone } from '../telegram';
 import type { Specialist, SpecialistDetail } from '../types';
 import { Button, Group, Pill, Row, SectionTitle, Sheet, Spinner, cx, useToast } from '../components/ui';
 import { TaskRow } from './Tasks';
+import { LOC } from '../locale';
 
 const num = (n: number | null | undefined) => (n == null ? '—' : String(Math.round(n * 100) / 100).replace('.', ','));
 const tone = (s: number) => (s >= 100 ? 'text-[#248A3D] dark:text-[#30D158]' : s >= 80 ? 'text-accent-ink' : 'text-[#D70015] dark:text-[#FF453A]');
@@ -147,7 +148,7 @@ function SpecSheet({ s, onClose, onOpenVisit, onChanged }: { s: Specialist; onCl
         <Big v={s.done} l="выполнено" />
         <Big v={s.open} l="заявок в работе" />
         <Big v={s.total_done} l="актов всего" />
-        <Big v={s.revenue ? `${s.revenue.toLocaleString('ru-RU')}` : '—'} l="сумма, лей" />
+        <Big v={s.revenue ? `${s.revenue.toLocaleString(LOC)}` : '—'} l="сумма, лей" />
       </div>
       <div className="mt-2 flex flex-wrap gap-x-3 px-1 text-[12.5px] text-muted">
         <span>в срок {s.on_time_pct == null ? '—' : `${s.on_time_pct}%`}</span>

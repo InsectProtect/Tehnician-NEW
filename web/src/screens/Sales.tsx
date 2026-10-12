@@ -7,13 +7,14 @@ import type { CallOutcome, MgrGame, MgrMe, SalesCfg, SalesCfgKpi, SalesDetail, S
 import { Button, Chips, Collapse, Field, Input, Label, Segmented, Sheet, Spinner, Toggle, cx, useToast } from '../components/ui';
 import { FatBar, GameButton, Segments, XpChip } from '../components/game';
 import { playOnce } from '../sounds';
+import { LOC } from '../locale';
 
 /* ================================================================================================
  * «Продажи»: KPI менеджеров как в таблице «KPI менеджера» + игра «Звонилка» + бот-коуч.
  * Менеджер видит свой бонус и сколько всего получит; главный администратор — всех и все настройки.
  * ================================================================================================ */
 
-const lei = (n: number | null | undefined) => `${Math.round(n ?? 0).toLocaleString('ru-RU')} MDL`;
+const lei = (n: number | null | undefined) => `${Math.round(n ?? 0).toLocaleString(LOC)} MDL`;
 const pctS = (n: number | null | undefined) => `${Math.round(n ?? 0)}%`;
 const dec = (n: number | null | undefined, d = 2) => (n ?? 0).toFixed(d).replace('.', ',');
 const fmtVal = (v: number | null, unit: string) => (v == null ? '—' : unit === 'MDL' ? lei(v) : `${Math.round(v * 10) / 10}${unit === '%' ? '%' : ` ${unit}`}`);
@@ -373,7 +374,7 @@ function CallGame({ game, setGame }: { game: MgrGame; setGame: (g: MgrGame) => v
                 <Phone size={17} className={c.overdue ? orange : 'text-muted'} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[14px] font-medium">{c.client || 'Клиент'}{c.phone ? ` · ${c.phone}` : ''}</div>
-                  <div className="text-[12px] text-muted">{new Date(c.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{c.overdue ? ' · пора!' : ''}</div>
+                  <div className="text-[12px] text-muted">{new Date(c.at).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{c.overdue ? ' · пора!' : ''}</div>
                 </div>
                 <button onClick={() => { setCb({ id: c.id, client: c.client, phone: c.phone }); setOpen(true); }} className="rounded-xl bg-accent px-3 py-2 text-[13px] font-bold text-black">Звоню</button>
                 <button onClick={() => cbDone(c.id)} aria-label="Убрать" className="p-1 text-muted"><Trash2 size={16} /></button>
@@ -391,7 +392,7 @@ function CallGame({ game, setGame }: { game: MgrGame; setGame: (g: MgrGame) => v
               <div key={c.id} className="flex items-center gap-2 py-2 text-[13.5px]">
                 <span className="w-24 shrink-0 font-medium">{OUT[c.outcome].label}</span>
                 <span className="min-w-0 flex-1 truncate text-muted">{[c.client, c.amount ? lei(c.amount) : '', c.sub ? 'абонент' : '', c.b2b ? 'B2B' : ''].filter(Boolean).join(' · ')}</span>
-                <span className="text-[12px] text-muted">{new Date(c.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
+                <span className="text-[12px] text-muted">{new Date(c.created_at).toLocaleTimeString(LOC, { hour: '2-digit', minute: '2-digit' })}</span>
                 {Date.now() - Date.parse(c.created_at) < 15 * 60000 && <button onClick={() => undo(c.id)} aria-label="Отменить" className="p-1 text-muted"><Undo2 size={15} /></button>}
               </div>
             ))}
@@ -423,7 +424,7 @@ function FillSheet({ gap, labels, onClose, onDone }: { gap: SalesGap | null; lab
     const dt = gap.planned_at ? new Date(gap.planned_at) : null;
     setF({
       phone: gap.phone || '', address: gap.address || '', price: gap.price == null ? '' : String(gap.price), procedure: gap.procedure || '', point_cat: gap.point_cat || '', company: gap.company || '',
-      date: dt ? dt.toLocaleDateString('en-CA', { timeZone: 'Europe/Chisinau' }) : '', time: dt && gap.has_time ? dt.toLocaleTimeString('ru-RU', { timeZone: 'Europe/Chisinau', hour: '2-digit', minute: '2-digit' }) : '',
+      date: dt ? dt.toLocaleDateString('en-CA', { timeZone: 'Europe/Chisinau' }) : '', time: dt && gap.has_time ? dt.toLocaleTimeString(LOC, { timeZone: 'Europe/Chisinau', hour: '2-digit', minute: '2-digit' }) : '',
     });
   }, [gap]);
   if (!gap) return null;
@@ -732,7 +733,7 @@ function StrikesPanel({ tg, d, onSaved }: { tg: string; d: SalesDetail; onSaved:
             <div className="min-w-0">
               <div className="text-[14px] font-semibold">{i + 1}-е предупреждение</div>
               {s.note && <div className="text-[13px] text-muted">{s.note}</div>}
-              <div className="text-[11.5px] text-muted">{new Date(s.created_at).toLocaleString('ru-RU')} · {s.created_by}</div>
+              <div className="text-[11.5px] text-muted">{new Date(s.created_at).toLocaleString(LOC)} · {s.created_by}</div>
             </div>
             <button onClick={() => remove(s.id)} className="shrink-0 rounded-full bg-card p-2 text-muted ring-1 ring-inset ring-line active:opacity-60"><Trash2 size={16} /></button>
           </div>
@@ -799,8 +800,8 @@ function YearView({ d }: { d: SalesDetail }) {
             {d.months.map((m) => (
               <tr key={m.month} className={cx('border-b border-dashed border-line last:border-0', m.month === d.month && 'bg-accent/[0.08]', m.future && 'text-muted')}>
                 <td className={cx(td, 'font-semibold')}>{m.label}</td>
-                <td className={td}>{m.plan.toLocaleString('ru-RU')}</td>
-                <td className={td}>{m.future ? '' : (m.revenue ?? 0).toLocaleString('ru-RU')}</td>
+                <td className={td}>{m.plan.toLocaleString(LOC)}</td>
+                <td className={td}>{m.future ? '' : (m.revenue ?? 0).toLocaleString(LOC)}</td>
                 <td className={cx(td, !m.future && pctTone(m.pct ?? 0))}>{m.future ? '' : pctS(m.pct)}</td>
                 {d.calc.kpis.filter((k) => k.id !== 'plan').map((k) => <td key={k.id} className={td}>{m.future ? '' : fmtVal(m.values?.[k.id] ?? null, k.unit)}</td>)}
                 <td className={td}>{m.future ? '' : dec(m.kkpi)}</td>
@@ -861,7 +862,7 @@ function FactsForm({ d, month, onSaved }: { d: SalesDetail; month: string; onSav
         })}
       </div>
       <div className="mt-3"><Field label="Заметка"><Input value={f.note ?? ''} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field></div>
-      {d.manual_at && <div className="mt-2 text-[12px] text-muted">Изменено {new Date(d.manual_at).toLocaleString('ru-RU')} · {d.manual_by}</div>}
+      {d.manual_at && <div className="mt-2 text-[12px] text-muted">Изменено {new Date(d.manual_at).toLocaleString(LOC)} · {d.manual_by}</div>}
       <div className="mt-4"><Button onClick={save} loading={busy}>Сохранить факты</Button></div>
     </Card>
   );
@@ -924,7 +925,7 @@ function ConfigEditor({ tg, d, list, onSaved }: { tg: string; d: SalesDetail; li
                 <div className="text-[12px] font-semibold">{MONTHS_S[i]}</div>
                 <input inputMode="decimal" value={String(k).replace('.', ',')} onChange={(e) => upd({ season: c.season.map((x, j) => (j === i ? n(e.target.value) : x)) })}
                   className="mt-1 h-9 w-full rounded-xl bg-card px-2 text-center text-[15px] outline-none ring-1 ring-inset ring-line" />
-                <div className="mt-1 text-center text-[11px] text-muted">{(c.plan_override[ym] ?? Math.round(c.base_plan * k)).toLocaleString('ru-RU')}</div>
+                <div className="mt-1 text-center text-[11px] text-muted">{(c.plan_override[ym] ?? Math.round(c.base_plan * k)).toLocaleString(LOC)}</div>
               </div>
             );
           })}

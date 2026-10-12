@@ -21,9 +21,10 @@ import { LabelsSheet } from './Labels';
 import {
   Button, Chips, Empty, Field, Group, IconBadge, Input, LargeTitle, MultPill, Pill, Row, Screen, SectionTitle, Segmented, Sheet, Spinner, Toggle, cx, useToast,
 } from '../components/ui';
+import { LOC } from '../locale';
 
 /** Меняется с каждым архивом — по ней видно, какая версия реально открыта на телефоне. */
-export const APP_VERSION = '2026.10.12-v81';
+export const APP_VERSION = '2026.10.12-v82';
 
 const isToday = (iso: string | null) => !!iso && new Date(iso).toDateString() === new Date().toDateString();
 
@@ -519,7 +520,7 @@ function DoneByTech({ onOpen }: { onOpen: (id: string) => void }) {
     api.doneByTech(period, tech).then((r) => { if (alive) setData(r); }).catch((e: Error) => toast(e.message, 'error'));
     return () => { alive = false; };
   }, [period, tech, toast]);
-  const money = (n: number) => `${n.toLocaleString('ru-RU')} лей`;
+  const money = (n: number) => `${n.toLocaleString(LOC)} лей`;
   const sel = data?.techs.find((t) => t.id === tech);
 
   return (

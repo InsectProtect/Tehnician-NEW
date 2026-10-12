@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { Bootstrap } from './types';
+import { LOC } from './locale';
 
 export const ConfigCtx = createContext<Bootstrap | null>(null);
 
@@ -19,4 +20,4 @@ export function plural(n: number, forms: [string, string, string]) {
 }
 
 export const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  new Date(iso).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });

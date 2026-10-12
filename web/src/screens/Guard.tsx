@@ -4,6 +4,7 @@ import { api } from '../api';
 import { haptic } from '../telegram';
 import type { GuardFlag, GuardRes, GuardSettings } from '../types';
 import { Button, Field, Input, Segmented, Spinner, Toggle, cx, useToast } from '../components/ui';
+import { LOC } from '../locale';
 
 /*
  * Контроль баллов: бот проверяет каждый завершённый акт по правилам и сообщает администратору,
@@ -12,7 +13,7 @@ import { Button, Field, Input, Segmented, Spinner, Toggle, cx, useToast } from '
  */
 
 const pts = (n?: number | null) => String(Math.round((n ?? 0) * 100) / 100).replace('.', ',');
-const when = (iso?: string | null) => (iso ? new Date(iso).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+const when = (iso?: string | null) => (iso ? new Date(iso).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
 
 /** Обзор: акты с замечаниями, которые ещё не разобраны, и сотрудники с систематическими признаками. */
 export function GuardWidget({ onOpen }: { onOpen: (visitId: string) => void }) {

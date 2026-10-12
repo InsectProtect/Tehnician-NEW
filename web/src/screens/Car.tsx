@@ -9,15 +9,16 @@ import { CarArt } from '../components/CarArt';
 import { openPhotos } from '../components/PhotoViewer';
 import { Button, Chips, Collapse, ConfirmSheet, Field, Input, Screen, Sheet, Spinner, Toggle, cx, useToast } from '../components/ui';
 import { GameButton, XpChip } from '../components/game';
+import { LOC } from '../locale';
 
 /* ================================================================================================
  * «Мой авто»: пробег, до ТО, топливо, заправки с фото чека, регламент ТО,
  * фотопроверка 1–2 раза в неделю. Для администратора — «Автопарк»: все машины и проверка фото.
  * ================================================================================================ */
 
-const km = (n: number | null | undefined) => `${Math.round(n ?? 0).toLocaleString('ru-RU')} км`;
-const lei = (n: number | null | undefined) => `${Math.round(n ?? 0).toLocaleString('ru-RU')} лей`;
-const dt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
+const km = (n: number | null | undefined) => `${Math.round(n ?? 0).toLocaleString(LOC)} км`;
+const lei = (n: number | null | undefined) => `${Math.round(n ?? 0).toLocaleString(LOC)} лей`;
+const dt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
 const ZONES: { id: 'ext' | 'int' | 'box'; label: string; hint: string }[] = [
   { id: 'ext', label: 'Снаружи', hint: 'спереди, сзади, с боков' },
   { id: 'int', label: 'Салон', hint: 'сиденья, панель, пол' },
@@ -100,7 +101,7 @@ export function CarScreen() {
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#FF9F0A] text-black"><Camera size={21} /></span>
             <div className="min-w-0 flex-1">
               <div className="text-[16px] font-extrabold">Фотопроверка авто сегодня</div>
-              <div className="text-[13px] text-muted">до {new Date(d.pending.due_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · снаружи {d.photos_need.ext[0]}–{d.photos_need.ext[1]}, салон {d.photos_need.int[0]}–{d.photos_need.int[1]}, будка {d.photos_need.box[0]}–{d.photos_need.box[1]}</div>
+              <div className="text-[13px] text-muted">до {new Date(d.pending.due_at).toLocaleTimeString(LOC, { hour: '2-digit', minute: '2-digit' })} · снаружи {d.photos_need.ext[0]}–{d.photos_need.ext[1]}, салон {d.photos_need.int[0]}–{d.photos_need.int[1]}, будка {d.photos_need.box[0]}–{d.photos_need.box[1]}</div>
             </div>
           </div>
         </button>
@@ -121,7 +122,7 @@ export function CarScreen() {
         <div className="mt-3 flex items-end justify-between gap-3">
           <div>
             <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-muted">Пробег</div>
-            <div className="font-dot text-[40px] leading-none">{Math.round(c.mileage).toLocaleString('ru-RU')}</div>
+            <div className="font-dot text-[40px] leading-none">{Math.round(c.mileage).toLocaleString(LOC)}</div>
             <div className="mt-1 text-[12px] text-muted">обновлён {dt(c.mileage_at)}</div>
           </div>
           <button onClick={() => setSheet('km')} className="rounded-xl bg-fill px-3 py-2 text-[13.5px] font-bold">Новый пробег</button>
@@ -192,7 +193,7 @@ export function CarScreen() {
           <div className="flex flex-col gap-2">
             {d.checks.map((k) => (
               <div key={k.id} className="flex items-center gap-3 rounded-2xl bg-fill px-3 py-2.5">
-                <div className="min-w-0 flex-1"><div className="text-[14px] font-semibold">{new Date(k.day).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}</div>{k.ai_note && <div className="line-clamp-2 text-[12px] text-muted">{k.ai_note}</div>}</div>
+                <div className="min-w-0 flex-1"><div className="text-[14px] font-semibold">{new Date(k.day).toLocaleDateString(LOC, { day: 'numeric', month: 'long' })}</div>{k.ai_note && <div className="line-clamp-2 text-[12px] text-muted">{k.ai_note}</div>}</div>
                 <span className={cx('shrink-0 rounded-full px-2.5 py-1 text-[12px] font-bold', CHECK_STATUS[k.status][1])}>{CHECK_STATUS[k.status][0]}{k.points ? ` +${k.points} б` : ''}</span>
               </div>
             ))}
@@ -257,7 +258,7 @@ function CarSheet({ open, d, onClose, onDone }: SheetP) {
             <Chips options={[{ id: '', label: 'Авто по модели' }, ...Object.entries(d.bodies).map(([id, label]) => ({ id, label }))]} value={f.body || ''} onChange={(v) => set('body', v)} columns={2} />
           </Field>
         )}
-        <Field label="Замена масла каждые, км"><Chips options={['7000', '10000', '15000'].map((x) => ({ id: x, label: `${Number(x).toLocaleString('ru-RU')}` }))} value={f.service_interval || '10000'} onChange={(v) => set('service_interval', v)} columns={3} /></Field>
+        <Field label="Замена масла каждые, км"><Chips options={['7000', '10000', '15000'].map((x) => ({ id: x, label: `${Number(x).toLocaleString(LOC)}` }))} value={f.service_interval || '10000'} onChange={(v) => set('service_interval', v)} columns={3} /></Field>
         <Button onClick={save} loading={busy}>Сохранить</Button>
       </div>
     </Sheet>
@@ -830,7 +831,7 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
             <CarArt body={d.car.body} title={`${d.car.make} ${d.car.model}`} plate={d.car.plate} className="block aspect-[16/9] w-full" />
             <div className="flex items-center justify-between gap-3 px-4 py-3">
               <div className="min-w-0 text-[13px] text-muted">{[d.car.year, d.fuels[d.car.fuel], d.car.plate].filter(Boolean).join(' · ')}</div>
-              <div className="shrink-0 text-right"><div className="font-dot text-[22px] leading-none">{Math.round(d.car.mileage).toLocaleString('ru-RU')}</div><div className="text-[11px] text-muted">км · обновлён {dt(d.car.mileage_at)}</div></div>
+              <div className="shrink-0 text-right"><div className="font-dot text-[22px] leading-none">{Math.round(d.car.mileage).toLocaleString(LOC)}</div><div className="text-[11px] text-muted">км · обновлён {dt(d.car.mileage_at)}</div></div>
             </div>
           </div>
 
@@ -883,7 +884,7 @@ function FleetCarSheet({ tg, settings, onClose }: { tg: string; settings: CarSet
             <div className="mt-2 flex flex-col gap-2">
               {(d.checks || []).map((k) => (
                 <div key={k.id} className="rounded-2xl bg-fill p-3">
-                  <div className="flex items-center justify-between"><b className="text-[14px]">{new Date(k.day).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}</b><span className={cx('rounded-full px-2.5 py-1 text-[11.5px] font-bold', CHECK_STATUS[k.status][1])}>{CHECK_STATUS[k.status][0]}{k.points ? ` +${k.points} б` : ''}</span></div>
+                  <div className="flex items-center justify-between"><b className="text-[14px]">{new Date(k.day).toLocaleDateString(LOC, { day: 'numeric', month: 'long' })}</b><span className={cx('rounded-full px-2.5 py-1 text-[11.5px] font-bold', CHECK_STATUS[k.status][1])}>{CHECK_STATUS[k.status][0]}{k.points ? ` +${k.points} б` : ''}</span></div>
                   {k.ai_note && <div className="mt-1 whitespace-pre-line text-[12.5px] text-muted">{k.ai_note}</div>}
                   <PhotoGrid photos={k.photos || []} />
                 </div>

@@ -17,6 +17,8 @@ import { setSalesFocus } from './screens/Sales';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { PinScreen } from './screens/Pin';
 import { VisitScreen } from './screens/Visit';
+import { setLocale } from './locale';
+import { enableRomanian } from './i18n-dom';
 
 // кнопка бота «📷 Сфотографировать» (?car=check) — сразу вкладка «Авто»
 if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('car')) setInitialStaffTab('car');
@@ -46,8 +48,19 @@ export default function App() {
         if ('procedures' in b) {
           setPartial(null);
           if (b.prefs?.theme) setThemePref(b.prefs.theme);
+          // язык интерфейса (v82): румынский — переводчик поверх интерфейса; запоминаем, чтобы и экран входа был на румынском
+          const lang = b.user?.lang === 'ro' ? 'ro' : 'ru';
+          setLocale(lang);
+          try { localStorage.setItem('lang', lang); } catch { /* не критично */ }
+          if (lang === 'ro') enableRomanian();
           setCfg(b);
         } else {
+          // экран PIN/ожидания тоже на языке пользователя
+          if ((b as { user?: { lang?: string } }).user?.lang === 'ro') {
+            setLocale('ro');
+            try { localStorage.setItem('lang', 'ro'); } catch { /* */ }
+            enableRomanian();
+          }
           setCfg(null);
           setPartial(b);
         }

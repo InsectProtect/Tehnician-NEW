@@ -8,6 +8,7 @@ import { JobsPanel, MyJobs } from './Jobs';
 import { AppLogoutButtons } from './AppLogin';
 import { SpecialistsPanel } from './Specialists';
 import { APP_VERSION, AdminTasksBoard, LabelsSheet } from './Home';
+import { LanguageCard } from './Play';
 import { CoachPanel, EfficiencyDash, OVERVIEW_WIDGETS, OfficeCallsWidget, TimelinessDash } from './Dashboards';
 import { compressImage } from '../image';
 import { fmtDate, plural, useConfig } from '../config';
@@ -755,6 +756,7 @@ function AdminTools() {
         <Row title="QR-этикетки для ловушек" subtitle="Печать листа A4"
           left={<IconBadge tone="gray"><QrCode size={18} strokeWidth={1.75} /></IconBadge>} onClick={() => setLabels(true)} />
       </Group>
+      <div className="mt-3"><LanguageCard /></div>
       <div className="mt-2 px-1 font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted/70">Версия {APP_VERSION}</div>
       <LabelsSheet open={labels} onClose={() => setLabels(false)} />
     </>

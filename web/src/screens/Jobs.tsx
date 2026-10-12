@@ -10,6 +10,7 @@ import type { AdminTaskInput, Assignee, Audience, BoostWindow, Job, JobFile, Job
 import {
   Button, Chips, ConfirmSheet, Field, Input, MultiChips, Pill, SectionTitle, Segmented, Sheet, Spinner, Stepper, TextArea, cx, useToast,
 } from '../components/ui';
+import { LOC } from '../locale';
 
 /*
  * Поручения — задачи, которые не являются обработкой: «снять 10 рекламных видео», «развезти ловушки» и т. п.
@@ -18,7 +19,7 @@ import {
  */
 
 const pts = (x: number | null | undefined) => String(Math.round((x ?? 0) * 100) / 100).replace('.', ',');
-const fmtDue = (d: string | null) => (d ? new Date(`${d}T12:00:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '');
+const fmtDue = (d: string | null) => (d ? new Date(`${d}T12:00:00`).toLocaleDateString(LOC, { day: 'numeric', month: 'short' }) : '');
 const STATUS: Record<JobStatus, { label: string; tone: 'blue' | 'gray' | 'green' | 'red' | 'orange' }> = {
   open: { label: 'Свободно', tone: 'orange' },
   new: { label: 'Новое', tone: 'blue' },
@@ -32,7 +33,7 @@ const isOpen = (j: Job) => ['open', 'new', 'in_progress', 'returned', 'submitted
 /** Категории сотрудников для «кто заберёт». */
 export const AUDIENCE_LABEL: Record<Audience, string> = { all: 'Все', tech: 'Дезинсекторы', specialist: 'Специалисты', manager: 'Менеджеры' };
 export const audienceText = (a?: string | null) => (a === 'all' ? 'все сотрудники' : a ? (AUDIENCE_LABEL[a as Audience] || a).toLowerCase() : '');
-const hhmm = (iso: string) => new Date(iso).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const hhmm = (iso: string) => new Date(iso).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 function Progress({ j }: { j: Job }) {
   if (!j.target) return null;

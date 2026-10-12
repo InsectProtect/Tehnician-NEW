@@ -1,9 +1,10 @@
 import { LEVEL_TITLES, MAX_LEVEL, PestMask, levelFromXp } from './PestMask';
 import { Sheet, cx } from './ui';
+import { LOC } from '../locale';
 
 /** Все 20 уровней с масками: пройденные — цветные, будущие — тёмные. */
 export function LevelsSheet({ level, xp, onClose }: { level: number; xp: number; onClose: () => void }) {
-  const fmt = (n: number) => n.toLocaleString('ru-RU');
+  const fmt = (n: number) => n.toLocaleString(LOC);
   return (
     <Sheet open onClose={onClose} title="Уровни">
       <p className="-mt-3 mb-4 text-[14.5px] leading-relaxed text-muted">

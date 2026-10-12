@@ -4,10 +4,11 @@ import { api } from '../api';
 import { haptic } from '../telegram';
 import type { BotStatus } from '../types';
 import { Button, SectionTitle, Sheet, Spinner, cx, useToast } from '../components/ui';
+import { LOC } from '../locale';
 
 type Level = 'ok' | 'warn' | 'bad';
 
-const fmt = (iso: string) => new Date(iso).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const fmt = (iso: string) => new Date(iso).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 function Check({ level, title, children }: { level: Level; title: string; children?: ReactNode }) {
   const Icon = level === 'ok' ? CheckCircle2 : level === 'warn' ? CircleAlert : XCircle;

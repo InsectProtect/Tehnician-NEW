@@ -6,6 +6,7 @@ import { haptic } from '../telegram';
 import type { AnnColor, Announcement, AnnouncementAdmin, AnnouncementInput, Audience, Job, Task } from '../types';
 import { Button, Chips, ConfirmSheet, Field, Input, SectionTitle, Sheet, TextArea, cx, multLabel, useToast } from '../components/ui';
 import { JobSheet, audienceText } from './Jobs';
+import { LOC } from '../locale';
 
 /*
  * Объявления (собрание, «в воскресенье ×2,5» …) — цветной баннер у сотрудников до нажатия «Понятно»,
@@ -22,7 +23,7 @@ const AUD_OPTS: { id: Audience | 'everyone'; label: string }[] = [
   { id: 'all', label: 'Все сотрудники' }, { id: 'tech', label: 'Дезинсекторы' }, { id: 'specialist', label: 'Специалисты' },
   { id: 'manager', label: 'Менеджеры' }, { id: 'everyone', label: 'Все, включая админов' },
 ];
-const when = (iso: string) => new Date(iso).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const when = (iso: string) => new Date(iso).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const pts = (x?: number | null) => String(Math.round((x ?? 0) * 100) / 100).replace('.', ',');
 
 /* ---------------- Сотрудник: цветные объявления на главной ---------------- */
@@ -50,7 +51,7 @@ export function AnnouncementBanners() {
               <div className="min-w-0 flex-1">
                 <div className="break-words text-[17px] font-semibold leading-snug">{a.title}</div>
                 {a.body && <div className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-relaxed">{a.body}</div>}
-                <div className="mt-1.5 text-[12.5px] text-muted">{a.author_name} · {when(a.created_at)}{a.expires_at ? ` · до ${new Date(`${a.expires_at}T12:00:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}` : ''}</div>
+                <div className="mt-1.5 text-[12.5px] text-muted">{a.author_name} · {when(a.created_at)}{a.expires_at ? ` · до ${new Date(`${a.expires_at}T12:00:00`).toLocaleDateString(LOC, { day: 'numeric', month: 'short' })}` : ''}</div>
               </div>
             </div>
             <Button variant="secondary" className="mt-3 h-11 text-[15px]" loading={busy === a.id} onClick={async () => {
@@ -168,7 +169,7 @@ export function AnnouncementsWidget({ refreshKey = 0 }: { refreshKey?: number })
 
 /* ---------------- Сотрудник: свободные задачи «кто заберёт» ---------------- */
 
-const fmtWhen = (t: Task) => (t.planned_at ? new Date(t.planned_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', ...(t.has_time ? { hour: '2-digit', minute: '2-digit' } : {}) }) : 'дата не указана');
+const fmtWhen = (t: Task) => (t.planned_at ? new Date(t.planned_at).toLocaleString(LOC, { day: 'numeric', month: 'short', ...(t.has_time ? { hour: '2-digit', minute: '2-digit' } : {}) }) : 'дата не указана');
 
 export function OpenWork({ refreshKey = 0, onClaimed }: { refreshKey?: number; onClaimed?: () => void }) {
   const cfg = useConfig();
@@ -229,7 +230,7 @@ export function OpenWork({ refreshKey = 0, onClaimed }: { refreshKey?: number; o
                 <div className="min-w-0 flex-1">
                   <div className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Поручение · № {j.job_no}</div>
                   <div className="mt-0.5 line-clamp-2 break-words text-[16px] font-semibold leading-snug">{j.title}</div>
-                  <div className="mt-1 text-[13px] text-muted">для: {audienceText(j.audience)}{j.due_at ? ` · до ${new Date(`${j.due_at}T12:00:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}, ${j.due_time || '18:00'}` : ''}</div>
+                  <div className="mt-1 text-[13px] text-muted">для: {audienceText(j.audience)}{j.due_at ? ` · до ${new Date(`${j.due_at}T12:00:00`).toLocaleDateString(LOC, { day: 'numeric', month: 'short' })}, ${j.due_time || '18:00'}` : ''}</div>
                 </div>
                 <div className="shrink-0 font-dot text-[18px] font-semibold text-accent-ink">+{pts(j.points)}</div>
               </div>

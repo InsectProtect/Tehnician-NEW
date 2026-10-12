@@ -4,14 +4,15 @@ import { api } from '../api';
 import { haptic } from '../telegram';
 import type { MonthSummary, NotificationItem, NotificationsRes } from '../types';
 import { Empty, Sheet, Spinner, cx, useToast } from '../components/ui';
+import { LOC } from '../locale';
 
 export const monthName = (iso?: string) => {
-  const s = (iso ? new Date(iso) : new Date()).toLocaleDateString('ru-RU', { month: 'long', timeZone: 'Europe/Chisinau' });
+  const s = (iso ? new Date(iso) : new Date()).toLocaleDateString(LOC, { month: 'long', timeZone: 'Europe/Chisinau' });
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
 const fmtWhen = (iso: string) =>
-  new Date(iso).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  new Date(iso).toLocaleString(LOC, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 /** Личный счётчик за текущий месяц. Сервер считает от 1-го числа — в новом месяце всё начинается с нуля. */
 export function MonthCard({ m, onRemarks, onHistory }: { m: MonthSummary; onRemarks: () => void; onHistory: () => void }) {

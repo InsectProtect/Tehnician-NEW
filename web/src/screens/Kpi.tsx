@@ -5,9 +5,10 @@ import { useConfig } from '../config';
 import { haptic, openLink } from '../telegram';
 import type { KpiMonth, KpiRes } from '../types';
 import { Button, Sheet, Spinner, cx, useToast } from '../components/ui';
+import { LOC } from '../locale';
 
 const monthLabel = (key: string, long = false) => {
-  const s = new Date(`${key}-15T12:00:00`).toLocaleDateString('ru-RU', long ? { month: 'long', year: 'numeric' } : { month: 'short' });
+  const s = new Date(`${key}-15T12:00:00`).toLocaleDateString(LOC, long ? { month: 'long', year: 'numeric' } : { month: 'short' });
   return (s.charAt(0).toUpperCase() + s.slice(1)).replace(' г.', '').replace('.', '');
 };
 const hours = (h: number | null) => (h == null ? '—' : h < 1 ? `${Math.round(h * 60)} мин` : h < 48 ? `${h} ч` : `${Math.round(h / 24)} дн`);
@@ -34,7 +35,7 @@ function MonthStats({ m }: { m: KpiMonth }) {
       <Stat label="Всего актов" value={m.visits} />
       <Stat label="Замечания" value={m.remarks} className={m.remarks ? 'text-[#C93400] dark:text-[#FF9F0A]' : ''} />
       <Stat label="Ср. время" value={hours(m.avg_hours)} />
-      {m.revenue != null && m.revenue > 0 && <Stat label="Сумма, лей" value={m.revenue.toLocaleString('ru-RU')} />}
+      {m.revenue != null && m.revenue > 0 && <Stat label="Сумма, лей" value={m.revenue.toLocaleString(LOC)} />}
       {m.points != null && m.points > 0 && <Stat label="Баллы" value={String(m.points).replace('.', ',')} className="text-accent-ink" />}
     </div>
   );
