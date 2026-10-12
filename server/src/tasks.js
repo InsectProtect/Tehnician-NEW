@@ -86,6 +86,21 @@ function localToday(now, tz = TZ) {
   return { y: +p[0], m: +p[1], d: +p[2] };
 }
 
+// Месяцы словами: «13 октября», «13 oct», «13 octombrie»
+const MONTHS = [
+  [/^(янв|ian)/, 1], [/^(фев|feb)/, 2], [/^(мар|mar(?!ț|ti))/, 3], [/^(апр|apr)/, 4], [/^(мая|май|mai)/, 5], [/^(июн|iun)/, 6],
+  [/^(июл|iul)/, 7], [/^(авг|aug)/, 8], [/^(сен|sep)/, 9], [/^(окт|oct)/, 10], [/^(ноя|noi|nov)/, 11], [/^(дек|dec)/, 12],
+];
+// дни недели → ближайший такой день (сегодня не считается)
+const WEEKDAYS = [
+  [/^(воскресен|duminic)/, 0], [/^(понедельн|luni)$/, 1], [/^(вторник|mar[țt]i)$/, 2], [/^(сред[уаы]|miercuri)$/, 3],
+  [/^(четверг|joi)$/, 4], [/^(пятниц|vineri)/, 5], [/^(суббот|s[âa]mb[ăa]t)/, 6],
+];
+// «14 октября», «к 10», «ora 11» — вырезаем из адреса/клиента (но не «ул. 31 Августа»)
+const DATE_WORDS = /(?<!(?:str|strada|stradela|ул|улица|bd|bul|bulevardul|șos|calea|aleea|пр|просп|пер)\.?\s{0,2})(?<![\d\p{L}])\d{1,2}\s+(?:de\s+)?(?:январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр|ian|feb|mart|apr|iun|iul|aug|sep|oct|noi|nov|dec)\p{L}*\.?(?:\s+\d{4})?(?![\p{L}])|(?<![\p{L}])(?:в|la|ora|к)\s+(?:[01]?\d|2[0-3])(?:[:.]\d{2})?(?![\d\p{L}])/giu;
+// слово целиком (не часть другого: «magazin» ≠ «azi», «Romaine» ≠ «maine»)
+const word = (re) => new RegExp(`(?<![\\p{L}])(?:${re})(?![\\p{L}])`, 'iu');
+
 function parseDate(str, now) {
   const s = str.toLowerCase();
   const today = localToday(now);
@@ -93,24 +108,51 @@ function parseDate(str, now) {
     const dt = new Date(Date.UTC(today.y, today.m - 1, today.d + days));
     return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
   };
-  if (/послезавтра|poimâine|poimaine/.test(s)) return shift(2);
-  if (/завтра|mâine|maine/.test(s)) return shift(1);
-  if (/сегодня|azi|astăzi|astazi/.test(s)) return shift(0);
+  const build = (d, mo, yy) => {
+    if (d < 1 || d > 31 || mo < 1 || mo > 12) return null;
+    let y = yy ? +yy : today.y;
+    if (y < 100) y += 2000;
+    // без года и дата уже прошла больше чем на месяц — значит, следующий год
+    if (!yy && Date.UTC(y, mo - 1, d) < Date.UTC(today.y, today.m - 1, today.d) - 30 * 86400000) y += 1;
+    return { y, m: mo, d };
+  };
+  // 1) явная дата цифрами важнее слов «сегодня/завтра»: «13.10», «13.10.2026», «13/10/2026»
   const m = s.match(/(?:^|[^\d/])(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?(?![\d/])/) || s.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/);
-  if (!m) return null;
-  const d = +m[1];
-  const mo = +m[2];
-  if (d < 1 || d > 31 || mo < 1 || mo > 12) return null;
-  let y = m[3] ? +m[3] : today.y;
-  if (y < 100) y += 2000;
-  // без года и дата уже прошла больше чем на месяц — значит, следующий год
-  if (!m[3] && Date.UTC(y, mo - 1, d) < Date.UTC(today.y, today.m - 1, today.d) - 30 * 86400000) y += 1;
-  return { y, m: mo, d };
+  if (m) { const r = build(+m[1], +m[2], m[3]); if (r) return r; }
+  // 2) «13 октября», «13 oct.», «13 octombrie 2026»
+  //    но не улица «str. 31 August 1989» / «ул. 31 Августа»
+  for (const mw of s.matchAll(/(?<![\d])(\d{1,2})\s+(?:de\s+)?(\p{L}{3,})\.?(?:\s+(\d{4}))?/gu)) {
+    const mo = MONTHS.find(([re]) => re.test(mw[2]));
+    if (!mo) continue;
+    if (/(str|strada|stradela|ул|улица|bd|bul|bulevardul|șos|sos|calea|aleea|пр|просп|пер)\.?\s*$/iu.test(s.slice(Math.max(0, mw.index - 14), mw.index))) continue;
+    if (mw[3] && Math.abs(+mw[3] - today.y) > 1) continue;
+    const r = build(+mw[1], mo[1], mw[3]);
+    if (r) return r;
+  }
+  // «13 число», «на 13-е» → ближайшее 13-е
+  const dn = s.match(/(?<![\d.])(\d{1,2})(?:\s*(?:-?е|-?го)?\s+числ|-?е(?![\p{L}]))/u);
+  if (dn && +dn[1] >= 1 && +dn[1] <= 31) {
+    const d = +dn[1];
+    const nm = d >= today.d ? today.m : today.m + 1;
+    return build(d, nm > 12 ? 1 : nm, nm > 12 ? today.y + 1 : undefined);
+  }
+  // 3) относительные слова — только целым словом
+  if (word('послезавтра|poim[âa]ine').test(s)) return shift(2);
+  if (word('завтра|m[âa]ine').test(s)) return shift(1);
+  if (word('сегодня|azi|ast[ăa]zi').test(s)) return shift(0);
+  // 4) день недели: «во вторник», «marți» → ближайший такой день
+  for (const w of s.match(/\p{L}+/gu) || []) {
+    const wd = WEEKDAYS.find(([re]) => re.test(w));
+    if (!wd) continue;
+    const cur = new Date(Date.UTC(today.y, today.m - 1, today.d)).getUTCDay();
+    return shift(((wd[1] - cur + 7) % 7) || 7);
+  }
+  return null;
 }
 
 function parseTime(str, keyed) {
   const m = str.match(/\b([01]?\d|2[0-3])[:](\d{2})\b/) || (keyed ? str.match(/\b([01]?\d|2[0-3])[.\s-]?(\d{2})?\b/) : null)
-    || str.match(/(?:\bв\s|\bla\s|\bora\s)([01]?\d|2[0-3])(?:[:.](\d{2}))?\b/i);
+    || str.match(/(?<![\p{L}])(?:в|la|ora|к)\s+([01]?\d|2[0-3])(?:[:.](\d{2}))?(?![\d\p{L}])/iu);
   if (!m) return null;
   return { hh: +m[1], mm: m[2] ? +m[2] : 0 };
 }
@@ -227,7 +269,13 @@ export function parseTask(text, now = new Date()) {
     }
   }
   const date = parseDate(dateStr || all, now);
-  const time = parseTime(timeStr || '', Boolean(timeStr)) || parseTime(free.join(' '), false);
+  let time = parseTime(timeStr || '', Boolean(timeStr)) || parseTime(free.join(' '), false);
+  // «13.10, 11.00» — после даты через точку идёт время через точку
+  if (!time && date) {
+    const dots = [...all.matchAll(/(?<![\d.\/])(\d{1,2})\.(\d{2})(?![\d.\/])/g)];
+    const last = dots.length >= 2 ? dots[dots.length - 1] : null;
+    if (last && +last[1] <= 23 && +last[2] <= 59) time = { hh: +last[1], mm: +last[2] };
+  }
 
   // одна строка через запятые → разбиваем на части, адресные части склеиваем обратно
   const splitCommas = (l) => {
@@ -259,6 +307,7 @@ export function parseTask(text, now = new Date()) {
   for (const line of parts) {
     const clean0 = (out.phone ? line.replace(out.phone, '') : line)
       .replace(/(^|[\s,])\d{1,2}\.\d{1,2}(\.\d{2,4})?(?=[\s,]|$)|\b\d{1,2}:\d{2}\b|(^|[\s,])(в|la)\s*$/g, ' ')
+      .replace(DATE_WORDS, ' ')
 
       .replace(/\s{2,}/g, ' ').replace(/[,\s]+$/, '').replace(/^[,\s]+/, '').trim();
     const withDate = clean0;
@@ -314,8 +363,18 @@ export function parseTask(text, now = new Date()) {
   out.price = deal.price;
   out.mult = deal.mult;
   out.sotki = deal.sotki;
-  out.planned_at = date ? zonedIso(date.y, date.m, date.d, time?.hh ?? 9, time?.mm ?? 0) : null;
-  out.has_time = Boolean(date && time);
+  // только время без даты: ближайшее такое время (уже прошло сегодня — значит, завтра)
+  let day = date;
+  if (!day && time) {
+    const t0 = localToday(now);
+    day = t0;
+    if (new Date(zonedIso(t0.y, t0.m, t0.d, time.hh, time.mm)).getTime() <= now.getTime()) {
+      const dt = new Date(Date.UTC(t0.y, t0.m - 1, t0.d + 1));
+      day = { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
+    }
+  }
+  out.planned_at = day ? zonedIso(day.y, day.m, day.d, time?.hh ?? 9, time?.mm ?? 0) : null;
+  out.has_time = Boolean(day && time);
   return out;
 }
 
