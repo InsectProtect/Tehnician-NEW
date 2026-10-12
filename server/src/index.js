@@ -3247,6 +3247,7 @@ route('GET', '/api/visits/:id', async ({ params, user }) => {
       is_company: !isIndividual(v.company_name),
       object_id: v.object_id,
       plans_count: Number((await db.query('SELECT COUNT(*) AS n FROM object_plans WHERE object_id = $1', [v.object_id]))[0]?.n) || 0,
+      plan_spots: await plans.freeSpots(v.object_id),
       approval: v.approval || '',
       approval_note: v.approval_note || '',
       approved_by: v.approved_by || '',

@@ -156,7 +156,8 @@ export type Trap = {
 /* ---------- План объекта (v78) ---------- */
 export type PlanShape =
   | { t: 'rect'; x: number; y: number; w: number; h: number; label?: string }
-  | { t: 'line' | 'door'; x1: number; y1: number; x2: number; y2: number }
+  | { t: 'line' | 'door' | 'gate'; x1: number; y1: number; x2: number; y2: number }
+  | { t: 'spot'; id: string; x: number; y: number; target: string; kind: string; n: number }
   | { t: 'text'; x: number; y: number; s: string };
 export interface ObjectPlan { id: string; object_id: string; title: string; w: number; h: number; image_url: string | null; drawing: PlanShape[]; updated_at: string }
 export interface PlanTrap { id: string; code: string; number: number; kind: string; target: string; location: string; prepared: boolean; plan_id: string | null; plan_x: number | null; plan_y: number | null }
@@ -237,7 +238,7 @@ export type Visit = {
   team?: { id: string; name: string }[]; points_total?: number | null; sotki?: number | null;
   geo?: { km: number; lat: number; lon: number; at: string; zone: string; map: string } | null; zone_src?: string;
   quick?: boolean;
-  object_id?: string; plans_count?: number;
+  object_id?: string; plans_count?: number; plan_spots?: number;
   stations_only?: boolean | null; suggest_stations?: boolean; prev_products?: string[];
   premises: string[];
   reentry: string;

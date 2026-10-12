@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Camera, Check, DoorOpen, Eraser, ImagePlus, Layers, MapPin, Minus, Move, Pencil, Plus, Square, Trash2, Type, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { Camera, Check, DoorOpen, Warehouse, Eraser, ImagePlus, Layers, MapPin, Minus, Move, Pencil, Plus, Square, Trash2, Type, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { api } from '../api';
 import { useConfig } from '../config';
 import { compressImage } from '../image';
@@ -15,7 +15,15 @@ import { Button, Input, Spinner, cx, useToast } from '../components/ui';
  * ================================================================================================ */
 
 type Mode = 'view' | 'place' | 'draw';
-type Tool = 'rect' | 'line' | 'door' | 'text' | 'erase';
+type Tool = 'rect' | 'line' | 'door' | 'gate' | 'text' | 'spot' | 'erase';
+/** Что ставим заранее (без QR): назначение + устройство. */
+const SPOT_TYPES = [
+  { id: 'rod', target: 'rodents', kind: 'Родентицидная станция', label: '● Грызуны' },
+  { id: 'glue', target: 'crawling', kind: 'Клеевая ловушка', label: '◆ Ползающие' },
+  { id: 'fly', target: 'flying', kind: 'Феромонная ловушка', label: '▲ Летающие' },
+  { id: 'lamp', target: 'flying', kind: 'Инсектицидная лампа', label: '✦ Лампа' },
+];
+const isLamp = (kind: string) => /ламп/i.test(kind || '');
 
 const STATUS_FILL: Record<string, string> = { ok: '#34C759', replaced: '#34C759', activity: '#FF3B30', damaged: '#1D1D1F', missing: '#1D1D1F', no_access: '#FF9500' };
 const R = 28; // радиус точки станции в единицах плана
@@ -24,7 +32,9 @@ const snap = (v: number) => Math.round(v / 10) * 10;
 /** Значок станции: грызуны — круг, ползающие — ромб, летающие — треугольник. */
 function Marker({ t, x, y, fill, ring, dim, onClick }: { t: PlanTrap; x: number; y: number; fill: string; ring?: boolean; dim?: boolean; onClick?: () => void }) {
   const txt = fill === '#E5E5EA' || fill === '#FFFFFF' ? '#1D1D1F' : '#FFFFFF';
-  const shape = t.target === 'crawling'
+  const shape = isLamp(t.kind)
+    ? <g><circle cx={x} cy={y} r={R * 1.05} fill={fill} stroke="#fff" strokeWidth={4} />{[0, 45, 90, 135, 180, 225, 270, 315].map((a) => <line key={a} x1={x + Math.cos((a * Math.PI) / 180) * R * 1.25} y1={y + Math.sin((a * Math.PI) / 180) * R * 1.25} x2={x + Math.cos((a * Math.PI) / 180) * R * 1.65} y2={y + Math.sin((a * Math.PI) / 180) * R * 1.65} stroke={fill === '#FFFFFF' || fill === '#E5E5EA' ? '#8E8E93' : fill} strokeWidth={5} strokeLinecap="round" />)}</g>
+    : t.target === 'crawling'
     ? <rect x={x - R * 0.85} y={y - R * 0.85} width={R * 1.7} height={R * 1.7} rx={5} transform={`rotate(45 ${x} ${y})`} fill={fill} stroke="#fff" strokeWidth={4} />
     : t.target === 'flying'
       ? <path d={`M${x} ${y - R * 1.15} L${x + R * 1.1} ${y + R * 0.8} L${x - R * 1.1} ${y + R * 0.8} Z`} fill={fill} stroke="#fff" strokeWidth={4} strokeLinejoin="round" />
@@ -50,6 +60,29 @@ function Drawing({ shapes, h, onErase }: { shapes: PlanShape[]; h: number; onEra
             <g key={i} onClick={click} {...hit}>
               <rect x={s.x} y={s.y} width={s.w} height={s.h} fill="#FFFFFF" fillOpacity={0.55} stroke="#1D1D1F" strokeWidth={6} />
               {s.label && <text x={s.x + s.w / 2} y={s.y + s.h / 2 + 8} textAnchor="middle" fontSize={Math.max(16, Math.min(30, s.w / 8))} fontWeight={700} fill="#8E8E93" fontFamily="-apple-system,system-ui,sans-serif">{s.label.toUpperCase()}</text>}
+            </g>
+          );
+        }
+        if (s.t === 'spot') {
+          // запланированная станция: пунктирный контур с номером
+          const pt0 = { id: s.id, code: '', number: s.n, kind: s.kind, target: s.target, location: '', prepared: false, plan_id: null, plan_x: s.x, plan_y: s.y };
+          return (
+            <g key={i} onClick={click} {...hit}>
+              <circle cx={s.x} cy={s.y} r={R * 1.25} fill="#FFFFFF" fillOpacity={0.85} stroke="#0066CC" strokeWidth={4} strokeDasharray="7 6" />
+              <g opacity={0.55}><Marker t={pt0} x={s.x} y={s.y} fill="#8E8E93" /></g>
+            </g>
+          );
+        }
+        if (s.t === 'gate') {
+          const dx = s.x2 - s.x1; const dy = s.y2 - s.y1; const len = Math.hypot(dx, dy) || 1;
+          const nx = (-dy / len) * 14; const ny = (dx / len) * 14;
+          return (
+            <g key={i} onClick={click} {...hit}>
+              <line x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke="#FFFFFF" strokeWidth={14} />
+              <line x1={s.x1 + nx} y1={s.y1 + ny} x2={s.x2 + nx} y2={s.y2 + ny} stroke="#FF9500" strokeWidth={6} strokeDasharray="16 8" />
+              <line x1={s.x1} y1={s.y1} x2={s.x1 + nx * 2} y2={s.y1 + ny * 2} stroke="#FF9500" strokeWidth={6} />
+              <line x1={s.x2} y1={s.y2} x2={s.x2 + nx * 2} y2={s.y2 + ny * 2} stroke="#FF9500" strokeWidth={6} />
+              <text x={(s.x1 + s.x2) / 2} y={(s.y1 + s.y2) / 2 + 7} textAnchor="middle" fontSize={20} fontWeight={700} fill="#C93400" fontFamily="-apple-system,system-ui,sans-serif">ворота</text>
             </g>
           );
         }
@@ -92,6 +125,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
   const [busy, setBusy] = useState(false);
   // рисование
   const [tool, setTool] = useState<Tool>('rect');
+  const [spotType, setSpotType] = useState(SPOT_TYPES[0].id);
   const [shapes, setShapes] = useState<PlanShape[]>([]);
   const [hist, setHist] = useState<PlanShape[][]>([]);
   const [draft, setDraft] = useState<PlanShape | null>(null);
@@ -152,13 +186,20 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     return { x: Math.max(0, Math.min(1000, p.x)), y: Math.max(0, Math.min(plan.h, p.y)) };
   }
 
-  async function place(trapId: string, x: number, y: number) {
+  /** Ближайшая запланированная точка (тап рядом с ней — станция встаёт в неё). */
+  const spots = (plan?.drawing || []).filter((x) => x.t === 'spot') as Extract<PlanShape, { t: 'spot' }>[];
+  const nearSpot = (x: number, y: number) => spots
+    .map((sp) => ({ sp, dist: Math.hypot(sp.x - x, sp.y - y) }))
+    .filter((o) => o.dist < 60).sort((a, b) => a.dist - b.dist)[0]?.sp;
+  async function place(trapId: string, x0: number, y0: number) {
     if (!plan) return;
     haptic.tap();
+    const sp = nearSpot(x0, y0);
+    const x = sp ? sp.x : x0; const y = sp ? sp.y : y0;
     // сразу на экране, потом сервер
     setD((r) => (r ? { ...r, traps: r.traps.map((t) => (t.id === trapId ? { ...t, plan_id: plan.id, plan_x: x, plan_y: y } : t)) } : r));
     try {
-      const r = await api.placeTrap(trapId, { plan_id: plan.id, x, y });
+      const r = await api.placeTrap(trapId, { plan_id: plan.id, x, y, spot: sp?.id });
       apply(r, plan.id);
       const next = r.traps.find((t) => !t.plan_id && t.id !== trapId);
       if (placeId) { haptic.success(); toast('Станция отмечена на плане'); onClose(); return; }
@@ -176,6 +217,14 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     if (mode !== 'draw' || tool === 'erase') return;
     const p = pt(e);
     if (tool === 'text') { setAsk({ kind: 'text', x: snap(p.x), y: snap(p.y) }); setAskText(''); return; }
+    if (tool === 'spot') {
+      const st = SPOT_TYPES.find((x) => x.id === spotType) || SPOT_TYPES[0];
+      const used = [...(d?.traps || []).map((t) => t.number), ...shapes.filter((x) => x.t === 'spot').map((x) => (x as { n: number }).n)];
+      const n = (used.length ? Math.max(...used) : 0) + 1;
+      haptic.tap();
+      commit([...shapes, { t: 'spot', id: Math.random().toString(36).slice(2, 10), x: Math.round(p.x), y: Math.round(p.y), target: st.target, kind: st.kind, n }]);
+      return;
+    }
     (e.target as Element).setPointerCapture?.(e.pointerId);
     start.current = { x: snap(p.x), y: snap(p.y) };
   }
@@ -188,7 +237,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
       // стены и двери — строго горизонтально/вертикально, если почти ровно
       if (Math.abs(x - s.x) < Math.abs(y - s.y) * 0.25) x = s.x;
       if (Math.abs(y - s.y) < Math.abs(x - s.x) * 0.25) y = s.y;
-      setDraft({ t: tool as 'line' | 'door', x1: s.x, y1: s.y, x2: x, y2: y });
+      setDraft({ t: tool as 'line' | 'door' | 'gate', x1: s.x, y1: s.y, x2: x, y2: y });
     }
   }
   function up() {
@@ -198,7 +247,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     setDraft(null);
     if (!dr) return;
     if (dr.t === 'rect' && (dr.w < 20 || dr.h < 20)) return;
-    if ((dr.t === 'line' || dr.t === 'door') && Math.hypot(dr.x2 - dr.x1, dr.y2 - dr.y1) < 20) return;
+    if ((dr.t === 'line' || dr.t === 'door' || dr.t === 'gate') && Math.hypot(dr.x2 - dr.x1, dr.y2 - dr.y1) < 20) return;
     haptic.tap();
     commit([...shapes, dr]);
     if (dr.t === 'rect') { setAsk({ kind: 'rect', i: shapes.length }); setAskText(''); }
@@ -267,6 +316,8 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     { id: 'rect', icon: <Square size={18} />, label: 'Комната' },
     { id: 'line', icon: <Minus size={18} className="-rotate-45" />, label: 'Стена' },
     { id: 'door', icon: <DoorOpen size={18} />, label: 'Дверь' },
+    { id: 'gate', icon: <Warehouse size={18} />, label: 'Ворота' },
+    { id: 'spot', icon: <MapPin size={18} />, label: 'Станция' },
     { id: 'text', icon: <Type size={18} />, label: 'Текст' },
     { id: 'erase', icon: <Eraser size={18} />, label: 'Ластик' },
   ];
@@ -305,7 +356,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     <div className="fixed inset-0 z-50 flex flex-col bg-page animate-fade">
       {inputs}
       {/* шапка */}
-      <div className="top-safe flex items-center gap-2 px-3 pb-2 pt-2">
+      <div className="flex items-center gap-2 px-3 pb-2" style={{ paddingTop: 'calc(var(--safe-top) + 8px)' }}>
         <button onClick={() => { if (dirty) saveDrawing(); onClose(); }} aria-label="Закрыть" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-card ring-1 ring-inset ring-line"><X size={18} /></button>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[17px] font-semibold leading-tight">План объекта</div>
@@ -404,7 +455,8 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                     <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#1D1D1F]" />повреждена</span>
                   </>
                 ) : <span>Тап по станции — подробности</span>}
-                <span className="ml-auto">● грызуны ◆ ползающие ▲ летающие</span>
+                <span className="ml-auto">● грызуны ◆ ползающие ▲ летающие ✦ лампа</span>
+                {spots.length > 0 && <span className="w-full"><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full border-2 border-dashed border-[#0066CC]" />запланировано, ещё без QR: {spots.length}</span>}
                 {unplaced.length > 0 && <button onClick={() => { setMode('place'); setSel(unplaced[0].id); }} className="w-full pt-1 text-left font-medium text-accent-ink"><MapPin size={13} className="inline -translate-y-px" /> Не на плане: {unplaced.length} — отметить</button>}
               </div>
             ))}
@@ -412,7 +464,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
             {mode === 'place' && (
               <div>
                 <div className="mb-2 px-1 text-[13.5px] leading-snug">
-                  {selTrap ? <>Тапните на плане, где стоит <b>№ {selTrap.number || '—'}</b> ({targetLabel(selTrap.target).toLowerCase() || selTrap.kind}){selTrap.plan_id ? ' — передвинется' : ''}</> : traps.length ? 'Выберите станцию ниже или тапните точку на плане, чтобы передвинуть' : 'На объекте пока нет станций — отсканируйте QR в выезде или подготовьте ловушки.'}
+                  {selTrap ? <>Тапните на плане, где стоит <b>№ {selTrap.number || '—'}</b> ({targetLabel(selTrap.target).toLowerCase() || selTrap.kind}){selTrap.plan_id ? ' — передвинется' : ''}{spots.length ? '. Тап по пунктирной точке — станция встанет в неё и возьмёт её номер' : ''}</> : traps.length ? 'Выберите станцию ниже или тапните точку на плане, чтобы передвинуть' : 'На объекте пока нет станций — отсканируйте QR в выезде или подготовьте ловушки.'}
                 </div>
                 <div className="flex gap-1.5 overflow-x-auto pb-1">
                   {[...unplaced, ...otherPlan, ...onPlan].map((t) => (
@@ -435,18 +487,26 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                 </form>
               ) : (
                 <>
-                  <div className="flex gap-1.5">
+                  <div className="-mx-3 flex gap-1.5 overflow-x-auto px-3">
                     {tools.map((t) => (
                       <button key={t.id} onClick={() => { haptic.tap(); setTool(t.id); }}
-                        className={cx('flex flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] font-medium', tool === t.id ? 'bg-ink text-card' : 'bg-card ring-1 ring-inset ring-line')}>
+                        className={cx('flex min-w-[58px] flex-1 shrink-0 flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] font-medium', tool === t.id ? 'bg-ink text-card' : 'bg-card ring-1 ring-inset ring-line')}>
                         {t.icon}{t.label}
                       </button>
                     ))}
                     <button onClick={() => { if (hist.length) { setShapes(hist[hist.length - 1]); setHist((h) => h.slice(0, -1)); setDirty(true); haptic.tap(); } }} disabled={!hist.length}
                       className="flex flex-col items-center gap-0.5 rounded-xl bg-card px-2.5 py-2 text-[11px] font-medium ring-1 ring-inset ring-line disabled:opacity-40"><Undo2 size={18} />Назад</button>
                   </div>
+                  {tool === 'spot' && (
+                    <div className="mt-2 flex gap-1.5 overflow-x-auto">
+                      {SPOT_TYPES.map((x) => (
+                        <button key={x.id} onClick={() => { haptic.tap(); setSpotType(x.id); }}
+                          className={cx('shrink-0 rounded-full px-3 py-1.5 text-[13px] font-medium', spotType === x.id ? 'bg-accent text-white' : 'bg-card ring-1 ring-inset ring-line')}>{x.label}</button>
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-1.5 px-1 text-[12px] text-muted">
-                    {tool === 'rect' ? 'Проведите пальцем по диагонали — получится комната' : tool === 'line' ? 'Проведите пальцем — стена (ровняется сама)' : tool === 'door' ? 'Проведите по ширине проёма' : tool === 'text' ? 'Тапните, где поставить подпись' : 'Тапните по фигуре, чтобы удалить'}
+                    {tool === 'spot' ? 'Тапайте, где будут станции — номера идут по порядку. На объекте отсканируете QR и тапнете точку' : tool === 'gate' ? 'Проведите по ширине ворот' : tool === 'rect' ? 'Проведите пальцем по диагонали — получится комната' : tool === 'line' ? 'Проведите пальцем — стена (ровняется сама)' : tool === 'door' ? 'Проведите по ширине проёма' : tool === 'text' ? 'Тапните, где поставить подпись' : 'Тапните по фигуре, чтобы удалить'}
                   </div>
                   <div className="mt-2 grid grid-cols-[1fr_auto_auto] gap-2">
                     <Button className="h-[44px] text-[14px]" loading={busy} disabled={!dirty} onClick={() => saveDrawing('place')}>Сохранить → станции</Button>

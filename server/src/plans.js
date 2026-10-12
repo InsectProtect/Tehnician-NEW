@@ -24,7 +24,11 @@ function cleanDrawing(list, h) {
     if (s.t === 'rect') {
       const r = { t: 'rect', x: X(s.x), y: Y(s.y), w: num(s.w, 2, W + 100), h: num(s.h, 2, h + 100), label: String(s.label || '').slice(0, 40) };
       if ([r.x, r.y, r.w, r.h].every((v) => v != null)) out.push(r);
-    } else if (s.t === 'line' || s.t === 'door') {
+    } else if (s.t === 'spot') {
+      // запланированная станция (без QR): поставят на объекте — привяжется к этой точке
+      const sp = { t: 'spot', id: String(s.id || '').slice(0, 24) || Math.random().toString(36).slice(2, 10), x: X(s.x), y: Y(s.y), target: ['rodents', 'crawling', 'flying'].includes(s.target) ? s.target : 'rodents', kind: String(s.kind || '').slice(0, 60), n: Math.max(0, Math.min(9999, Math.floor(Number(s.n)) || 0)) };
+      if (sp.x != null && sp.y != null) out.push(sp);
+    } else if (s.t === 'line' || s.t === 'door' || s.t === 'gate') {
       const l = { t: s.t, x1: X(s.x1), y1: Y(s.y1), x2: X(s.x2), y2: Y(s.y2) };
       if ([l.x1, l.y1, l.x2, l.y2].every((v) => v != null)) out.push(l);
     } else if (s.t === 'text') {
@@ -130,7 +134,8 @@ export function initPlans(ctx) {
     return objectPlans(p.object_id);
   });
 
-  // Станция на плане: { plan_id, x, y } — поставить/передвинуть; { plan_id: null } — убрать с плана
+  // Станция на плане: { plan_id, x, y } — поставить/передвинуть; { plan_id, spot } — на запланированную точку
+  // (точка убирается, станция получает её номер, если он свободен); { plan_id: null } — убрать с плана
   route('PUT', '/api/traps/:id/place', async ({ params, body, user }) => {
     must(canEdit(user), 403, 'Нет доступа');
     const [t] = await db.query('SELECT id, object_id FROM traps WHERE id = $1', [str(params.id, 64)]);
@@ -140,12 +145,32 @@ export function initPlans(ctx) {
     } else {
       const p = await planOf(body.plan_id);
       must(p.object_id === t.object_id, 400, 'Станция с другого объекта');
-      const x = num(body.x, 0, W); const y = num(body.y, 0, Number(p.h));
+      let x = num(body.x, 0, W); let y = num(body.y, 0, Number(p.h));
+      if (body.spot) {
+        let drawing = [];
+        try { drawing = JSON.parse(p.drawing || '[]'); } catch { /* пусто */ }
+        const sp = drawing.find((d) => d.t === 'spot' && d.id === String(body.spot));
+        must(sp, 404, 'Точка уже занята — обновите план');
+        x = sp.x; y = sp.y;
+        await db.query('UPDATE object_plans SET drawing = $1, updated_at = $2 WHERE id = $3', [JSON.stringify(drawing.filter((d) => d !== sp)), now(), p.id]);
+        if (sp.n > 0) {
+          const [busy] = await db.query('SELECT id FROM traps WHERE object_id = $1 AND active = 1 AND number = $2 AND id <> $3', [t.object_id, sp.n, t.id]);
+          if (!busy) await db.query('UPDATE traps SET number = $1 WHERE id = $2', [sp.n, t.id]);
+        }
+      }
       must(x != null && y != null, 400, 'Некорректная точка');
       await db.query('UPDATE traps SET plan_id = $1, plan_x = $2, plan_y = $3 WHERE id = $4', [p.id, x, y, t.id]);
     }
     return objectPlans(t.object_id);
   });
+
+  /** Свободные запланированные точки объекта (для подсказки при установке). */
+  async function freeSpots(objectId) {
+    const rows = await db.query('SELECT drawing FROM object_plans WHERE object_id = $1', [objectId]);
+    let n = 0;
+    for (const r0 of rows) { try { n += JSON.parse(r0.drawing || '[]').filter((d) => d.t === 'spot').length; } catch { /* */ } }
+    return n;
+  }
 
   /** Картинка чертежа по подписанной ссылке. */
   async function handleRaw(url, res) {
@@ -160,5 +185,5 @@ export function initPlans(ctx) {
     return true;
   }
 
-  return { handleRaw, objectPlans };
+  return { handleRaw, objectPlans, freeSpots };
 }
