@@ -1,6 +1,6 @@
 import { authHeader, setAppToken } from './telegram';
 import type {
-  LabelBatch, LabelsInfo, LabelsInput,
+  LabelBatch, LabelsInfo, LabelsInput, ObjectPlan, PlanShape, PlansRes,
   PrepState, PrepTask, PrepTrap, CrmProvider, QuestsSettings,
   AdminStats, AdminVisit, BotStatus, KpiRes, MonthSummary, NotificationsRes, RemarksRes, TasksStats, PestsStats, AuditItem, Bootstrap, CompanySettings, Task, BootstrapPartial, Company, ImportStats, Invite, Lead, Observation, OfficeChat,
   RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup,
@@ -190,6 +190,11 @@ export const api = {
     request<{ ok: true; report_url: string; amo_error: string | null; office_sent: boolean; office_error: string | null; office_none?: boolean; reward?: Reward | null }>('POST', `/api/visits/${visitId}/finish`, { comment, ...extra }),
   stamp: () => request<{ mode: 'default' | 'custom' | 'off'; image: string | null }>('GET', '/api/admin/stamp'),
   setStamp: (data: { mode: 'default' | 'custom' | 'off'; image?: string }) => request<{ ok: true }>('PUT', '/api/admin/stamp', data),
+  objectPlans: (objectId: string) => request<PlansRes>('GET', `/api/objects/${objectId}/plans`),
+  addPlan: (objectId: string, body: { title?: string; image?: string; orient?: 'land' | 'port' }) => request<PlansRes>('POST', `/api/objects/${objectId}/plans`, body),
+  savePlan: (planId: string, body: { title?: string; drawing?: PlanShape[]; image?: string | null }) => request<{ plan: ObjectPlan }>('PUT', `/api/plans/${planId}`, body),
+  deletePlan: (planId: string) => request<PlansRes>('DELETE', `/api/plans/${planId}`),
+  placeTrap: (trapId: string, body: { plan_id: string | null; x?: number; y?: number }) => request<PlansRes>('PUT', `/api/traps/${trapId}/place`, body),
   labelsInfo: () => request<LabelsInfo>('GET', '/api/labels'),
   labels: (body: LabelsInput) => request<LabelBatch>('POST', '/api/labels', body),
   recodeTrap: (visitId: string, trapId: string, text: string) => request<{ trap: Trap; old_code: string }>('POST', `/api/visits/${visitId}/traps/${trapId}/recode`, { text }),

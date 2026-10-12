@@ -20,6 +20,7 @@ import { initSales } from './sales.js';
 import { initCar } from './car.js';
 import { initCrm } from './crm.js';
 import { initCash } from './cash.js';
+import { initPlans } from './plans.js';
 import { PREMISES, REENTRY, reentryDefault } from './premises.js';
 import { reverseGeocode, forwardGeocode } from './geo.js';
 import { qrSvg } from './qr.js';
@@ -231,7 +232,7 @@ async function loadObservations(visitId) {
  *  { all: true } — вместе с подготовленными заранее, но ещё не установленными (экран выезда, скан). */
 async function visitRows(visit, { all = false } = {}) {
   return db.query(
-    `SELECT t.id, t.code, t.number, t.kind, t.location, t.target, t.prepared,
+    `SELECT t.id, t.code, t.number, t.kind, t.location, t.target, t.prepared, t.plan_id, t.plan_x, t.plan_y,
             i.status, i.pest, i.count, i.bait_replaced, i.comment, i.created_at AS checked_at, i.condition, i.bait_eaten
        FROM traps t
        LEFT JOIN inspections i ON i.trap_id = t.id AND i.visit_id = $1
@@ -272,6 +273,7 @@ async function journalData(v) {
 function shapeRow(r) {
   return {
     id: r.id, code: r.code, number: Number(r.number), kind: r.kind, location: r.location, target: r.target || '', prepared: Number(r.prepared) === 1,
+    plan_id: r.plan_id || null, plan_x: r.plan_x == null ? null : Number(r.plan_x), plan_y: r.plan_y == null ? null : Number(r.plan_y),
     inspection: r.status
       ? {
         status: r.status, pest: r.pest, count: Number(r.count), bait_replaced: Boolean(Number(r.bait_replaced)), comment: r.comment, checked_at: r.checked_at,
@@ -3243,6 +3245,8 @@ route('GET', '/api/visits/:id', async ({ params, user }) => {
       office_sent_at: v.office_sent_at || null,
       office_configured: Boolean(await officeChat()),
       is_company: !isIndividual(v.company_name),
+      object_id: v.object_id,
+      plans_count: Number((await db.query('SELECT COUNT(*) AS n FROM object_plans WHERE object_id = $1', [v.object_id]))[0]?.n) || 0,
       approval: v.approval || '',
       approval_note: v.approval_note || '',
       approved_by: v.approved_by || '',
@@ -4713,6 +4717,7 @@ route('POST', '/api/hooks/crm/:token', async ({ params, body }) => {
   return { ok: true, id: t.id, task_no: Number(t.task_no), assigned_to: tech?.name || null, open: !tech };
 }, { access: 'public' });
 // Касса: наличные на руках у сотрудника, сдача кассы и выдача под отчёт — server/src/cash.js
+const plans = initPlans({ db, route, must, str, uid, now, audit, signLink, verifyLink, sendText });
 const cash = initCash({ db, route, must, str, uid, now, audit, notifyTech, escHtml, getSetting, setSetting });
 
 // Привязка заявки к лиду CRM (например, ID сделки amoCRM) — необязательное поле, задаёт менеджер/администратор.
@@ -6793,6 +6798,7 @@ async function taskReply(t, html) {
 
 async function handlePrintable(req, res, url) {
   if (await car.handleRaw(url, res)) return true;
+  if (await plans.handleRaw(url, res)) return true;
   let m = url.pathname.match(/^\/r\/visit\/([\w-]+)\.pdf$/);
   if (m) {
     if (!verifyLink(`visit:${m[1]}`, url.searchParams.get('exp'), url.searchParams.get('sig'))) return sendText(res, 403, 'Ссылка недействительна');

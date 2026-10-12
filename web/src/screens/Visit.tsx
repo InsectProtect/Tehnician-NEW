@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Camera, CheckCircle2, MessageSquareWarning, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Pencil, Printer, RefreshCw, ScanLine, Send, Share2, Target, Trash2 } from 'lucide-react';
+import { Camera, CheckCircle2, MessageSquareWarning, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Map as MapIcon, Pencil, Printer, RefreshCw, ScanLine, Send, Share2, Target, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { fmtDate, plural, useConfig } from '../config';
 import { callPhone, canScanQr, getLocation, haptic, openLink, prettyPhone, scanQr, useBackButton } from '../telegram';
@@ -18,6 +18,7 @@ import { MediaCard } from '../components/MediaUpload';
 import { FinishSheet, InspectSheet, ManualSheet, MessageSheet, ObservationSheet, RegisterSheet, RemarkSheet } from './VisitSheets';
 import { playSound } from '../sounds';
 import { takePendingScan } from '../pendingScan';
+import { PlanSheet } from './Plan';
 
 type SheetState =
   | null
@@ -28,6 +29,7 @@ type SheetState =
   | { type: 'register'; code: string; next: number }
   | { type: 'install'; trap: Trap; back?: boolean } // подготовленная заранее станция: отметить, где установлена
   | { type: 'manual' }
+  | { type: 'plan'; focusId?: string; placeId?: string; then?: Trap } // план объекта (v78)
   | { type: 'finish' }
   | { type: 'observation' }
   | { type: 'message'; title: string; text: string };
@@ -335,11 +337,25 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           Список станций к обслуживанию
         </Button>
       )}
+      <Button variant="secondary" onClick={() => { haptic.tap(); setSheet({ type: 'plan' }); }} icon={<MapIcon size={18} strokeWidth={1.75} />}>
+        {visit.plans_count ? 'План объекта' : 'План объекта — добавить чертёж'}
+      </Button>
       <Button variant="plain" onClick={() => setSheet({ type: 'manual' })} icon={<Keyboard size={18} strokeWidth={1.75} />}>
         Ввести код вручную
       </Button>
     </div>
   );
+  /** Открыть станцию с плана: установить / осмотреть / QR. */
+  const openTrapById = (trapId: string) => {
+    const t = traps.find((x) => x.id === trapId);
+    if (!t) { toast('Станция не из этого выезда'); return; }
+    setSheet(t.prepared ? { type: 'install', trap: t } : t.inspection ? { type: 'inspect', trap: t } : { type: 'qr', trap: t });
+  };
+  /** После установки/регистрации новой станции — отметить её на плане (если план есть), потом осмотр. */
+  const afterNewTrap = (trap: Trap, back?: boolean) => {
+    if (visit.plans_count) setSheet({ type: 'plan', placeId: trap.id, then: trap });
+    else setSheet({ type: 'inspect', trap, back });
+  };
 
   // v77: одно место для фото — замечания в акт и видео/фото для офиса (KPI) рядом, вверху выезда
   const photosBlock = (
@@ -957,6 +973,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           trapResult={trapResult}
           onOpen={(t) => setSheet(t.prepared ? { type: 'install', trap: t, back: true } : { type: 'inspect', trap: t, back: true })}
           onScan={() => { setSheet(null); setTimeout(startScan, 250); }}
+          onPlan={() => setSheet({ type: 'plan', focusId: sheet.focusId })}
           onClose={() => setSheet(null)}
         />
       )}
@@ -966,7 +983,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           trap={sheet.trap}
           targetLabel={targetLabel}
           onClose={() => setSheet(sheet.back ? { type: 'service', focusId: sheet.trap.id } : null)}
-          onInstalled={(trap) => { load(); setSheet({ type: 'inspect', trap, back: true }); }}
+          onInstalled={(trap) => { load(); afterNewTrap(trap, true); }}
         />
       )}
       {sheet?.type === 'register' && (
@@ -977,8 +994,19 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           onClose={() => setSheet(null)}
           onRegistered={(trap) => {
             load();
-            setSheet({ type: 'inspect', trap });
+            afterNewTrap(trap);
           }}
+        />
+      )}
+      {sheet?.type === 'plan' && (
+        <PlanSheet
+          objectId={visit.object_id || ''}
+          title={visit.company_name}
+          traps={traps}
+          focusId={sheet.focusId}
+          placeId={sheet.placeId}
+          onOpenTrap={openTrapById}
+          onClose={() => { const then = sheet.then; load(); setSheet(then ? { type: 'inspect', trap: then } : null); }}
         />
       )}
       {sheet?.type === 'manual' && (
@@ -1150,9 +1178,9 @@ function RoomsFromTask({ visit, onChanged }: { visit: Visit; onChanged: () => vo
 }
 
 /** Список всех станций объекта к обслуживанию: после подтверждения «Я на объекте» и по кнопке в выезде. */
-function ServiceSheet({ traps, focusId, statusLabel, targetLabel, trapResult, onOpen, onScan, onClose }: {
+function ServiceSheet({ traps, focusId, statusLabel, targetLabel, trapResult, onOpen, onScan, onPlan, onClose }: {
   traps: Trap[]; focusId?: string; statusLabel: (s: string) => string; targetLabel: (id: string) => string; trapResult: (t: Trap) => string;
-  onOpen: (t: Trap) => void; onScan: () => void; onClose: () => void;
+  onOpen: (t: Trap) => void; onScan: () => void; onPlan: () => void; onClose: () => void;
 }) {
   const left = traps.filter((t) => !t.inspection).length;
   return (
@@ -1187,6 +1215,7 @@ function ServiceSheet({ traps, focusId, statusLabel, targetLabel, trapResult, on
       )}
       <div className="mt-4 space-y-2">
         {left > 0 && <Button onClick={onScan} icon={<ScanLine size={20} strokeWidth={1.75} />}>Сканировать следующую</Button>}
+        <Button variant="secondary" onClick={onPlan} icon={<MapIcon size={18} strokeWidth={1.75} />}>{focusId ? 'Где она на плане' : 'План объекта'}</Button>
         <Button variant={left > 0 ? 'plain' : 'primary'} onClick={onClose}>{left > 0 ? 'Закрыть' : 'Готово'}</Button>
       </div>
     </Sheet>

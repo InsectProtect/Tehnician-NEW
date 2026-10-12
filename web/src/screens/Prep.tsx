@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Archive, Ban, Check, Keyboard, MapPin, Minus, PackagePlus, Plus, ScanLine, Trash2 } from 'lucide-react';
+import { Archive, Ban, Check, Keyboard, Map as MapIcon, MapPin, Minus, PackagePlus, Plus, ScanLine, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { plural, useConfig } from '../config';
 import { canScanQr, haptic, scanQr } from '../telegram';
@@ -9,6 +9,7 @@ import { GameButton } from '../components/game';
 import { Button, Chips, Field, Group, IconBadge, Input, Pill, Row, Sheet, cx, useToast } from '../components/ui';
 import { fmtTaskDate } from './Tasks';
 import { ManualSheet } from './VisitSheets';
+import { PlanSheet } from './Plan';
 
 /* ================================================================================================
  * «Подготовить ловушки» на главной (v58): выбираете заявку → сканируете этикетки станций и
@@ -110,6 +111,7 @@ function PrepSheet({ task, onClose, onBack }: { task: Task; onClose: () => void;
   const [action, setAction] = useState<PrepTrap | null>(null); // станция, по которой открыто меню «в запас / удалить»
   const [cancelOpen, setCancelOpen] = useState(false);
   const [pickStock, setPickStock] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
   // выбор запоминается: обычно готовят партию одинаковых станций
   const [target, setTarget] = useState('');
   const [kind, setKind] = useState('');
@@ -199,6 +201,10 @@ function PrepSheet({ task, onClose, onBack }: { task: Task; onClose: () => void;
     } finally {
       setBusy(false);
     }
+  }
+
+  if (planOpen && st) {
+    return <PlanSheet objectId={st.object.id} title={st.object.company_name} onClose={() => setPlanOpen(false)} />;
   }
 
   if (pickStock) {
@@ -368,6 +374,7 @@ function PrepSheet({ task, onClose, onBack }: { task: Task; onClose: () => void;
           </Button>
         )}
         <Button variant="plain" disabled={!st} onClick={() => setManual(true)} icon={<Keyboard size={18} strokeWidth={1.75} />}>Ввести код вручную</Button>
+        <Button variant="secondary" disabled={!st} onClick={() => { haptic.tap(); setPlanOpen(true); }} icon={<MapIcon size={18} strokeWidth={1.75} />}>План объекта — отметить станции</Button>
         <Button variant="secondary" onClick={onBack}>Другая заявка</Button>
         {prepared.length > 0 && (
           <Button variant="plain" onClick={() => { haptic.tap(); setCancelOpen(true); }} icon={<Ban size={18} strokeWidth={1.75} />}>

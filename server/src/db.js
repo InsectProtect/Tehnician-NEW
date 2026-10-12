@@ -504,6 +504,12 @@ const MIGRATIONS = [
   // v73: партии QR-этикеток (перепечатать те же коды) и замена QR на станции (старые коды — история)
   // v76: режим акта «Только станции» (NULL — ещё не спрашивали; 1 — обслуживание станций без обработки)
   'ALTER TABLE visits ADD COLUMN stations_only INTEGER',
+  // v78: план объекта (чертёж + рисунок) и точки станций на нём
+  "CREATE TABLE IF NOT EXISTS object_plans (id TEXT PRIMARY KEY, object_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', image TEXT, drawing TEXT NOT NULL DEFAULT '[]', w INTEGER NOT NULL DEFAULT 1000, h INTEGER NOT NULL DEFAULT 750, sort INTEGER NOT NULL DEFAULT 0, created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+  'CREATE INDEX IF NOT EXISTS object_plans_obj_idx ON object_plans (object_id)',
+  'ALTER TABLE traps ADD COLUMN plan_id TEXT',
+  'ALTER TABLE traps ADD COLUMN plan_x REAL',
+  'ALTER TABLE traps ADD COLUMN plan_y REAL',
   "CREATE TABLE IF NOT EXISTS qr_batches (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'new', codes TEXT NOT NULL, opts TEXT NOT NULL DEFAULT '{}', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)",
   "ALTER TABLE traps ADD COLUMN old_codes TEXT NOT NULL DEFAULT ''",
 ];
