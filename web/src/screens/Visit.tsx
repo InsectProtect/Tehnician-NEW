@@ -179,12 +179,14 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
   // Станции мониторинга: у юрлица спрашиваем, нужны ли они; у физлица — как раньше (дератизация или уже есть ловушки)
   const monitoringOn = visit.monitoring === true || (visit.monitoring === null && traps.some((t) => t.inspection));
   const q = Boolean(visit.quick); // быстрый акт: только адрес и вредители
+  const st = Boolean(visit.stations_only); // «Только станции» (v76): обход станций без обработки — короткий акт по журналу
+  const canStations = visit.is_company || traps.length > 0 || visit.procedure === 'Дератизация';
   const askMonitoring = !q && isOpen && visit.is_company && visit.monitoring === null && !traps.some((t) => t.inspection);
   const trapFocus = visit.is_company ? monitoringOn : visit.procedure === 'Дератизация' || traps.length > 0;
   // в быстром акте станции показываем только если на объекте они уже были — отдельный акт с ловушками соберётся в приложении
-  const showTraps = (!q || traps.length > 0) && (visit.is_company ? monitoringOn : trapFocus || isOpen);
+  const showTraps = st || ((!q || traps.length > 0) && (visit.is_company ? monitoringOn : trapFocus || isOpen));
   // юрлицо ответило «Да» на станции — кнопка «Сканировать QR» сразу под вопросом, а не внизу экрана
-  const scanTop = isOpen && !q && visit.is_company && visit.monitoring === true;
+  const scanTop = isOpen && (st || (!q && visit.is_company && visit.monitoring === true));
   const toInstall = traps.filter((t) => t.prepared).length;
   const targetLabel = (id: string) => cfg.stationTargets.find((x) => x.id === id)?.label ?? '';
   const baitLabel = (id: string) => cfg.baitLevels.find((x) => x.id === id)?.label ?? '';
@@ -246,10 +248,10 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
     }
   }
 
-  async function setQuick(on: boolean) {
+  async function setMode(mode: 'full' | 'quick' | 'stations') {
     haptic.tap();
-    setData((d) => (d ? { ...d, visit: { ...d.visit, quick: on } } : d));
-    try { await api.patchVisit(id, { quick: on }); load(); } catch (e) { toast((e as Error).message, 'error'); load(); }
+    setData((d) => (d ? { ...d, visit: { ...d.visit, quick: mode !== 'full', stations_only: mode === 'stations', suggest_stations: false, ...(mode === 'stations' ? { monitoring: true } : {}) } } : d));
+    try { await api.patchVisit(id, { mode }); load(); } catch (e) { toast((e as Error).message, 'error'); load(); }
   }
 
   async function setPoints(p: { point_cat?: string; point_zone?: string; rooms?: number | null; sotki?: number | string | null }) {
@@ -407,16 +409,33 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
 
       {isOpen && (
         <div className="mb-4">
-          <Segmented<'full' | 'quick'>
-            options={[{ id: 'full', label: 'Полный акт' }, { id: 'quick', label: '⚡ Быстрый акт' }]}
-            value={q ? 'quick' : 'full'}
-            onChange={(v) => setQuick(v === 'quick')}
+          <Segmented<'full' | 'quick' | 'stations'>
+            options={[{ id: 'full', label: canStations ? 'Полный' : 'Полный акт' }, { id: 'quick', label: canStations ? '⚡ Быстрый' : '⚡ Быстрый акт' },
+              ...(canStations ? [{ id: 'stations' as const, label: '🎯 Станции' }] : [])]}
+            value={st ? 'stations' : q ? 'quick' : 'full'}
+            onChange={setMode}
           />
-          {q && <div className="mt-2 px-1 text-[12.5px] leading-snug text-muted">Клиент получит одну страницу: адрес, тип вредителя, подписи и печать. Отметьте вредителей и категорию объекта — и завершайте.</div>}
+          {st && <div className="mt-2 px-1 text-[12.5px] leading-snug text-muted">Только обслуживание станций, без обработки. Проверьте станции — вредители, заселённость и журнал попадут в короткий акт сами.</div>}
+          {q && !st && <div className="mt-2 px-1 text-[12.5px] leading-snug text-muted">Клиент получит одну страницу: адрес, тип вредителя, подписи и печать. Отметьте вредителей и категорию объекта — и завершайте.</div>}
         </div>
       )}
       {isOpen && !cfg.isAdmin && <div className="mb-4"><MediaCard visitId={visit.id} compact /></div>}
-      {askMonitoring && (
+      {isOpen && visit.suggest_stations && !st && (
+        <div className="mb-4 rounded-[22px] bg-card p-5">
+          <div className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-muted">
+            <span className="h-1.5 w-1.5 rounded-full bg-accent" />Станции на объекте
+          </div>
+          <div className="mt-2 text-[17px] font-semibold leading-snug">
+            На объекте {traps.filter((t) => !t.prepared).length} {plural(traps.filter((t) => !t.prepared).length, ['станция', 'станции', 'станций'])}. Только обслуживание станций?
+          </div>
+          <div className="mt-1 text-[14px] leading-snug text-muted">Короткий акт по результатам обхода — без оценки помещения и данных для обработки.</div>
+          <div className="mt-4 grid grid-cols-2 gap-2.5">
+            <Button variant="secondary" className="h-[48px] text-[14px]" onClick={() => setMode(q ? 'quick' : 'full')}>Нет, будет обработка</Button>
+            <Button className="h-[48px] text-[15px]" onClick={() => setMode('stations')}>🎯 Да</Button>
+          </div>
+        </div>
+      )}
+      {askMonitoring && !visit.suggest_stations && (
         <div className="mb-4 rounded-[22px] bg-card p-5">
           <div className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-muted">
             <span className="h-1.5 w-1.5 rounded-full bg-accent" />Станции мониторинга
@@ -453,7 +472,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
             </div>
           )}
           {scanButtons}
-          {checked.length === 0 && (
+          {checked.length === 0 && !st && (
             <button onClick={() => setMonitoring(false)} className="mt-2 w-full px-1 py-1 text-center font-mono text-[11px] uppercase tracking-[0.12em] text-muted">
               ↩︎ Станции не нужны — выбрано по ошибке
             </button>
@@ -607,7 +626,23 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       )}
 
       {/* Оценка объекта: вредители, заселённость, подготовка */}
-      {(visit.needs_assessment || pestOptions.length > 0 || visit.procedure !== 'Дератизация') && (
+      {st && (
+        <>
+          <SectionTitle>Приманка / препарат</SectionTitle>
+          {isOpen ? (
+            <div className="rounded-2xl bg-card p-4">
+              <MultiChips options={[...new Set([...(visit.prev_products || []), ...(cfg.products?.[visit.procedure] ?? []), ...visit.products])]}
+                value={visit.products} onChange={(v) => { haptic.tap(); patchAct({ products: v }); }} />
+              <div className="mt-2 px-1 text-[12.5px] leading-snug text-muted">
+                {visit.prev_products?.length ? `💡 В прошлый раз на этом объекте: ${visit.prev_products.join(', ')}` : 'Отметьте, чем заправляли станции, — попадёт в акт.'}
+              </div>
+            </div>
+          ) : (
+            <Group><Row title={visit.products.join(', ') || '—'} subtitle="Приманка / препарат" /></Group>
+          )}
+        </>
+      )}
+      {!st && (visit.needs_assessment || pestOptions.length > 0 || visit.procedure !== 'Дератизация') && (
         <>
           <SectionTitle>Оценка объекта</SectionTitle>
           {isOpen ? (

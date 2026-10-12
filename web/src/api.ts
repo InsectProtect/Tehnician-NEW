@@ -70,7 +70,7 @@ export const api = {
   setOffice: (chat: OfficeChat) => request<{ office: OfficeChat }>('POST', '/api/admin/office', chat),
   patchVisit: (id: string, data: {
     infestation?: string; preparation?: string; pests?: string[]; area?: string; location?: string; products?: string[];
-    client_rep?: string; client_rep_function?: string; locality?: string; premises?: string[]; reentry?: string; address?: string; point_cat?: string; point_zone?: string; quick?: boolean; rooms?: number | null; sotki?: number | string | null;
+    client_rep?: string; client_rep_function?: string; locality?: string; premises?: string[]; reentry?: string; address?: string; point_cat?: string; point_zone?: string; quick?: boolean; mode?: 'full' | 'quick' | 'stations'; rooms?: number | null; sotki?: number | string | null;
   }) =>
     request<{ ok: true; recommendations: RecBlock[]; reentry: string; reentry_default: string }>('PATCH', `/api/visits/${id}`, data),
   addObservation: (visitId: string, data: { category: string; comment: string; photos: string[] }) =>
@@ -186,7 +186,7 @@ export const api = {
   cancelledCount: () => request<{ week: number; month: number }>('GET', '/api/admin/cancelled/count'),
   resetCancelled: (period: 'week' | 'month') => request<{ ok: true; count: number }>('POST', '/api/admin/cancelled/reset', { period }),
   setMonitoring: (visitId: string, enabled: boolean) => request<{ ok: true }>('POST', `/api/visits/${visitId}/monitoring`, { enabled }),
-  finish: (visitId: string, comment: string, extra: { docs?: { proces: boolean; anexa: boolean; obs?: boolean; traps?: boolean }; signature?: string; payment?: Payment; pay_amount?: string; pay_note?: string } = {}) =>
+  finish: (visitId: string, comment: string, extra: { docs?: { proces: boolean; anexa: boolean; obs?: boolean; traps?: boolean }; signature?: string; payment?: Payment; pay_amount?: string; pay_note?: string; skip_reason?: string } = {}) =>
     request<{ ok: true; report_url: string; amo_error: string | null; office_sent: boolean; office_error: string | null; office_none?: boolean; reward?: Reward | null }>('POST', `/api/visits/${visitId}/finish`, { comment, ...extra }),
   stamp: () => request<{ mode: 'default' | 'custom' | 'off'; image: string | null }>('GET', '/api/admin/stamp'),
   setStamp: (data: { mode: 'default' | 'custom' | 'off'; image?: string }) => request<{ ok: true }>('PUT', '/api/admin/stamp', data),

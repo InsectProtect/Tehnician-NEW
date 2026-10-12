@@ -227,6 +227,7 @@ export type Visit = {
   team?: { id: string; name: string }[]; points_total?: number | null; sotki?: number | null;
   geo?: { km: number; lat: number; lon: number; at: string; zone: string; map: string } | null; zone_src?: string;
   quick?: boolean;
+  stations_only?: boolean | null; suggest_stations?: boolean; prev_products?: string[];
   premises: string[];
   reentry: string;
   reentry_custom: boolean;

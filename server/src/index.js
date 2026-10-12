@@ -293,6 +293,30 @@ const recArgs = (v) => ({ procedure: v.procedure, pests: visitPests(v), infestat
 const visitRecs = (v) => buildRecommendations(recArgs(v));
 
 const visitProducts = (v) => { try { return JSON.parse(v.products || '[]'); } catch { return []; } };
+/** Препараты прошлого выезда на этот объект (для «Только станции» — обычно та же приманка). */
+async function prevProducts(v) {
+  const rows = await db.query("SELECT products FROM visits WHERE object_id = $1 AND id <> $2 AND status = 'done' AND products IS NOT NULL AND products <> '[]' ORDER BY finished_at DESC LIMIT 1", [v.object_id, v.id]);
+  return rows.length ? visitProducts(rows[0]) : [];
+}
+/** «Только станции»: вредители и заселённость — из результатов обхода. */
+function stationsAuto(v, rows) {
+  const checked = rows.filter((r) => r.status);
+  const known = new Set(PESTS_BY_PROCEDURE[v.procedure] || []);
+  const pests = new Set();
+  for (const r of checked) if (r.pest && known.has(r.pest)) pests.add(r.pest);
+  if (!pests.size) {
+    for (const r of rows) {
+      if (r.target === 'rodents' && known.has('Грызуны')) pests.add('Грызуны');
+      if (r.target === 'crawling' && known.has('Другие насекомые')) pests.add('Другие насекомые');
+      if (r.target === 'flying' && known.has('Летающие насекомые')) pests.add('Летающие насекомые');
+    }
+    if (!pests.size && known.has('Грызуны')) pests.add('Грызуны');
+  }
+  const act = checked.filter((r) => r.status === 'activity').length;
+  const share = checked.length ? act / checked.length : 0;
+  const infestation = act === 0 ? 'none' : share <= 0.15 ? 'low' : share <= 0.4 ? 'medium' : 'high';
+  return { pests: [...pests], infestation };
+}
 
 /** Сквозной номер акта присваивается при первом завершении. */
 async function ensureActSeq(v) {
@@ -3244,6 +3268,10 @@ route('GET', '/api/visits/:id', async ({ params, user }) => {
       points_total: v.points_total == null ? null : Number(v.points_total),
       points_manual: Boolean(Number(v.points_manual)),
       quick: Number(v.quick) === 1,
+      stations_only: v.stations_only == null ? null : Number(v.stations_only) === 1,
+      // предложить «Только станции»: на объекте уже есть станции, режим ещё не выбирали
+      suggest_stations: v.status === 'open' && v.stations_only == null && rows.filter((r) => !Number(r.prepared)).length > 0,
+      prev_products: v.status === 'open' && Number(v.stations_only) === 1 ? await prevProducts(v) : [],
       annul_pending: Boolean(Number(v.annul_req)),
       annul_reason: v.annul_reason || '',
       can_annul: v.status === 'done' && (user.isAdmin || (v.tech_tg_id === user.id && !Number(v.annul_req))),
@@ -3298,8 +3326,22 @@ route('PATCH', '/api/visits/:id', async ({ params, body, user }) => {
     const ids = body.premises.map((x) => str(x, 30)).filter((x) => PREMISES.some((p) => p.id === x));
     await db.query('UPDATE visits SET premises = $1 WHERE id = $2', [JSON.stringify([...new Set(ids)]), v.id]);
   }
+  // v76: режим акта — full | quick | stations («Только станции»: короткий акт по результатам обхода)
+  if (body.mode !== undefined) {
+    const mode = str(body.mode, 10);
+    must(['full', 'quick', 'stations'].includes(mode), 400, 'Неизвестный режим акта');
+    await db.query('UPDATE visits SET quick = $1, stations_only = $2 WHERE id = $3', [mode === 'full' ? 0 : 1, mode === 'stations' ? 1 : 0, v.id]);
+    if (mode === 'stations') {
+      await db.query("UPDATE visits SET monitoring = 1, infestation = COALESCE(NULLIF(infestation, ''), 'medium'), preparation = COALESCE(NULLIF(preparation, ''), 'done') WHERE id = $1", [v.id]);
+      // препарат — как в прошлый раз на этом объекте
+      if (!visitProducts(v).length) {
+        const prev = await prevProducts(v);
+        if (prev.length) await db.query('UPDATE visits SET products = $1 WHERE id = $2', [JSON.stringify(prev), v.id]);
+      }
+    }
+  }
   if (body.quick !== undefined) {
-    await db.query('UPDATE visits SET quick = $1 WHERE id = $2', [body.quick ? 1 : 0, v.id]);
+    await db.query('UPDATE visits SET quick = $1, stations_only = 0 WHERE id = $2', [body.quick ? 1 : 0, v.id]);
     // быстрый акт: заселённость «средняя» (стандартная) и «клиент подготовился», если не указано
     if (body.quick) await db.query("UPDATE visits SET infestation = COALESCE(NULLIF(infestation, ''), 'medium'), preparation = COALESCE(NULLIF(preparation, ''), 'done') WHERE id = $1", [v.id]);
   }
@@ -3943,6 +3985,25 @@ route('POST', '/api/visits/:id/finish', async ({ params, body, req, user }) => {
   const v = await getWorkVisit(params.id, user);
   must(v.status === 'open', 409, 'Выезд уже завершён');
   const quick = Number(v.quick) === 1;
+  const stationsOnly = quick && Number(v.stations_only) === 1;
+  let skipNote = '';
+  if (stationsOnly) {
+    // «Только станции»: вредители, заселённость — по обходу; непроверенные станции — с причиной
+    const srows = (await visitRows(v)).filter((r) => !Number(r.prepared));
+    const done = srows.filter((r) => r.status);
+    must(done.length, 400, 'Проверьте хотя бы одну станцию — это акт обслуживания станций');
+    const left = srows.filter((r) => !r.status);
+    const reason = str(body.skip_reason, 300);
+    must(!left.length || reason.length >= 3, 400, `Не проверены станции № ${left.map((r) => r.number).join(', ')} — укажите причину`);
+    if (left.length) skipNote = `Stații neverificate nr. ${left.map((r) => r.number).join(', ')}: ${reason}`;
+    const auto = stationsAuto(v, srows);
+    if (!visitPests(v).length) { v.pests = JSON.stringify(auto.pests); await db.query('UPDATE visits SET pests = $1 WHERE id = $2', [v.pests, v.id]); }
+    await db.query("UPDATE visits SET infestation = $1, preparation = COALESCE(NULLIF(preparation, ''), 'done'), monitoring = 1 WHERE id = $2", [auto.infestation, v.id]);
+    if (!visitProducts(v).length) {
+      const prev = await prevProducts(v);
+      if (prev.length) { v.products = JSON.stringify(prev); await db.query('UPDATE visits SET products = $1 WHERE id = $2', [v.products, v.id]); }
+    }
+  }
   if (quick) {
     // быстрый акт: только адрес и вредители
     must(visitPests(v).length || !(PESTS_BY_PROCEDURE[v.procedure] || []).length, 400, 'Отметьте вредителей');
@@ -3960,7 +4021,7 @@ route('POST', '/api/visits/:id/finish', async ({ params, body, req, user }) => {
   must(pd.cat, 400, 'Выберите категорию объекта (баллы): квартира, дом, поликлиника…');
   const pcat = (await pointsConfig()).cats.find((c) => c.id === pd.cat);
   must(pcat, 400, 'Категория объекта удалена администратором — выберите другую');
-  const comment = str(body.comment, 2000);
+  const comment = [str(body.comment, 2000), skipNote].filter(Boolean).join('\n');
   const pay = parsePayment(body, v);
   const xpBefore = await xpTotal(user.id);
   const finishedAt = now();
@@ -3977,7 +4038,7 @@ route('POST', '/api/visits/:id/finish', async ({ params, body, req, user }) => {
   }
   // какие документы отправлять в офис и подпись клиента (рисуется в приложении)
   const docs = quick
-    ? { proces: true, anexa: false, obs: body.docs?.obs !== false, traps: body.docs?.traps !== false }
+    ? { proces: true, anexa: false, obs: body.docs?.obs !== false, traps: stationsOnly || body.docs?.traps !== false }
     : { proces: body.docs?.proces !== false, anexa: body.docs?.anexa !== false };
   const sign = String(body.signature || '');
   must(!sign || (/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(sign) && sign.length < 600000), 400, 'Некорректная подпись');

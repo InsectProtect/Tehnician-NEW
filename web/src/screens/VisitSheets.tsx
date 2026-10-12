@@ -304,13 +304,18 @@ export function FinishSheet({ visitId, traps, visit, observations, fromLead, onC
   const unchecked = traps.filter((t) => !t.inspection);
   const checkedTraps = traps.filter((t) => t.inspection);
   const pestOptions = cfg.pestsByProcedure?.[visit.procedure] ?? [];
-  const missingAssessment = visit.needs_assessment && (!visit.infestation || !visit.preparation || (pestOptions.length > 0 && !visit.pests.length));
+  const st = Boolean(visit.stations_only); // «Только станции»: вредители и заселённость — по обходу
+  const [skip, setSkip] = useState('');
+  const missingAssessment = !st && visit.needs_assessment && (!visit.infestation || !visit.preparation || (pestOptions.length > 0 && !visit.pests.length));
   const photoCount = observations.reduce((n, o) => n + o.photos.length, 0);
-  const softWarnings = [
-    !visit.products.length && 'не указаны препараты',
-    !visit.area && 'не указана площадь',
-    !visit.client_rep && 'не указан представитель заказчика',
-  ].filter(Boolean) as string[];
+  const softWarnings = (st
+    ? [!visit.products.length && 'не указана приманка / препарат']
+    : [
+      !visit.products.length && 'не указаны препараты',
+      !visit.area && 'не указана площадь',
+      !visit.client_rep && 'не указан представитель заказчика',
+    ]).filter(Boolean) as string[];
+  const needSkip = st && unchecked.length > 0 && skip.trim().length < 3;
 
   async function submit() {
     if (!pay.payment) {
@@ -319,9 +324,11 @@ export function FinishSheet({ visitId, traps, visit, observations, fromLead, onC
       return;
     }
     if (pay.payment === 'cash' && !(Number(pay.amount.replace(',', '.').replace(/\s/g, '')) > 0)) { haptic.error(); toast('Укажите, сколько наличных получено', 'error'); return; }
+    if (st && !checkedTraps.length) { haptic.error(); toast('Проверьте хотя бы одну станцию', 'error'); return; }
+    if (needSkip) { haptic.error(); toast('Укажите, почему не проверены станции', 'error'); return; }
     setBusy(true);
     try {
-      const r = await api.finish(visitId, comment, { docs, signature: signature || undefined, payment: pay.payment, pay_amount: pay.amount, pay_note: pay.note.trim() });
+      const r = await api.finish(visitId, comment, { docs, signature: signature || undefined, payment: pay.payment, pay_amount: pay.amount, pay_note: pay.note.trim(), skip_reason: st ? skip.trim() : undefined });
       haptic.success();
       if (r.office_none) toast('Выезд завершён · документы в офис не отправлялись');
       else if (r.office_error) toast(r.office_error, 'error');
@@ -358,10 +365,29 @@ export function FinishSheet({ visitId, traps, visit, observations, fromLead, onC
       {softWarnings.length > 0 && !missingAssessment && (
         <div className="mb-5 flex gap-3 rounded-2xl bg-[#FF9500]/12 p-4 text-[15px]">
           <AlertTriangle size={20} strokeWidth={1.75} className="mt-0.5 shrink-0 text-[#C93400] dark:text-[#FF9F0A]" />
-          <div>В акте {softWarnings.join(', ')}. <span className="text-muted">Заполните блок «Данные для акта» или завершите так.</span></div>
+          <div>В акте {softWarnings.join(', ')}. <span className="text-muted">{st ? 'Отметьте её в блоке «Приманка» или завершите так.' : 'Заполните блок «Данные для акта» или завершите так.'}</span></div>
         </div>
       )}
-      {unchecked.length > 0 && (
+      {st && (
+        <div className="mb-5 rounded-2xl bg-accent/[0.08] px-4 py-3 text-[14px] leading-snug">
+          🎯 <b>Только станции</b>: проверено {checkedTraps.length} из {traps.length}
+          {checkedTraps.filter((t) => t.inspection?.status === 'activity').length > 0 && <>, активность — №{checkedTraps.filter((t) => t.inspection?.status === 'activity').map((t) => t.number).join(', №')}</>}.
+          <span className="text-muted"> Вредители и степень заселённости в акт подставятся по результатам обхода, журнал станций приложится сам.</span>
+        </div>
+      )}
+      {st && unchecked.length > 0 && (
+        <div className="mb-5">
+          <Field label={`Почему не проверены № ${unchecked.map((t) => t.number).join(', ')}`}>
+            <Input placeholder="Например: нет доступа в подвал" value={skip} onChange={(e) => setSkip(e.target.value)} />
+          </Field>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {['Нет доступа', 'Помещение закрыто', 'Станция убрана клиентом', 'Не нашёл'].map((x) => (
+              <button key={x} onClick={() => { haptic.tap(); setSkip(x); }} className="rounded-full bg-fill px-3 py-1.5 text-[13px]">{x}</button>
+            ))}
+          </div>
+        </div>
+      )}
+      {!st && unchecked.length > 0 && (
         <div className="mb-5 flex gap-3 rounded-2xl bg-[#FF9500]/12 p-4 text-[15px]">
           <AlertTriangle size={20} strokeWidth={1.75} className="mt-0.5 shrink-0 text-[#C93400] dark:text-[#FF9F0A]" />
           <div>
@@ -378,7 +404,7 @@ export function FinishSheet({ visitId, traps, visit, observations, fromLead, onC
       <Field label="Заключение и рекомендации">
         <TextArea rows={4} placeholder="Например: рекомендована заделка технологических отверстий" value={comment} onChange={(e) => setComment(e.target.value)} />
       </Field>
-      {visit.quick && (
+      {visit.quick && !st && (
         <div className="mt-4 space-y-3">
           <div className="rounded-2xl bg-accent/[0.08] px-4 py-3 text-[13.5px] leading-snug">
             ⚡ Быстрый акт: клиент и офис получат страницу с адресом, вредителями, подписью и печатью.

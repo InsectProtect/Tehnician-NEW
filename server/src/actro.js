@@ -155,8 +155,24 @@ export function actRoPdf({ visit, client = {}, company, products = [], rows = []
       ['Data și ora', dmyhm(visit.finished_at || visit.started_at)],
       ['Specialist', visit.tech_name],
     ];
+    // v76: «Только станции» — акт обслуживания станций по результатам обхода
+    const st = Number(visit.stations_only) === 1;
+    if (st) {
+      info[2] = ['Serviciu', `Deservirea stațiilor de monitorizare (${roProcedure(visit.procedure).toLowerCase()})`];
+      const live = rows.filter((r) => !Number(r.prepared));
+      const ok = live.filter((r) => r.status);
+      const act = ok.filter((r) => r.status === 'activity');
+      const bad = ok.filter((r) => ['damaged', 'missing'].includes(r.status));
+      const bait = ok.filter((r) => Number(r.bait_replaced));
+      info.splice(4, 0,
+        ['Stații verificate', `${ok.length} din ${live.length}`],
+        ['Activitate depistată', act.length ? `${act.length} — nr. ${act.map((r) => r.number).join(', ')}` : 'nu a fost depistată'],
+      );
+      if (bad.length) info.splice(6, 0, ['Deteriorate / lipsă', `nr. ${bad.map((r) => r.number).join(', ')}`]);
+      info.push(['Produse utilizate', products.length ? products.join(', ') + (bait.length ? ` · momeală înlocuită în ${bait.length} stații` : '') : (bait.length ? `momeală înlocuită în ${bait.length} stații` : '—')]);
+    }
     const re = reentryOf(visit.reentry)?.ro;
-    if (re) info.push(['Nu se intră în încăpere', re]);
+    if (re && !st) info.push(['Nu se intră în încăpere', re]);
     if (visit.comment) info.push(['Mențiuni', visit.comment]);
     table([{ w: 150, bold: true }, { w: CW - 150 }], info, { size: 9, pad: 8 });
     d.y += 16;
