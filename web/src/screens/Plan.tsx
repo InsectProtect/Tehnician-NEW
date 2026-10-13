@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Camera, Check, DoorOpen, Warehouse, Eraser, ImagePlus, Layers, MapPin, Minus, Move, Pencil, Plus, Square, Trash2, Type, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { Camera, Check, DoorOpen, Hand, Warehouse, Eraser, ImagePlus, Layers, MapPin, Minus, Move, Pencil, Plus, Square, Trash2, Type, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { api } from '../api';
 import { useConfig } from '../config';
 import { compressImage } from '../image';
@@ -15,7 +15,7 @@ import { Button, Input, Spinner, cx, useToast } from '../components/ui';
  * ================================================================================================ */
 
 type Mode = 'view' | 'place' | 'draw';
-type Tool = 'move' | 'rect' | 'line' | 'door' | 'gate' | 'text' | 'spot' | 'erase';
+type Tool = 'pan' | 'move' | 'rect' | 'line' | 'door' | 'gate' | 'text' | 'spot' | 'erase';
 /** Что ставим заранее (без QR): назначение + устройство. */
 const SPOT_TYPES = [
   { id: 'rod', target: 'rodents', kind: 'Родентицидная станция', label: '● Грызуны · яд' },
@@ -41,7 +41,8 @@ const LEGEND_DEVICES = ['Родентицидная станция', 'Клеев
 
 const STATUS_FILL: Record<string, string> = { ok: '#34C759', replaced: '#34C759', activity: '#FF3B30', damaged: '#1D1D1F', missing: '#1D1D1F', no_access: '#FF9500' };
 const R0 = 28; // радиус точки станции в единицах плана (× размер значков плана)
-const snap = (v: number) => Math.round(v / 10) * 10;
+let SNAP = 10; // шаг сетки: при увеличении — мельче, чтобы рисовать детали
+const snap = (v: number) => Math.round(v / SNAP) * SNAP;
 
 /** Значок станции: грызуны — круг, ползающие — ромб, летающие — треугольник. */
 function Marker({ t, x, y, fill: fill0, ring, dim, onClick, ms = 1 }: { t: PlanTrap; x: number; y: number; fill: string; ring?: boolean; dim?: boolean; onClick?: () => void; ms?: number }) {
@@ -241,6 +242,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
   }, [mode, d]); // eslint-disable-line react-hooks/exhaustive-deps
   const plan: ObjectPlan | undefined = d?.plans.find((p) => p.id === planId);
   const ms = msLocal ?? plan?.mscale ?? 0.8;
+  SNAP = zoom >= 3 ? 2 : zoom >= 2 ? 5 : 10;
   // план вписывается в экран целиком (и на телефоне, и на большом мониторе); зум — от этого размера
   const baseW = plan && box.w > 0 ? Math.min(box.w, box.h > 120 ? (box.h * 1000) / plan.h : box.w) : 0;
   const msSave = useRef<number | undefined>(undefined);
@@ -250,10 +252,14 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     setMsLocal(v); haptic.tap();
     window.clearTimeout(msSave.current);
     msSave.current = window.setTimeout(() => {
-      api.savePlan(plan.id, { mscale: v }).then((r) => { setD((x) => (x ? { ...x, plans: x.plans.map((p) => (p.id === plan.id ? r.plan : p)) } : x)); setMsLocal(null); }).catch(() => {});
+      // сохраняем только размер — рисунок на экране (в т.ч. несохранённый) не трогаем
+      api.savePlan(plan.id, { mscale: v }).then((r) => { setD((x) => (x ? { ...x, plans: x.plans.map((p) => (p.id === plan.id ? { ...p, mscale: r.plan.mscale } : p)) } : x)); setMsLocal(null); }).catch(() => {});
     }, 600);
   }
-  useEffect(() => { setShapes(plan?.drawing || []); setHist([]); setDirty(false); }, [plan?.id, plan?.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dirtyRef = useRef(false);
+  dirtyRef.current = dirty;
+  useEffect(() => { if (dirtyRef.current) return; setShapes(plan?.drawing || []); setHist([]); setDirty(false); }, [plan?.id, plan?.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setShapes(plan?.drawing || []); setHist([]); setDirty(false); }, [plan?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inspOf = (id: string) => visitTraps?.find((t) => t.id === id);
   const fillOf = (t: PlanTrap) => {
@@ -321,7 +327,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
   // ---------- рисование ----------
   const commit = (next: PlanShape[]) => { setHist((h) => [...h.slice(-40), shapes]); setShapes(next); setDirty(true); };
   function down(e: RPointerEvent<SVGSVGElement>) {
-    if (mode !== 'draw' || tool === 'erase' || tool === 'move') return;
+    if (mode !== 'draw' || tool === 'erase' || tool === 'move' || tool === 'pan') return;
     const p = pt(e);
     if (tool === 'text') { setAsk({ kind: 'text', x: snap(p.x), y: snap(p.y) }); setAskText(''); return; }
     if (tool === 'spot') {
@@ -427,6 +433,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
   const cardTrap = traps.find((t) => t.id === card);
   const selTrap = traps.find((t) => t.id === sel);
   const tools: { id: Tool; icon: JSX.Element; label: string }[] = [
+    { id: 'pan', icon: <Hand size={18} />, label: 'Листать' },
     { id: 'move', icon: <Move size={18} />, label: 'Двигать' },
     { id: 'rect', icon: <Square size={18} />, label: 'Комната' },
     { id: 'line', icon: <Minus size={18} className="-rotate-45" />, label: 'Стена' },
@@ -480,7 +487,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
         {plan && (
           <>
             <button onClick={() => setZoom((z) => Math.max(1, z - 0.5))} aria-label="Меньше" className="flex h-10 w-10 items-center justify-center rounded-full bg-card ring-1 ring-inset ring-line"><ZoomOut size={18} /></button>
-            <button onClick={() => setZoom((z) => Math.min(4, z + 0.5))} aria-label="Больше" className="flex h-10 w-10 items-center justify-center rounded-full bg-card ring-1 ring-inset ring-line"><ZoomIn size={18} /></button>
+            <button onClick={() => setZoom((z) => Math.min(6, z + 0.5))} aria-label="Больше" className="flex h-10 w-10 items-center justify-center rounded-full bg-card ring-1 ring-inset ring-line"><ZoomIn size={18} /></button>
           </>
         )}
       </div>
@@ -519,10 +526,10 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
               <button onClick={() => changeMs(0.1)} aria-label="Больше значки" className="flex h-8 w-8 items-center justify-center rounded-full bg-card ring-1 ring-inset ring-line"><Plus size={15} /></button>
             </div>
           )}
-          <div ref={canvasRef} className="relative min-h-0 flex-1 overflow-auto px-3" style={{ touchAction: mode === 'draw' ? 'none' : 'auto' }}>
+          <div ref={canvasRef} onWheel={(e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom((z) => Math.max(1, Math.min(6, z + (e.deltaY < 0 ? 0.5 : -0.5)))); } }} className="relative min-h-0 flex-1 overflow-auto px-3" style={{ touchAction: mode === 'draw' && tool !== 'pan' ? 'none' : 'auto' }}>
             {plan && (
               <div style={{ width: baseW ? `${Math.round(baseW * zoom)}px` : `${zoom * 100}%` }} className="mx-auto overflow-hidden rounded-2xl bg-white ring-1 ring-line">
-                <svg ref={svgRef} viewBox={`0 0 1000 ${plan.h}`} className="block w-full select-none" style={{ touchAction: mode === 'draw' ? 'none' : 'manipulation' }}
+                <svg ref={svgRef} viewBox={`0 0 1000 ${plan.h}`} className="block w-full select-none" style={{ touchAction: mode === 'draw' && tool !== 'pan' ? 'none' : 'manipulation' }}
                   onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
                   onClick={(e) => {
                     if (mode === 'place' && sel) { const p = pt(e); place(sel, Math.round(p.x), Math.round(p.y)); }
@@ -637,7 +644,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                     </div>
                   )}
                   <div className="mt-1.5 px-1 text-[12px] text-muted">
-                    {tool === 'move' ? 'Потяните комнату, стену, дверь, подпись или точку станции — она переедет' : tool === 'spot' ? 'Тапайте, где будут станции — номера идут по порядку. На объекте отсканируете QR и тапнете точку' : tool === 'gate' ? 'Проведите по ширине ворот' : tool === 'rect' ? 'Проведите пальцем по диагонали — получится комната' : tool === 'line' ? 'Проведите пальцем — стена (ровняется сама)' : tool === 'door' ? 'Проведите по ширине проёма' : tool === 'text' ? 'Тапните, где поставить подпись' : 'Тапните по фигуре, чтобы удалить'}
+                    {tool === 'pan' ? 'Увеличьте план лупой «+» вверху и листайте пальцем; потом выберите инструмент и рисуйте — сетка станет мельче' : tool === 'move' ? 'Потяните комнату, стену, дверь, подпись или точку станции — она переедет' : tool === 'spot' ? 'Тапайте, где будут станции — номера идут по порядку. На объекте отсканируете QR и тапнете точку' : tool === 'gate' ? 'Проведите по ширине ворот' : tool === 'rect' ? 'Проведите пальцем по диагонали — получится комната' : tool === 'line' ? 'Проведите пальцем — стена (ровняется сама)' : tool === 'door' ? 'Проведите по ширине проёма' : tool === 'text' ? 'Тапните, где поставить подпись' : 'Тапните по фигуре, чтобы удалить'}
                   </div>
                   <div className="mt-2 grid grid-cols-[1fr_auto_auto] gap-2">
                     <Button className="h-[44px] text-[14px]" loading={busy} disabled={!dirty} onClick={() => saveDrawing('place')}>Сохранить → станции</Button>
