@@ -159,7 +159,7 @@ export type PlanShape =
   | { t: 'line' | 'door' | 'gate'; x1: number; y1: number; x2: number; y2: number }
   | { t: 'spot'; id: string; x: number; y: number; target: string; kind: string; n: number }
   | { t: 'text'; x: number; y: number; s: string };
-export interface ObjectPlan { id: string; object_id: string; title: string; w: number; h: number; image_url: string | null; drawing: PlanShape[]; updated_at: string }
+export interface ObjectPlan { id: string; object_id: string; title: string; w: number; h: number; mscale?: number; image_url: string | null; drawing: PlanShape[]; updated_at: string }
 export interface PlanTrap { id: string; code: string; number: number; kind: string; target: string; location: string; prepared: boolean; plan_id: string | null; plan_x: number | null; plan_y: number | null }
 export interface PlansRes { object?: { id: string; company_name: string; address: string }; plans: ObjectPlan[]; traps: PlanTrap[]; plan?: ObjectPlan }
 

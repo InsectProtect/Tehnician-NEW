@@ -15,7 +15,7 @@ import { Button, Input, Spinner, cx, useToast } from '../components/ui';
  * ================================================================================================ */
 
 type Mode = 'view' | 'place' | 'draw';
-type Tool = 'rect' | 'line' | 'door' | 'gate' | 'text' | 'spot' | 'erase';
+type Tool = 'move' | 'rect' | 'line' | 'door' | 'gate' | 'text' | 'spot' | 'erase';
 /** Что ставим заранее (без QR): назначение + устройство. */
 const SPOT_TYPES = [
   { id: 'rod', target: 'rodents', kind: 'Родентицидная станция', label: '● Грызуны · яд' },
@@ -40,17 +40,18 @@ export function deviceStyle(kind: string): { color: string; tag: string; name: s
 const LEGEND_DEVICES = ['Родентицидная станция', 'Клеевая ловушка', 'Эко-станция (картон, клей)', 'Феромонная ловушка', 'Инсектицидная лампа'];
 
 const STATUS_FILL: Record<string, string> = { ok: '#34C759', replaced: '#34C759', activity: '#FF3B30', damaged: '#1D1D1F', missing: '#1D1D1F', no_access: '#FF9500' };
-const R = 28; // радиус точки станции в единицах плана
+const R0 = 28; // радиус точки станции в единицах плана (× размер значков плана)
 const snap = (v: number) => Math.round(v / 10) * 10;
 
 /** Значок станции: грызуны — круг, ползающие — ромб, летающие — треугольник. */
-function Marker({ t, x, y, fill: fill0, ring, dim, onClick }: { t: PlanTrap; x: number; y: number; fill: string; ring?: boolean; dim?: boolean; onClick?: () => void }) {
+function Marker({ t, x, y, fill: fill0, ring, dim, onClick, ms = 1 }: { t: PlanTrap; x: number; y: number; fill: string; ring?: boolean; dim?: boolean; onClick?: () => void; ms?: number }) {
+  const R = R0 * ms;
   const dev = deviceStyle(t.kind);
   let fill = fill0;
   // без результатов проверки (подготовка, план) — заливка цветом устройства
   if (fill === '#0066CC') fill = dev.color;
   const txt = fill === '#E5E5EA' || fill === '#FFFFFF' ? '#1D1D1F' : '#FFFFFF';
-  const sw = 6;
+  const sw = 6 * ms;
   const shape = isLamp(t.kind)
     ? <g><circle cx={x} cy={y} r={R * 1.05} fill={fill} stroke={dev.color} strokeWidth={sw} />{[0, 45, 90, 135, 180, 225, 270, 315].map((a) => <line key={a} x1={x + Math.cos((a * Math.PI) / 180) * R * 1.25} y1={y + Math.sin((a * Math.PI) / 180) * R * 1.25} x2={x + Math.cos((a * Math.PI) / 180) * R * 1.65} y2={y + Math.sin((a * Math.PI) / 180) * R * 1.65} stroke={fill === '#FFFFFF' || fill === '#E5E5EA' ? '#8E8E93' : fill} strokeWidth={5} strokeLinecap="round" />)}</g>
     : t.target === 'crawling'
@@ -63,23 +64,24 @@ function Marker({ t, x, y, fill: fill0, ring, dim, onClick }: { t: PlanTrap; x: 
       {ring && <circle cx={x} cy={y} r={R * 2} fill="#0066CC" opacity={0.18}><animate attributeName="r" values={`${R * 1.4};${R * 2.3};${R * 1.4}`} dur="1.6s" repeatCount="indefinite" /></circle>}
       {ring && <circle cx={x} cy={y} r={R * 1.45} fill="none" stroke="#0066CC" strokeWidth={5} />}
       {shape}
-      <text x={x} y={y + 9.5} textAnchor="middle" fontSize={27} fontWeight={800} fill={txt} fontFamily="-apple-system,system-ui,sans-serif" style={{ pointerEvents: 'none' }}>{t.number || '•'}</text>
+      <text x={x} y={y + 9.5 * ms} textAnchor="middle" fontSize={27 * ms} fontWeight={800} fill={txt} fontFamily="-apple-system,system-ui,sans-serif" style={{ pointerEvents: 'none' }}>{t.number || '•'}</text>
       {dev.tag && (
         <g style={{ pointerEvents: 'none' }}>
-          <rect x={x - (dev.tag.length * 12.5 + 16) / 2} y={y + R + 7} width={dev.tag.length * 12.5 + 16} height={30} rx={15} fill={dev.color} stroke="#fff" strokeWidth={3} />
-          <text x={x} y={y + R + 29} textAnchor="middle" fontSize={22} fontWeight={700} fill="#fff" fontFamily="-apple-system,system-ui,sans-serif">{dev.tag}</text>
+          <rect x={x - ((dev.tag.length * 12.5 + 16) * ms) / 2} y={y + R + 7 * ms} width={(dev.tag.length * 12.5 + 16) * ms} height={30 * ms} rx={15 * ms} fill={dev.color} stroke="#fff" strokeWidth={3 * ms} />
+          <text x={x} y={y + R + 29 * ms} textAnchor="middle" fontSize={22 * ms} fontWeight={700} fill="#fff" fontFamily="-apple-system,system-ui,sans-serif">{dev.tag}</text>
         </g>
       )}
     </g>
   );
 }
 
-function Drawing({ shapes, h, onErase }: { shapes: PlanShape[]; h: number; onErase?: (i: number) => void }) {
+function Drawing({ shapes, h, onErase, onDown, ms = 1 }: { shapes: PlanShape[]; h: number; onErase?: (i: number) => void; onDown?: (i: number, e: RPointerEvent<SVGElement>) => void; ms?: number }) {
+  const R = R0 * ms;
   return (
     <g>
       {shapes.map((s, i) => {
         const click = onErase ? () => onErase(i) : undefined;
-        const hit = onErase ? { style: { cursor: 'pointer' } } : {};
+        const hit = onErase ? { style: { cursor: 'pointer' } } : onDown ? { style: { cursor: 'move' }, onPointerDown: (e: RPointerEvent<SVGElement>) => onDown(i, e) } : {};
         if (s.t === 'rect') {
           return (
             <g key={i} onClick={click} {...hit}>
@@ -93,8 +95,8 @@ function Drawing({ shapes, h, onErase }: { shapes: PlanShape[]; h: number; onEra
           const pt0 = { id: s.id, code: '', number: s.n, kind: s.kind, target: s.target, location: '', prepared: false, plan_id: null, plan_x: s.x, plan_y: s.y };
           return (
             <g key={i} onClick={click} {...hit}>
-              <circle cx={s.x} cy={s.y} r={R * 1.25} fill="#FFFFFF" fillOpacity={0.85} stroke="#0066CC" strokeWidth={4} strokeDasharray="7 6" />
-              <g opacity={0.55}><Marker t={pt0} x={s.x} y={s.y} fill="#8E8E93" /></g>
+              <circle cx={s.x} cy={s.y} r={R * 1.25} fill="#FFFFFF" fillOpacity={0.85} stroke="#0066CC" strokeWidth={4 * ms} strokeDasharray={`${7 * ms} ${6 * ms}`} />
+              <g opacity={0.55}><Marker t={pt0} x={s.x} y={s.y} fill="#8E8E93" ms={ms} /></g>
             </g>
           );
         }
@@ -188,6 +190,16 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
   const [sel, setSel] = useState<string>(placeId || '');
   const [card, setCard] = useState<string>(focusId || '');
   const [zoom, setZoom] = useState(1);
+  const [msLocal, setMsLocal] = useState<number | null>(null); // размер значков (пока не сохранён)
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setBox({ w: el.clientWidth - 24, h: el.clientHeight - 8 }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [d?.plans.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(false);
   // рисование
   const [tool, setTool] = useState<Tool>('rect');
@@ -228,6 +240,19 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     if (mode === 'place' && !sel && d) { const u = d.traps.find((t) => !t.plan_id); if (u) setSel(u.id); }
   }, [mode, d]); // eslint-disable-line react-hooks/exhaustive-deps
   const plan: ObjectPlan | undefined = d?.plans.find((p) => p.id === planId);
+  const ms = msLocal ?? plan?.mscale ?? 0.8;
+  // план вписывается в экран целиком (и на телефоне, и на большом мониторе); зум — от этого размера
+  const baseW = plan && box.w > 0 ? Math.min(box.w, box.h > 120 ? (box.h * 1000) / plan.h : box.w) : 0;
+  const msSave = useRef<number | undefined>(undefined);
+  function changeMs(delta: number) {
+    if (!plan) return;
+    const v = Math.round(Math.max(0.3, Math.min(2, ms + delta)) * 100) / 100;
+    setMsLocal(v); haptic.tap();
+    window.clearTimeout(msSave.current);
+    msSave.current = window.setTimeout(() => {
+      api.savePlan(plan.id, { mscale: v }).then((r) => { setD((x) => (x ? { ...x, plans: x.plans.map((p) => (p.id === plan.id ? r.plan : p)) } : x)); setMsLocal(null); }).catch(() => {});
+    }, 600);
+  }
   useEffect(() => { setShapes(plan?.drawing || []); setHist([]); setDirty(false); }, [plan?.id, plan?.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inspOf = (id: string) => visitTraps?.find((t) => t.id === id);
@@ -278,10 +303,25 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     try { apply(await api.placeTrap(trapId, { plan_id: null }), planId); setCard(''); toast('Убрана с плана'); } catch (e) { toast((e as Error).message, 'error'); }
   }
 
+  // ---------- перетаскивание фигур (инструмент «Двигать») ----------
+  const drag = useRef<{ i: number; x: number; y: number; orig: PlanShape } | null>(null);
+  function startDrag(i: number, e: RPointerEvent<SVGElement>) {
+    if (mode !== 'draw' || tool !== 'move') return;
+    e.stopPropagation();
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    const p = pt(e);
+    setHist((h) => [...h.slice(-40), shapes]);
+    drag.current = { i, x: p.x, y: p.y, orig: shapes[i] };
+  }
+  const shift = (sh: PlanShape, dx: number, dy: number): PlanShape => {
+    if (sh.t === 'line' || sh.t === 'door' || sh.t === 'gate') return { ...sh, x1: sh.x1 + dx, y1: sh.y1 + dy, x2: sh.x2 + dx, y2: sh.y2 + dy };
+    return { ...sh, x: (sh as { x: number }).x + dx, y: (sh as { y: number }).y + dy } as PlanShape;
+  };
+
   // ---------- рисование ----------
   const commit = (next: PlanShape[]) => { setHist((h) => [...h.slice(-40), shapes]); setShapes(next); setDirty(true); };
   function down(e: RPointerEvent<SVGSVGElement>) {
-    if (mode !== 'draw' || tool === 'erase') return;
+    if (mode !== 'draw' || tool === 'erase' || tool === 'move') return;
     const p = pt(e);
     if (tool === 'text') { setAsk({ kind: 'text', x: snap(p.x), y: snap(p.y) }); setAskText(''); return; }
     if (tool === 'spot') {
@@ -296,6 +336,12 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     start.current = { x: snap(p.x), y: snap(p.y) };
   }
   function move(e: RPointerEvent<SVGSVGElement>) {
+    if (drag.current) {
+      const p = pt(e); const g = drag.current;
+      const dx = snap(p.x - g.x); const dy = snap(p.y - g.y);
+      setShapes((all) => all.map((sh, j) => (j === g.i ? shift(g.orig, dx, dy) : sh)));
+      return;
+    }
     if (mode !== 'draw' || !start.current) return;
     const p = pt(e); const s = start.current;
     let x = snap(p.x); let y = snap(p.y);
@@ -308,6 +354,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     }
   }
   function up() {
+    if (drag.current) { drag.current = null; setDirty(true); haptic.tap(); return; }
     if (mode !== 'draw' || !start.current) return;
     start.current = null;
     const dr = draft;
@@ -380,6 +427,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
   const cardTrap = traps.find((t) => t.id === card);
   const selTrap = traps.find((t) => t.id === sel);
   const tools: { id: Tool; icon: JSX.Element; label: string }[] = [
+    { id: 'move', icon: <Move size={18} />, label: 'Двигать' },
     { id: 'rect', icon: <Square size={18} />, label: 'Комната' },
     { id: 'line', icon: <Minus size={18} className="-rotate-45" />, label: 'Стена' },
     { id: 'door', icon: <DoorOpen size={18} />, label: 'Дверь' },
@@ -429,7 +477,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
           <div className="truncate text-[17px] font-semibold leading-tight">План объекта</div>
           <div className="truncate text-[12.5px] text-muted">{isDraftPlan ? 'Нарисован заранее · ещё не привязан к клиенту' : title || d?.object?.company_name || ''}</div>
         </div>
-        {plan && mode === 'view' && (
+        {plan && (
           <>
             <button onClick={() => setZoom((z) => Math.max(1, z - 0.5))} aria-label="Меньше" className="flex h-10 w-10 items-center justify-center rounded-full bg-card ring-1 ring-inset ring-line"><ZoomOut size={18} /></button>
             <button onClick={() => setZoom((z) => Math.min(4, z + 0.5))} aria-label="Больше" className="flex h-10 w-10 items-center justify-center rounded-full bg-card ring-1 ring-inset ring-line"><ZoomIn size={18} /></button>
@@ -463,9 +511,17 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
           </div>
 
           {/* холст */}
-          <div className="relative min-h-0 flex-1 overflow-auto px-3" style={{ touchAction: mode === 'draw' ? 'none' : 'auto' }}>
+          {plan && (
+            <div className="mx-3 mb-1.5 flex items-center justify-end gap-1.5 text-[12.5px] text-muted">
+              <span className="mr-auto">Размер значков</span>
+              <button onClick={() => changeMs(-0.1)} aria-label="Меньше значки" className="flex h-8 w-8 items-center justify-center rounded-full bg-card ring-1 ring-inset ring-line"><Minus size={15} /></button>
+              <span className="w-10 text-center font-mono text-ink">{Math.round(ms * 100)}%</span>
+              <button onClick={() => changeMs(0.1)} aria-label="Больше значки" className="flex h-8 w-8 items-center justify-center rounded-full bg-card ring-1 ring-inset ring-line"><Plus size={15} /></button>
+            </div>
+          )}
+          <div ref={canvasRef} className="relative min-h-0 flex-1 overflow-auto px-3" style={{ touchAction: mode === 'draw' ? 'none' : 'auto' }}>
             {plan && (
-              <div style={{ width: `${zoom * 100}%` }} className="mx-auto overflow-hidden rounded-2xl bg-white ring-1 ring-line">
+              <div style={{ width: baseW ? `${Math.round(baseW * zoom)}px` : `${zoom * 100}%` }} className="mx-auto overflow-hidden rounded-2xl bg-white ring-1 ring-line">
                 <svg ref={svgRef} viewBox={`0 0 1000 ${plan.h}`} className="block w-full select-none" style={{ touchAction: mode === 'draw' ? 'none' : 'manipulation' }}
                   onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
                   onClick={(e) => {
@@ -479,11 +535,12 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                       {Array.from({ length: Math.ceil(plan.h / 50) + 1 }, (_, i) => <line key={`h${i}`} x1={0} y1={i * 50} x2={1000} y2={i * 50} />)}
                     </g>
                   )}
-                  <Drawing shapes={mode === 'draw' ? shapes : plan.drawing} h={plan.h}
-                    onErase={mode === 'draw' && tool === 'erase' ? (i) => { haptic.tap(); commit(shapes.filter((_, j) => j !== i)); } : undefined} />
-                  {draft && <Drawing shapes={[draft]} h={plan.h} />}
+                  <Drawing shapes={mode === 'draw' ? shapes : plan.drawing} h={plan.h} ms={ms}
+                    onErase={mode === 'draw' && tool === 'erase' ? (i) => { haptic.tap(); commit(shapes.filter((_, j) => j !== i)); } : undefined}
+                    onDown={mode === 'draw' && tool === 'move' ? startDrag : undefined} />
+                  {draft && <Drawing shapes={[draft]} h={plan.h} ms={ms} />}
                   {onPlan.map((t) => (
-                    <Marker key={t.id} t={t} x={t.plan_x!} y={t.plan_y!} fill={fillOf(t)} ring={t.id === card || t.id === sel || t.id === focusId} dim={mode === 'draw'}
+                    <Marker key={t.id} ms={ms} t={t} x={t.plan_x!} y={t.plan_y!} fill={fillOf(t)} ring={t.id === card || t.id === sel || t.id === focusId} dim={mode === 'draw'}
                       onClick={mode === 'draw' ? undefined : () => {
                         if (mode === 'place') { setSel(t.id); haptic.tap(); return; }
                         setCard(t.id); haptic.tap();
@@ -580,7 +637,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                     </div>
                   )}
                   <div className="mt-1.5 px-1 text-[12px] text-muted">
-                    {tool === 'spot' ? 'Тапайте, где будут станции — номера идут по порядку. На объекте отсканируете QR и тапнете точку' : tool === 'gate' ? 'Проведите по ширине ворот' : tool === 'rect' ? 'Проведите пальцем по диагонали — получится комната' : tool === 'line' ? 'Проведите пальцем — стена (ровняется сама)' : tool === 'door' ? 'Проведите по ширине проёма' : tool === 'text' ? 'Тапните, где поставить подпись' : 'Тапните по фигуре, чтобы удалить'}
+                    {tool === 'move' ? 'Потяните комнату, стену, дверь, подпись или точку станции — она переедет' : tool === 'spot' ? 'Тапайте, где будут станции — номера идут по порядку. На объекте отсканируете QR и тапнете точку' : tool === 'gate' ? 'Проведите по ширине ворот' : tool === 'rect' ? 'Проведите пальцем по диагонали — получится комната' : tool === 'line' ? 'Проведите пальцем — стена (ровняется сама)' : tool === 'door' ? 'Проведите по ширине проёма' : tool === 'text' ? 'Тапните, где поставить подпись' : 'Тапните по фигуре, чтобы удалить'}
                   </div>
                   <div className="mt-2 grid grid-cols-[1fr_auto_auto] gap-2">
                     <Button className="h-[44px] text-[14px]" loading={busy} disabled={!dirty} onClick={() => saveDrawing('place')}>Сохранить → станции</Button>

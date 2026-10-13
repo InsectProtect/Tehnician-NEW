@@ -195,7 +195,7 @@ export const api = {
     request<{ object: { id: string; company_name: string; address: string } }>('POST', '/api/plans/attach', body),
   objectPlans: (objectId: string) => request<PlansRes>('GET', `/api/objects/${objectId}/plans`),
   addPlan: (objectId: string, body: { title?: string; image?: string; orient?: 'land' | 'port' }) => request<PlansRes>('POST', `/api/objects/${objectId}/plans`, body),
-  savePlan: (planId: string, body: { title?: string; drawing?: PlanShape[]; image?: string | null }) => request<{ plan: ObjectPlan }>('PUT', `/api/plans/${planId}`, body),
+  savePlan: (planId: string, body: { title?: string; drawing?: PlanShape[]; image?: string | null; mscale?: number }) => request<{ plan: ObjectPlan }>('PUT', `/api/plans/${planId}`, body),
   deletePlan: (planId: string) => request<PlansRes>('DELETE', `/api/plans/${planId}`),
   placeTrap: (trapId: string, body: { plan_id: string | null; x?: number; y?: number; spot?: string }) => request<PlansRes>('PUT', `/api/traps/${trapId}/place`, body),
   labelsInfo: () => request<LabelsInfo>('GET', '/api/labels'),

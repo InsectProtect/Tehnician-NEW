@@ -62,7 +62,7 @@ export function initPlans(ctx) {
   const shape = (p) => {
     let drawing = [];
     try { drawing = JSON.parse(p.drawing || '[]'); } catch { /* пустой */ }
-    return { id: p.id, object_id: p.object_id, title: p.title, w: Number(p.w) || W, h: Number(p.h) || 750, image_url: p.image ? imgPath(p) : null, drawing, updated_at: p.updated_at };
+    return { id: p.id, object_id: p.object_id, title: p.title, w: Number(p.w) || W, h: Number(p.h) || 750, mscale: p.mscale == null ? 0.8 : Number(p.mscale), image_url: p.image ? imgPath(p) : null, drawing, updated_at: p.updated_at };
   };
   const canEdit = (user) => user.isAdmin || ['tech', 'specialist'].includes(user.role);
 
@@ -163,7 +163,8 @@ export function initPlans(ctx) {
     if (body.image === null) image = null;
     else if (body.image) { const im = parseImage(body.image); image = im.data; h = im.h; }
     const drawing = body.drawing !== undefined ? JSON.stringify(cleanDrawing(body.drawing, h)) : p.drawing;
-    await db.query('UPDATE object_plans SET title = $1, image = $2, h = $3, drawing = $4, updated_at = $5 WHERE id = $6', [title, image, h, drawing, now(), p.id]);
+    const mscale = body.mscale !== undefined ? Math.max(0.3, Math.min(2, Number(body.mscale) || 0.8)) : (p.mscale == null ? 0.8 : Number(p.mscale));
+    await db.query('UPDATE object_plans SET title = $1, image = $2, h = $3, drawing = $4, updated_at = $5, mscale = $6 WHERE id = $7', [title, image, h, drawing, now(), mscale, p.id]);
     return { plan: shape(await planOf(p.id)) };
   });
 
