@@ -24,7 +24,7 @@ import {
 import { LOC } from '../locale';
 
 /** Меняется с каждым архивом — по ней видно, какая версия реально открыта на телефоне. */
-export const APP_VERSION = '2026.10.13-v84';
+export const APP_VERSION = '2026.10.13-v85';
 
 const isToday = (iso: string | null) => !!iso && new Date(iso).toDateString() === new Date().toDateString();
 

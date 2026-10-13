@@ -87,6 +87,7 @@ function Drawing({ shapes, h, onErase, onDown, ms = 1 }: { shapes: PlanShape[]; 
           return (
             <g key={i} onClick={click} {...hit}>
               <rect x={s.x} y={s.y} width={s.w} height={s.h} fill="#FFFFFF" fillOpacity={0.55} stroke="#1D1D1F" strokeWidth={6} />
+              {onDown && <rect x={s.x + s.w - 16} y={s.y + s.h - 16} width={32} height={32} rx={8} fill="#0066CC" stroke="#fff" strokeWidth={4} style={{ cursor: 'nwse-resize' }} />}
               {s.label && <text x={s.x + s.w / 2} y={s.y + s.h / 2 + 8} textAnchor="middle" fontSize={Math.max(16, Math.min(30, s.w / 8))} fontWeight={700} fill="#8E8E93" fontFamily="-apple-system,system-ui,sans-serif">{s.label.toUpperCase()}</text>}
             </g>
           );
@@ -310,24 +311,92 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
   }
 
   // ---------- перетаскивание фигур (инструмент «Двигать») ----------
-  const drag = useRef<{ i: number; x: number; y: number; orig: PlanShape } | null>(null);
+  const drag = useRef<{ i: number; x: number; y: number; orig: PlanShape; resize?: boolean } | null>(null);
   function startDrag(i: number, e: RPointerEvent<SVGElement>) {
     if (mode !== 'draw' || tool !== 'move') return;
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     const p = pt(e);
     setHist((h) => [...h.slice(-40), shapes]);
-    drag.current = { i, x: p.x, y: p.y, orig: shapes[i] };
+    const o = shapes[i];
+    // у комнаты: потянуть за синий уголок — изменить размер
+    const resize = o.t === 'rect' && Math.abs(p.x - (o.x + o.w)) < 40 && Math.abs(p.y - (o.y + o.h)) < 40;
+    drag.current = { i, x: p.x, y: p.y, orig: o, resize };
   }
   const shift = (sh: PlanShape, dx: number, dy: number): PlanShape => {
     if (sh.t === 'line' || sh.t === 'door' || sh.t === 'gate') return { ...sh, x1: sh.x1 + dx, y1: sh.y1 + dy, x2: sh.x2 + dx, y2: sh.y2 + dy };
     return { ...sh, x: (sh as { x: number }).x + dx, y: (sh as { y: number }).y + dy } as PlanShape;
   };
 
+  // ---------- масштабирование двумя пальцами (щипок) и прокрутка одним пальцем ----------
+  const ptrs = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ d0: number; z0: number } | null>(null);
+  const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null);
+  const moved = useRef(false); // палец сдвинулся (листали/щипали) — тап по плану не считаем
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  function zoomAt(next: number, cx: number, cy: number) {
+    const el = canvasRef.current;
+    const z0 = zoomRef.current;
+    const z = Math.max(1, Math.min(6, next));
+    if (!el || Math.abs(z - z0) < 0.001) return;
+    const rect = el.getBoundingClientRect();
+    const ox = cx - rect.left + el.scrollLeft; const oy = cy - rect.top + el.scrollTop;
+    zoomRef.current = z;
+    setZoom(z);
+    requestAnimationFrame(() => { el.scrollLeft = (ox * z) / z0 - (cx - rect.left); el.scrollTop = (oy * z) / z0 - (cy - rect.top); });
+  }
+  function ptrDown(e: RPointerEvent<HTMLDivElement>) {
+    if (e.pointerType === 'mouse') return;
+    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.current.size === 1) moved.current = false;
+    const el = canvasRef.current;
+    if (ptrs.current.size === 2) {
+      moved.current = true;
+      const [a, b] = [...ptrs.current.values()];
+      pinch.current = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, z0: zoomRef.current };
+      // второй палец — это не рисование: отменяем начатую фигуру/перетаскивание
+      start.current = null; setDraft(null); drag.current = null; panRef.current = null;
+    } else if (ptrs.current.size === 1 && el && (mode !== 'draw' || tool === 'pan')) {
+      panRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
+    }
+  }
+  function ptrMove(e: RPointerEvent<HTMLDivElement>) {
+    if (!ptrs.current.has(e.pointerId)) return;
+    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const el = canvasRef.current;
+    if (pinch.current && ptrs.current.size >= 2) {
+      const [a, b] = [...ptrs.current.values()];
+      zoomAt(pinch.current.z0 * (Math.hypot(a.x - b.x, a.y - b.y) / pinch.current.d0), (a.x + b.x) / 2, (a.y + b.y) / 2);
+      e.stopPropagation();
+    } else if (panRef.current && el) {
+      if (Math.hypot(e.clientX - panRef.current.x, e.clientY - panRef.current.y) > 8) moved.current = true;
+      el.scrollLeft = panRef.current.sl - (e.clientX - panRef.current.x);
+      el.scrollTop = panRef.current.st - (e.clientY - panRef.current.y);
+    }
+  }
+  function ptrUp(e: RPointerEvent<HTMLDivElement>) {
+    ptrs.current.delete(e.pointerId);
+    if (ptrs.current.size < 2) pinch.current = null;
+    if (ptrs.current.size === 0) panRef.current = null;
+  }
+  /** Весь рисунок больше/меньше (вокруг центра плана). */
+  function scaleDrawing(k: number) {
+    if (!plan || !shapes.length) return;
+    const cx = 500; const cy = plan.h / 2;
+    const S = (v: number, c: number) => Math.round(c + (v - c) * k);
+    haptic.tap();
+    commit(shapes.map((sh) => {
+      if (sh.t === 'line' || sh.t === 'door' || sh.t === 'gate') return { ...sh, x1: S(sh.x1, cx), y1: S(sh.y1, cy), x2: S(sh.x2, cx), y2: S(sh.y2, cy) };
+      if (sh.t === 'rect') return { ...sh, x: S(sh.x, cx), y: S(sh.y, cy), w: Math.max(20, Math.round(sh.w * k)), h: Math.max(20, Math.round(sh.h * k)) };
+      return { ...sh, x: S((sh as { x: number }).x, cx), y: S((sh as { y: number }).y, cy) } as PlanShape;
+    }));
+  }
+
   // ---------- рисование ----------
   const commit = (next: PlanShape[]) => { setHist((h) => [...h.slice(-40), shapes]); setShapes(next); setDirty(true); };
   function down(e: RPointerEvent<SVGSVGElement>) {
-    if (mode !== 'draw' || tool === 'erase' || tool === 'move' || tool === 'pan') return;
+    if (mode !== 'draw' || tool === 'erase' || tool === 'move' || tool === 'pan' || ptrs.current.size > 1) return;
     const p = pt(e);
     if (tool === 'text') { setAsk({ kind: 'text', x: snap(p.x), y: snap(p.y) }); setAskText(''); return; }
     if (tool === 'spot') {
@@ -342,10 +411,13 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     start.current = { x: snap(p.x), y: snap(p.y) };
   }
   function move(e: RPointerEvent<SVGSVGElement>) {
+    if (pinch.current) return;
     if (drag.current) {
       const p = pt(e); const g = drag.current;
       const dx = snap(p.x - g.x); const dy = snap(p.y - g.y);
-      setShapes((all) => all.map((sh, j) => (j === g.i ? shift(g.orig, dx, dy) : sh)));
+      setShapes((all) => all.map((sh, j) => (j !== g.i ? sh
+        : g.resize && g.orig.t === 'rect' ? { ...g.orig, w: Math.max(20, g.orig.w + dx), h: Math.max(20, g.orig.h + dy) }
+          : shift(g.orig, dx, dy))));
       return;
     }
     if (mode !== 'draw' || !start.current) return;
@@ -526,12 +598,16 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
               <button onClick={() => changeMs(0.1)} aria-label="Больше значки" className="flex h-8 w-8 items-center justify-center rounded-full bg-card ring-1 ring-inset ring-line"><Plus size={15} /></button>
             </div>
           )}
-          <div ref={canvasRef} onWheel={(e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom((z) => Math.max(1, Math.min(6, z + (e.deltaY < 0 ? 0.5 : -0.5)))); } }} className="relative min-h-0 flex-1 overflow-auto px-3" style={{ touchAction: mode === 'draw' && tool !== 'pan' ? 'none' : 'auto' }}>
+          <div ref={canvasRef}
+            onWheel={(e) => { if (e.ctrlKey || e.metaKey) zoomAt(zoomRef.current + (e.deltaY < 0 ? 0.25 : -0.25), e.clientX, e.clientY); }}
+            onPointerDownCapture={ptrDown} onPointerMoveCapture={ptrMove} onPointerUpCapture={ptrUp} onPointerCancelCapture={ptrUp}
+            className="relative min-h-0 flex-1 overflow-auto px-3" style={{ touchAction: 'none' }}>
             {plan && (
               <div style={{ width: baseW ? `${Math.round(baseW * zoom)}px` : `${zoom * 100}%` }} className="mx-auto overflow-hidden rounded-2xl bg-white ring-1 ring-line">
-                <svg ref={svgRef} viewBox={`0 0 1000 ${plan.h}`} className="block w-full select-none" style={{ touchAction: mode === 'draw' && tool !== 'pan' ? 'none' : 'manipulation' }}
+                <svg ref={svgRef} viewBox={`0 0 1000 ${plan.h}`} className="block w-full select-none" style={{ touchAction: 'none' }}
                   onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
                   onClick={(e) => {
+                    if (moved.current) return;
                     if (mode === 'place' && sel) { const p = pt(e); place(sel, Math.round(p.x), Math.round(p.y)); }
                   }}>
                   <rect width={1000} height={plan.h} fill="#FBFBFD" />
@@ -549,6 +625,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                   {onPlan.map((t) => (
                     <Marker key={t.id} ms={ms} t={t} x={t.plan_x!} y={t.plan_y!} fill={fillOf(t)} ring={t.id === card || t.id === sel || t.id === focusId} dim={mode === 'draw'}
                       onClick={mode === 'draw' ? undefined : () => {
+                        if (moved.current) return;
                         if (mode === 'place') { setSel(t.id); haptic.tap(); return; }
                         setCard(t.id); haptic.tap();
                       }} />
@@ -644,7 +721,12 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                     </div>
                   )}
                   <div className="mt-1.5 px-1 text-[12px] text-muted">
-                    {tool === 'pan' ? 'Увеличьте план лупой «+» вверху и листайте пальцем; потом выберите инструмент и рисуйте — сетка станет мельче' : tool === 'move' ? 'Потяните комнату, стену, дверь, подпись или точку станции — она переедет' : tool === 'spot' ? 'Тапайте, где будут станции — номера идут по порядку. На объекте отсканируете QR и тапнете точку' : tool === 'gate' ? 'Проведите по ширине ворот' : tool === 'rect' ? 'Проведите пальцем по диагонали — получится комната' : tool === 'line' ? 'Проведите пальцем — стена (ровняется сама)' : tool === 'door' ? 'Проведите по ширине проёма' : tool === 'text' ? 'Тапните, где поставить подпись' : 'Тапните по фигуре, чтобы удалить'}
+                    {tool === 'pan' ? 'Листайте одним пальцем, увеличивайте двумя (щипком) — потом выберите инструмент и рисуйте, сетка станет мельче' : tool === 'move' ? 'Потяните фигуру — она переедет; синий уголок комнаты — растянуть или сжать' : tool === 'spot' ? 'Тапайте, где будут станции — номера идут по порядку. На объекте отсканируете QR и тапнете точку' : tool === 'gate' ? 'Проведите по ширине ворот' : tool === 'rect' ? 'Проведите пальцем по диагонали — получится комната' : tool === 'line' ? 'Проведите пальцем — стена (ровняется сама)' : tool === 'door' ? 'Проведите по ширине проёма' : tool === 'text' ? 'Тапните, где поставить подпись' : 'Тапните по фигуре, чтобы удалить'}
+                  </div>
+                  <div className="mt-2 flex items-center gap-1.5 px-1 text-[12.5px] text-muted">
+                    <span className="mr-auto">Весь рисунок</span>
+                    <button onClick={() => scaleDrawing(0.9)} className="rounded-full bg-card px-3 py-1.5 font-medium text-ink ring-1 ring-inset ring-line">− меньше</button>
+                    <button onClick={() => scaleDrawing(1.1)} className="rounded-full bg-card px-3 py-1.5 font-medium text-ink ring-1 ring-inset ring-line">+ больше</button>
                   </div>
                   <div className="mt-2 grid grid-cols-[1fr_auto_auto] gap-2">
                     <Button className="h-[44px] text-[14px]" loading={busy} disabled={!dirty} onClick={() => saveDrawing('place')}>Сохранить → станции</Button>
