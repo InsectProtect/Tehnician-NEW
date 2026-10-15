@@ -102,3 +102,86 @@ button {
 /* горизонтальные вкладки листаются пальцем/колесом, но без полосы прокрутки */
 .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* =================================================================================================
+ * Тема «Battlefield» (v87): тактический HUD — графит, сигнальный оранжевый, рубленые углы,
+ * узкие заголовки капсом, уголки-прицелы на панелях. Включается классом .bf на <html> (вместе с .dark).
+ * Компоненты ui.tsx помечены data-атрибутами (data-btn, data-panel, data-sec, data-seg, data-chip, data-sheet).
+ * ================================================================================================= */
+html.bf {
+  --accent: #FF5A1F;
+  --accent-ink: #FF7A45;
+  --ink: #E8ECEF;
+  --muted: #8A95A0;
+  --card: #11161B;
+  --fill: #1A2128;
+  --page: #06080A;
+  --line: rgba(150, 175, 200, 0.16);
+  --dot: transparent;
+  --hud: rgba(255, 90, 31, 0.9);
+  --radius-sm: 2px; --radius-md: 2px; --radius-lg: 3px; --radius-xl: 3px; --radius-2xl: 4px; --radius-3xl: 5px;
+}
+html.bf body {
+  background-color: var(--page);
+  background-image:
+    radial-gradient(120% 60% at 50% -10%, rgba(255, 90, 31, 0.13), transparent 60%),
+    linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+  background-size: 100% 100%, 28px 28px, 28px 28px;
+  background-attachment: fixed;
+}
+html.bf .dot-grid { background-image: linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px); background-size: 28px 28px; }
+
+/* все скругления — рубленые: произвольные rounded-[22px] и т.п., кнопки-«таблетки» и плашки */
+html.bf [class*="rounded-"][class*="px]"],
+html.bf button.rounded-full,
+html.bf [class*="rounded-full"][class*="px-"] { border-radius: 3px !important; }
+
+/* заголовки: узкий гротеск капсом */
+html.bf .font-display,
+html.bf h1, html.bf h3 { font-family: "Oswald", "Inter", sans-serif; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
+
+/* панели: тонкая рамка + оранжевые уголки-прицелы */
+html.bf div.bg-card,
+html.bf [data-panel] {
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+  background-image:
+    linear-gradient(var(--hud), var(--hud)), linear-gradient(var(--hud), var(--hud)),
+    linear-gradient(var(--hud), var(--hud)), linear-gradient(var(--hud), var(--hud));
+  background-size: 12px 2px, 2px 12px, 12px 2px, 2px 12px;
+  background-position: top left, top left, bottom right, bottom right;
+  background-repeat: no-repeat;
+}
+
+/* кнопки */
+html.bf [data-btn] { font-family: "Oswald", "Inter", sans-serif; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 600; }
+html.bf [data-btn="primary"] {
+  border-radius: 0 !important;
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent 55%);
+  color: #0A0A0A;
+}
+html.bf [data-btn="secondary"], html.bf [data-btn="danger"] {
+  border-radius: 0 !important;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  background-image: none; outline: none;
+}
+
+/* заголовки разделов: оранжевая метка */
+html.bf [data-sec] { color: var(--ink); letter-spacing: 0.22em; }
+html.bf [data-sec]::before { content: ""; width: 8px; height: 8px; background: var(--accent); transform: rotate(45deg); flex-shrink: 0; }
+html.bf [data-sec] > span:last-child { border-top-style: solid; border-color: var(--line); }
+
+/* переключатели и выбор */
+html.bf [data-seg] { border-radius: 0 !important; outline: 1px solid var(--line); outline-offset: -1px; }
+html.bf [data-seg] > button { border-radius: 0 !important; font-family: "Oswald", "Inter", sans-serif; text-transform: uppercase; letter-spacing: 0.06em; }
+html.bf [data-seg] > button[data-on] { background: var(--accent) !important; color: #0A0A0A !important; box-shadow: none !important; }
+html.bf [data-chip="on"] { background: rgba(255, 90, 31, 0.16) !important; color: var(--ink) !important; box-shadow: inset 0 0 0 1.5px var(--accent) !important; }
+html.bf button.bg-ink { background: var(--accent) !important; color: #0A0A0A !important; }
+
+/* листы снизу: оранжевая линия сверху */
+html.bf [data-sheet] { border-radius: 0 !important; border-top: 2px solid var(--accent); }
+
+/* полосы прогресса и бейджи */
+html.bf .bg-accent:not(button) { box-shadow: 0 0 10px rgba(255, 90, 31, 0.45); }

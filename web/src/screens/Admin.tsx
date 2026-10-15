@@ -748,7 +748,7 @@ function AdminTools() {
         <div className="px-4 py-3">
           <div className="mb-2 px-1 font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Тема оформления</div>
           <Segmented<ThemePref>
-            options={[{ id: 'light', label: 'Светлая' }, { id: 'dark', label: 'Тёмная' }, { id: 'auto', label: 'Как в Telegram' }]}
+            options={[{ id: 'bf', label: 'Battlefield' }, { id: 'dark', label: 'Тёмная' }, { id: 'light', label: 'Светлая' }, { id: 'auto', label: 'Как в Telegram' }]}
             value={theme}
             onChange={(v) => { haptic.tap(); setTheme(v); setThemePref(v); api.setPrefs({ theme: v }).catch((e: Error) => toast(e.message, 'error')); }}
           />

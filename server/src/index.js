@@ -2609,7 +2609,7 @@ async function userPrefs(tgId) {
 route('POST', '/api/me/prefs', async ({ user, body }) => {
   const prefs = await userPrefs(user.id);
   if (body.all_tasks !== undefined) prefs.all_tasks = Boolean(body.all_tasks);
-  if (body.theme !== undefined) prefs.theme = ['light', 'dark', 'auto'].includes(body.theme) ? body.theme : 'dark';
+  if (body.theme !== undefined) prefs.theme = ['bf', 'light', 'dark', 'auto'].includes(body.theme) ? body.theme : 'bf';
   // вкладки админ-панели: порядок и скрытые («Обзор» и «Настройки» скрыть нельзя)
   const tabId = (x) => str(x, 30).replace(/[^a-z_]/g, '');
   if (Array.isArray(body.tabs_order)) prefs.tabs_order = [...new Set(body.tabs_order.map(tabId).filter(Boolean))].slice(0, 40);

@@ -19,6 +19,7 @@ import { FinishSheet, InspectSheet, ManualSheet, MessageSheet, ObservationSheet,
 import { playSound } from '../sounds';
 import { takePendingScan } from '../pendingScan';
 import { PlanSheet, StationEditSheet, deviceStyle } from './Plan';
+import { ActChecklist, ActStepBar, ActStepNav, type ActStep } from '../components/ActSteps';
 
 type SheetState =
   | null
@@ -52,6 +53,10 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
   const [geoBusy, setGeoBusy] = useState(false);
   // «Я на объекте» подтверждён при первом скане станции — запоминаем на выезд, чтобы не спрашивать каждый раз
   const [onSiteOk, setOnSiteOk] = useState(() => { try { return localStorage.getItem(`onsite:${id}`) === '1'; } catch { return false; } });
+
+  // v87: акт заполняется по шагам (можно переключить на «всё одним списком»)
+  const [step, setStep] = useState('start');
+  const [stepsOff, setStepsOff] = useState(() => { try { return localStorage.getItem('act_steps_off') === '1'; } catch { return false; } });
 
   useBackButton(onBack);
 
@@ -326,6 +331,37 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
   const label = (list: { id: string; label: string }[], v: string) => list.find((x) => x.id === v)?.label ?? '—';
   const pestOptions = cfg.pestsByProcedure?.[visit.procedure] ?? [];
 
+  // ---------- v87: шаги акта ----------
+  const assessOn = st || visit.needs_assessment || pestOptions.length > 0 || visit.procedure !== 'Дератизация';
+  const stationsOn = isOpen && (askMonitoring || scanTop || showTraps || (!q && visit.is_company && visit.monitoring === false));
+  const installed = traps.filter((t) => !t.prepared).length;
+  const steps: ActStep[] = isOpen ? [
+    { id: 'start', label: 'Начало', done: true },
+    ...(stationsOn ? [{
+      id: 'stations', label: 'Станции', optional: !st,
+      done: traps.length ? checked.length > 0 && checked.length >= installed : visit.monitoring === false,
+      hint: traps.length ? `Проверено ${checked.length} из ${installed}` : 'Отсканируйте QR станций',
+    }] : []),
+    ...(assessOn ? [{
+      id: 'assess', label: st ? 'Препарат' : 'Оценка',
+      done: st ? visit.products.length > 0 : pestOptions.length === 0 || visit.pests.length > 0,
+      optional: st, hint: st ? 'Чем заправляли станции' : 'Отметьте вредителей',
+    }] : []),
+    { id: 'object', label: 'Баллы', done: Boolean(visit.point_cat), hint: 'Выберите категорию объекта' },
+    { id: 'photos', label: 'Фото', done: observations.length > 0, optional: true, hint: 'Замечания с фото — по желанию' },
+    ...(!q ? [{ id: 'data', label: 'Данные акта', done: true, optional: true }] : []),
+    { id: 'finish', label: 'Завершение', done: false },
+  ] : [];
+  const stepMode = isOpen && !stepsOff;
+  const cur = steps.some((x) => x.id === step) ? step : 'start';
+  const on = (sid: string) => !stepMode || cur === sid;
+  const goStep = (sid: string) => { haptic.tap(); setStep(sid); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const toggleSteps = () => {
+    const v = !stepsOff;
+    setStepsOff(v); haptic.tap();
+    try { localStorage.setItem('act_steps_off', v ? '1' : '0'); } catch { /* не критично */ }
+  };
+
   const scanButtons = isOpen && (
     <div className="mt-4 space-y-2">
       <Button className={trapFocus ? 'h-[56px]' : undefined} variant={trapFocus ? 'primary' : 'secondary'} onClick={startScan} loading={scanning}
@@ -454,9 +490,10 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           </span>
         }
       />
-      {!cfg.isAdmin && isOpen && !visit.revision && <QuestPath step={2} className="mb-4" />}
+      {!cfg.isAdmin && isOpen && !visit.revision && !stepMode && <QuestPath step={2} className="mb-4" />}
+      {stepMode && <ActStepBar steps={steps} current={cur} onGo={goStep} />}
 
-      {data.task && isOpen && (
+      {data.task && isOpen && on('start') && (
         <div className="mb-4 rounded-2xl bg-accent/[0.06] p-4 text-[15px]">
           <div className="mb-1 text-[13px] font-medium uppercase tracking-wide text-muted">Заявка № {data.task.task_no} · {fmtTaskDate(data.task)}</div>
           {data.task.phone && (
@@ -477,7 +514,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
         </div>
       )}
 
-      {isOpen && (
+      {isOpen && on('start') && (
         <div className="mb-4">
           <Segmented<'full' | 'quick' | 'stations'>
             options={[{ id: 'full', label: canStations ? 'Полный' : 'Полный акт' }, { id: 'quick', label: canStations ? '⚡ Быстрый' : '⚡ Быстрый акт' },
@@ -489,8 +526,8 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           {q && !st && <div className="mt-2 px-1 text-[12.5px] leading-snug text-muted">Клиент получит одну страницу: адрес, тип вредителя, подписи и печать. Отметьте вредителей и категорию объекта — и завершайте.</div>}
         </div>
       )}
-      {isOpen && photosBlock}
-      {isOpen && visit.suggest_stations && !st && (
+      {isOpen && on('photos') && photosBlock}
+      {isOpen && on('start') && visit.suggest_stations && !st && (
         <div className="mb-4 rounded-[22px] bg-card p-5">
           <div className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-muted">
             <span className="h-1.5 w-1.5 rounded-full bg-accent" />Станции на объекте
@@ -505,7 +542,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           </div>
         </div>
       )}
-      {askMonitoring && !visit.suggest_stations && (
+      {askMonitoring && on('stations') && !visit.suggest_stations && (
         <div className="mb-4 rounded-[22px] bg-card p-5">
           <div className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-muted">
             <span className="h-1.5 w-1.5 rounded-full bg-accent" />Станции мониторинга
@@ -522,13 +559,13 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           </div>
         </div>
       )}
-      {!q && isOpen && visit.is_company && visit.monitoring === false && (
+      {!q && isOpen && on('stations') && visit.is_company && visit.monitoring === false && (
         <button onClick={() => setMonitoring(true)} className="mb-4 flex w-full items-center justify-between rounded-2xl bg-card px-4 py-3 text-left">
           <span className="text-[14px] text-muted">Станции мониторинга не используются</span>
           <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-accent-ink">Включить</span>
         </button>
       )}
-      {scanTop && (
+      {scanTop && on('stations') && (
         <div className="mb-4 rounded-[22px] bg-card p-5">
           <div className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-muted">
             <span className="h-1.5 w-1.5 rounded-full bg-accent" />Станции мониторинга
@@ -615,7 +652,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           )}
         </div>
       )}
-      {isOpen && visit.revision > 0 && (
+      {isOpen && on('start') && visit.revision > 0 && (
         <div className="mb-2 flex gap-3 rounded-2xl bg-[#FF9500]/12 p-4 text-[15px]">
           <Pencil size={19} strokeWidth={1.75} className="mt-0.5 shrink-0 text-[#C93400] dark:text-[#FF9F0A]" />
           <div>Исправление акта (ред. {visit.revision}). После завершения в офис уйдёт новая версия с пометкой «Исправленный».</div>
@@ -623,7 +660,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       )}
 
       {/* Категория объекта → баллы сотруднику (KPI) */}
-      {isOpen ? (
+      {isOpen ? on('object') && (
         <>
           <SectionTitle>Объект · баллы</SectionTitle>
           <div className="space-y-4 rounded-2xl bg-card p-4">
@@ -696,7 +733,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       )}
 
       {/* Оценка объекта: вредители, заселённость, подготовка */}
-      {st && (
+      {st && on('assess') && (
         <>
           <SectionTitle>Приманка / препарат</SectionTitle>
           {isOpen ? (
@@ -712,7 +749,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           )}
         </>
       )}
-      {!st && (visit.needs_assessment || pestOptions.length > 0 || visit.procedure !== 'Дератизация') && (
+      {!st && on('assess') && (visit.needs_assessment || pestOptions.length > 0 || visit.procedure !== 'Дератизация') && (
         <>
           <SectionTitle>Оценка объекта</SectionTitle>
           {isOpen ? (
@@ -768,7 +805,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       )}
 
       {/* Рекомендации заказчику (генерируются по вредителям) */}
-      {!q && visit.recommendations.length > 0 && (
+      {!q && on('assess') && visit.recommendations.length > 0 && (
         <div className="mt-3 overflow-hidden rounded-2xl bg-accent/[0.06]">
           <button onClick={() => setRecsOpen((o) => !o)} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
             <Lightbulb size={20} strokeWidth={1.75} className="shrink-0 text-accent-ink" />
@@ -798,7 +835,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
         </div>
       )}
 
-      {!q && (
+      {!q && on('data') && (
       <>
       {/* Данные для бланка акта */}
       <SectionTitle>Данные для акта</SectionTitle>
@@ -810,7 +847,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       {!isOpen && observations.length > 0 && photosBlock}
 
       {/* Ловушки */}
-      {showTraps && (
+      {showTraps && on('stations') && (
         <>
           <SectionTitle>
             {traps.length ? `Станции · ${traps.length}` : 'Станции мониторинга'}
@@ -840,9 +877,16 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
         </>
       )}
 
+      {stepMode && cur !== 'finish' && <ActStepNav steps={steps} current={cur} onGo={goStep} />}
+      {stepMode && cur === 'finish' && <ActChecklist steps={steps} onGo={goStep} />}
       {isOpen && (
+        <button onClick={toggleSteps} className="mt-4 w-full py-1 text-center font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+          {stepMode ? 'Показать весь акт одним списком' : 'Заполнять по шагам'}
+        </button>
+      )}
+      {isOpen && on('finish') && (
         <>
-          <Button className="mt-8" onClick={() => setSheet({ type: 'finish' })}>
+          <Button className="mt-6" onClick={() => setSheet({ type: 'finish' })}>
             {visit.lead_id ? 'Закрыть заявку' : visit.revision ? 'Сохранить исправленный акт' : 'Завершить выезд'}
           </Button>
           {visit.can_delete && (

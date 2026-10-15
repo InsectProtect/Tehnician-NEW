@@ -106,7 +106,7 @@ export type Bootstrap = {
   crowns?: string[];
   premises: StatusOption[];
   reentryOptions: StatusOption[];
-  prefs?: { all_tasks?: boolean; theme?: 'dark' | 'light' | 'auto'; overview?: string[]; overview_known?: string[]; tabs_order?: string[]; tabs_hidden?: string[] };
+  prefs?: { all_tasks?: boolean; theme?: 'bf' | 'dark' | 'light' | 'auto'; overview?: string[]; overview_known?: string[]; tabs_order?: string[]; tabs_hidden?: string[] };
   conditions: StatusOption[];
   baitLevels: StatusOption[];
   rodenticide: string;

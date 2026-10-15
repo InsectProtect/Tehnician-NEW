@@ -47,7 +47,11 @@ export default function App() {
       .then((b) => {
         if ('procedures' in b) {
           setPartial(null);
-          if (b.prefs?.theme) setThemePref(b.prefs.theme);
+          // v87: новое оформление «Battlefield» один раз включается всем, у кого была тёмная тема (вернуть — Профиль → Тема)
+          let bfIntro = false;
+          try { bfIntro = !localStorage.getItem('bf_intro'); localStorage.setItem('bf_intro', '1'); } catch { /* не критично */ }
+          if (bfIntro && (!b.prefs?.theme || b.prefs.theme === 'dark')) { setThemePref('bf'); if (b.prefs?.theme) api.setPrefs({ theme: 'bf' }).catch(() => {}); }
+          else if (b.prefs?.theme) setThemePref(b.prefs.theme);
           // язык интерфейса (v82): румынский — переводчик поверх интерфейса; запоминаем, чтобы и экран входа был на румынском
           const lang = b.user?.lang === 'ro' ? 'ro' : 'ru';
           setLocale(lang);

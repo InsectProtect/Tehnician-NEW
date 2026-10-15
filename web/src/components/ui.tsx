@@ -53,7 +53,7 @@ export function LargeTitle({ title, subtitle, eyebrow, onBack, right }: {
 
 export function SectionTitle({ children }: { children: ReactNode }) {
   return (
-    <h2 className="mb-3 mt-9 flex items-center gap-3 px-1 font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-muted">
+    <h2 data-sec="" className="mb-3 mt-9 flex items-center gap-3 px-1 font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-muted">
       <span className="shrink-0">{children}</span>
       <span className="h-px flex-1 border-t border-dashed border-line" />
     </h2>
@@ -75,6 +75,7 @@ export function Button({ children, onClick, variant = 'primary', loading, disabl
   return (
     <button
       type={type}
+      data-btn={variant}
       onClick={onClick}
       disabled={disabled || loading}
       className={cx(
@@ -93,7 +94,7 @@ export function Button({ children, onClick, variant = 'primary', loading, disabl
 
 export function Group({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cx('overflow-hidden rounded-[22px] bg-card', className)}>
+    <div data-panel="" className={cx('overflow-hidden rounded-[22px] bg-card', className)}>
       <div className="divide-y divide-dashed divide-line">{children}</div>
     </div>
   );
@@ -197,7 +198,7 @@ export function Chips({ options, value, onChange, columns = 2 }: {
   return (
     <div className={cx('grid gap-2', cols)}>
       {options.map((o) => (
-        <button key={o.id} onClick={() => onChange(o.id)} className={chipCls(value === o.id)}>{o.label}</button>
+        <button key={o.id} onClick={() => onChange(o.id)} data-chip={value === o.id ? 'on' : ''} className={chipCls(value === o.id)}>{o.label}</button>
       ))}
     </div>
   );
@@ -212,7 +213,7 @@ export function MultiChips({ options, value, onChange, columns = 2 }: {
       {options.map((o) => {
         const on = value.includes(o);
         return (
-          <button key={o} onClick={() => onChange(on ? value.filter((x) => x !== o) : [...value, o])} className={cx(chipCls(on), 'relative')}>
+          <button key={o} onClick={() => onChange(on ? value.filter((x) => x !== o) : [...value, o])} data-chip={on ? 'on' : ''} className={cx(chipCls(on), 'relative')}>
             {on && <span className="absolute right-2.5 top-2.5 h-1.5 w-1.5 rounded-full bg-accent" />}
             {o}
           </button>
@@ -263,11 +264,12 @@ export function Segmented<T extends string>({ options, value, onChange }: {
   options: { id: T; label: string }[]; value: T; onChange: (v: T) => void;
 }) {
   return (
-    <div className="no-scrollbar flex gap-1 overflow-x-auto rounded-full bg-fill p-1">
+    <div data-seg="" className="no-scrollbar flex gap-1 overflow-x-auto rounded-full bg-fill p-1">
       {options.map((o) => (
         <button
           key={o.id}
           onClick={() => onChange(o.id)}
+          data-on={value === o.id ? '1' : undefined}
           className={cx(
             'min-w-fit flex-1 whitespace-nowrap rounded-full px-3.5 py-2 text-[14px] font-medium transition',
             value === o.id ? 'bg-card text-ink shadow-[0_1px_3px_rgba(0,0,0,0.12)]' : 'text-muted',
@@ -343,7 +345,7 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
     <div className="fixed inset-0 z-40 flex items-end justify-center md:items-center md:p-6">
       <div className="absolute inset-0 bg-black/50 animate-fade" onClick={onClose} />
       {/* телефон — лист снизу; компьютер — окно по центру */}
-      <div className="dot-grid relative max-h-[calc(100dvh-var(--safe-top)-24px)] w-full max-w-xl overflow-y-auto rounded-t-[28px] bg-page px-4 pb-[calc(env(safe-area-inset-bottom)+20px)] pt-3 animate-sheet md:max-h-[88dvh] md:rounded-[28px] md:px-6 md:pb-6 md:pt-6 md:shadow-2xl">
+      <div data-sheet="" className="dot-grid relative max-h-[calc(100dvh-var(--safe-top)-24px)] w-full max-w-xl overflow-y-auto rounded-t-[28px] bg-page px-4 pb-[calc(env(safe-area-inset-bottom)+20px)] pt-3 animate-sheet md:max-h-[88dvh] md:rounded-[28px] md:px-6 md:pb-6 md:pt-6 md:shadow-2xl">
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink/20 md:hidden" />
         <div className="mb-5 flex items-center justify-between gap-4">
           <h3 className="font-display text-[26px] font-semibold uppercase leading-none">{title}</h3>

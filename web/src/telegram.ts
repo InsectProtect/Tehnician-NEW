@@ -88,14 +88,14 @@ export const authHeader = () => (rawInitData ? `tma ${rawInitData}` : appToken ?
 /** APK (Capacitor) — открываем Telegram переходом, в браузере — новой вкладкой. */
 export const isNativeApp = () => Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
 
-export type ThemePref = 'dark' | 'light' | 'auto';
-// По умолчанию — тёмная (утверждённый макет). Выбор пользователя приходит из профиля (bootstrap.prefs.theme) и кэшируется локально.
+export type ThemePref = 'bf' | 'dark' | 'light' | 'auto';
+// По умолчанию (v87) — «Battlefield» (тактический тёмный HUD). Выбор пользователя приходит из профиля (bootstrap.prefs.theme) и кэшируется локально.
 let themePref: ThemePref = (() => {
-  try { return (localStorage.getItem('pt_theme') as ThemePref) || 'dark'; } catch { return 'dark'; }
+  try { return (localStorage.getItem('pt_theme') as ThemePref) || 'bf'; } catch { return 'bf'; }
 })();
 
 export function setThemePref(t: ThemePref | undefined) {
-  themePref = t === 'light' || t === 'auto' ? t : 'dark';
+  themePref = t === 'light' || t === 'auto' || t === 'dark' ? t : 'bf';
   try { localStorage.setItem('pt_theme', themePref); } catch { /* нет хранилища */ }
   applyTheme();
 }
@@ -104,9 +104,11 @@ export const getThemePref = () => themePref;
 function applyTheme() {
   const w = wa();
   const system = w?.colorScheme ? w.colorScheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const dark = themePref === 'dark' || (themePref === 'auto' && system);
+  const bf = themePref === 'bf';
+  const dark = bf || themePref === 'dark' || (themePref === 'auto' && system);
   document.documentElement.classList.toggle('dark', dark);
-  const bg = dark ? '#000000' : '#F1F1F1';
+  document.documentElement.classList.toggle('bf', bf);
+  const bg = bf ? '#06080A' : dark ? '#000000' : '#F1F1F1';
   try {
     w?.setHeaderColor?.(bg);
     w?.setBackgroundColor?.(bg);

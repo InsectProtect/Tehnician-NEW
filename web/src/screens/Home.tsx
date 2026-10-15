@@ -24,7 +24,7 @@ import {
 import { LOC } from '../locale';
 
 /** Меняется с каждым архивом — по ней видно, какая версия реально открыта на телефоне. */
-export const APP_VERSION = '2026.10.15-v86';
+export const APP_VERSION = '2026.10.15-v87';
 
 const isToday = (iso: string | null) => !!iso && new Date(iso).toDateString() === new Date().toDateString();
 
@@ -118,7 +118,7 @@ export function Home({ onNew, onOpen, onAdmin, onConfigChanged }: {
               <div className="px-4 py-3">
                 <div className="mb-2 px-1 font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Тема оформления</div>
                 <Segmented<ThemePref>
-                  options={[{ id: 'light', label: 'Светлая' }, { id: 'dark', label: 'Тёмная' }, { id: 'auto', label: 'Как в Telegram' }]}
+                  options={[{ id: 'bf', label: 'Battlefield' }, { id: 'dark', label: 'Тёмная' }, { id: 'light', label: 'Светлая' }, { id: 'auto', label: 'Как в Telegram' }]}
                   value={theme}
                   onChange={(v) => { haptic.tap(); setTheme(v); setThemePref(v); api.setPrefs({ theme: v }).catch(() => {}); }}
                 />
