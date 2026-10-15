@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Camera, Check, DoorOpen, Hand, Warehouse, Eraser, ImagePlus, Layers, MapPin, Minus, Move, Pencil, Plus, Square, Trash2, Type, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { Camera, Check, DoorOpen, Hand, Tag, ListOrdered, Warehouse, Eraser, ImagePlus, Layers, MapPin, Minus, Move, Pencil, Plus, Square, Trash2, Type, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { api } from '../api';
 import { useConfig } from '../config';
 import { compressImage } from '../image';
@@ -15,7 +15,7 @@ import { Button, Input, Spinner, cx, useToast } from '../components/ui';
  * ================================================================================================ */
 
 type Mode = 'view' | 'place' | 'draw';
-type Tool = 'pan' | 'move' | 'rect' | 'line' | 'door' | 'gate' | 'text' | 'spot' | 'erase';
+type Tool = 'pan' | 'edit' | 'move' | 'rect' | 'line' | 'door' | 'gate' | 'text' | 'spot' | 'erase';
 /** Что ставим заранее (без QR): назначение + устройство. */
 const SPOT_TYPES = [
   { id: 'rod', target: 'rodents', kind: 'Родентицидная станция', label: '● Грызуны · яд' },
@@ -47,7 +47,9 @@ const snap = (v: number) => Math.round(v / SNAP) * SNAP;
 /** Значок станции: грызуны — круг, ползающие — ромб, летающие — треугольник. */
 function Marker({ t, x, y, fill: fill0, ring, dim, onClick, ms = 1 }: { t: PlanTrap; x: number; y: number; fill: string; ring?: boolean; dim?: boolean; onClick?: () => void; ms?: number }) {
   const R = R0 * ms;
-  const dev = deviceStyle(t.kind);
+  const dev0 = deviceStyle(t.kind);
+  // v86: своя подпись и цвет станции перекрывают «по виду устройства»
+  const dev = { ...dev0, color: t.color || dev0.color, tag: t.label != null && t.label !== '' ? t.label : dev0.tag };
   let fill = fill0;
   // без результатов проверки (подготовка, план) — заливка цветом устройства
   if (fill === '#0066CC') fill = dev.color;
@@ -68,7 +70,7 @@ function Marker({ t, x, y, fill: fill0, ring, dim, onClick, ms = 1 }: { t: PlanT
       <text x={x} y={y + 9.5 * ms} textAnchor="middle" fontSize={27 * ms} fontWeight={800} fill={txt} fontFamily="-apple-system,system-ui,sans-serif" style={{ pointerEvents: 'none' }}>{t.number || '•'}</text>
       {dev.tag && (
         <g style={{ pointerEvents: 'none' }}>
-          <rect x={x - ((dev.tag.length * 12.5 + 16) * ms) / 2} y={y + R + 7 * ms} width={(dev.tag.length * 12.5 + 16) * ms} height={30 * ms} rx={15 * ms} fill={dev.color} stroke="#fff" strokeWidth={3 * ms} />
+          <rect x={x - ((dev.tag.length * 13 + 16) * ms) / 2} y={y + R + 7 * ms} width={(dev.tag.length * 13 + 16) * ms} height={30 * ms} rx={15 * ms} fill={dev.color} stroke="#fff" strokeWidth={3 * ms} />
           <text x={x} y={y + R + 29 * ms} textAnchor="middle" fontSize={22 * ms} fontWeight={700} fill="#fff" fontFamily="-apple-system,system-ui,sans-serif">{dev.tag}</text>
         </g>
       )}
@@ -76,7 +78,7 @@ function Marker({ t, x, y, fill: fill0, ring, dim, onClick, ms = 1 }: { t: PlanT
   );
 }
 
-function Drawing({ shapes, h, onErase, onDown, ms = 1 }: { shapes: PlanShape[]; h: number; onErase?: (i: number) => void; onDown?: (i: number, e: RPointerEvent<SVGElement>) => void; ms?: number }) {
+function Drawing({ shapes, h, onErase, onDown, onPick, ms = 1 }: { shapes: PlanShape[]; h: number; onErase?: (i: number) => void; onDown?: (i: number, e: RPointerEvent<SVGElement>) => void; onPick?: (i: number) => void; ms?: number }) {
   const R = R0 * ms;
   return (
     <g>
@@ -94,9 +96,10 @@ function Drawing({ shapes, h, onErase, onDown, ms = 1 }: { shapes: PlanShape[]; 
         }
         if (s.t === 'spot') {
           // запланированная станция: пунктирный контур с номером
-          const pt0 = { id: s.id, code: '', number: s.n, kind: s.kind, target: s.target, location: '', prepared: false, plan_id: null, plan_x: s.x, plan_y: s.y };
+          const pt0 = { id: s.id, code: '', number: s.n, kind: s.kind, target: s.target, location: '', prepared: false, plan_id: null, plan_x: s.x, plan_y: s.y, label: s.label, color: s.color };
+          const pick = onPick ? { style: { cursor: 'pointer' }, onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation(); onPick(i); } } : {};
           return (
-            <g key={i} onClick={click} {...hit}>
+            <g key={i} onClick={click} {...hit} {...pick}>
               <circle cx={s.x} cy={s.y} r={R * 1.25} fill="#FFFFFF" fillOpacity={0.85} stroke="#0066CC" strokeWidth={4 * ms} strokeDasharray={`${7 * ms} ${6 * ms}`} />
               <g opacity={0.55}><Marker t={pt0} x={s.x} y={s.y} fill="#8E8E93" ms={ms} /></g>
             </g>
@@ -171,8 +174,111 @@ function AttachForm({ draft, onDone, onCancel }: { draft: string; onDone: (o: { 
   );
 }
 
-export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId, onOpenTrap, onClose, draft: isDraftPlan }: {
+/** Цвета станций на выбор (пусто — по виду устройства). */
+const PALETTE = ['#7D3CFF', '#0A84FF', '#A2845E', '#1FA6BF', '#E0A100', '#FF3B30', '#FF9500', '#34C759', '#FF2D55', '#1D1D1F'];
+
+export type StationEditValue = { number: number; label: string; color: string; target: string; kind: string; location?: string };
+
+/** v86: правка станции — номер, подпись на плане, цвет, назначение и устройство (и место — у настоящей станции). */
+export function StationEditSheet({ value, spot, onSave, onDelete, onCancel }: {
+  value: StationEditValue;
+  /** запланированная точка (без QR) — без поля «Место», можно удалить */
+  spot?: boolean;
+  onSave: (v: StationEditValue) => Promise<void> | void;
+  onDelete?: () => void;
+  onCancel: () => void;
+}) {
+  const cfg = useConfig();
+  const toast = useToast();
+  const [v, setV] = useState<StationEditValue>(value);
+  const [num, setNum] = useState(String(value.number || ''));
+  const [busy, setBusy] = useState(false);
+  const set = (p: Partial<StationEditValue>) => setV((x) => ({ ...x, ...p }));
+  const target = cfg.stationTargets.find((x) => x.id === v.target);
+  const devices = target?.devices || [];
+  const auto = deviceStyle(v.kind);
+  const n = Math.floor(Number(num));
+  async function save() {
+    setBusy(true);
+    try { await onSave({ ...v, number: n, label: v.label.trim() }); haptic.success(); } catch (e) { toast((e as Error).message, 'error'); setBusy(false); }
+  }
+  const preview: PlanTrap = { id: 'p', code: '', number: n || 0, kind: v.kind, target: v.target, location: '', prepared: false, plan_id: null, plan_x: 0, plan_y: 0, label: v.label.trim(), color: v.color };
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-end bg-black/40" onClick={onCancel}>
+      <div className="max-h-[92vh] w-full overflow-y-auto rounded-t-[26px] bg-page px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-4" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between">
+          <div className="text-[18px] font-semibold">{spot ? 'Запланированная станция' : 'Изменить станцию'}</div>
+          <button onClick={onCancel} className="p-1 text-muted"><X size={18} /></button>
+        </div>
+        <div className="mb-4 flex items-center gap-4 rounded-2xl bg-card p-3">
+          <svg viewBox="-60 -50 120 120" className="h-[78px] w-[78px] shrink-0"><Marker t={preview} x={0} y={0} fill="#0066CC" ms={1} /></svg>
+          <div className="min-w-0 text-[13.5px] leading-snug text-muted">Так станция будет выглядеть на плане. Подпись — под значком, цвет — обводка и заливка.</div>
+        </div>
+        <div className="space-y-4">
+          <div className="grid grid-cols-[96px_1fr] gap-2">
+            <div>
+              <div className="mb-1.5 px-1 text-[12.5px] font-medium text-muted">Номер</div>
+              <Input inputMode="numeric" value={num} onChange={(e) => setNum(e.target.value.replace(/\D/g, '').slice(0, 4))} className="text-center font-mono text-[18px] font-bold" />
+            </div>
+            <div>
+              <div className="mb-1.5 px-1 text-[12.5px] font-medium text-muted">Подпись на плане</div>
+              <Input maxLength={14} placeholder={auto.tag ? `по виду: ${auto.tag}` : 'например: кухня-1'} value={v.label} onChange={(e) => set({ label: e.target.value.slice(0, 14) })} />
+            </div>
+          </div>
+          <div>
+            <div className="mb-1.5 px-1 text-[12.5px] font-medium text-muted">Цвет</div>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => { haptic.tap(); set({ color: '' }); }}
+                className={cx('flex h-10 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium ring-inset', !v.color ? 'bg-ink text-card' : 'bg-card ring-1 ring-line')}>
+                <i className="inline-block h-4 w-4 rounded-full" style={{ background: auto.color }} />по виду
+              </button>
+              {PALETTE.map((c) => (
+                <button key={c} aria-label={c} onClick={() => { haptic.tap(); set({ color: c }); }}
+                  className={cx('h-10 w-10 rounded-full ring-offset-2 ring-offset-page', v.color.toLowerCase() === c.toLowerCase() ? 'ring-[3px] ring-ink' : '')} style={{ background: c }} />
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="mb-1.5 px-1 text-[12.5px] font-medium text-muted">Против кого</div>
+            <div className="flex flex-wrap gap-1.5">
+              {cfg.stationTargets.map((t) => (
+                <button key={t.id} onClick={() => { haptic.tap(); set({ target: t.id, kind: t.devices.includes(v.kind) ? v.kind : t.devices[0] || v.kind }); }}
+                  className={cx('rounded-full px-3.5 py-2 text-[13.5px] font-medium', v.target === t.id ? 'bg-ink text-card' : 'bg-card ring-1 ring-inset ring-line')}>{t.label}</button>
+              ))}
+            </div>
+          </div>
+          {devices.length > 0 && (
+            <div>
+              <div className="mb-1.5 px-1 text-[12.5px] font-medium text-muted">Устройство</div>
+              <div className="flex flex-wrap gap-1.5">
+                {devices.map((k) => (
+                  <button key={k} onClick={() => { haptic.tap(); set({ kind: k }); }}
+                    className={cx('flex items-center rounded-full px-3.5 py-2 text-[13.5px] font-medium', v.kind === k ? 'bg-ink text-card' : 'bg-card ring-1 ring-inset ring-line')}>
+                    <i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full" style={{ background: deviceStyle(k).color }} />{k}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {!spot && (
+            <div>
+              <div className="mb-1.5 px-1 text-[12.5px] font-medium text-muted">Где стоит</div>
+              <Input placeholder="Например: кухня, под мойкой слева" value={v.location || ''} onChange={(e) => set({ location: e.target.value })} />
+            </div>
+          )}
+        </div>
+        <Button className="mt-5" loading={busy} disabled={!n || n < 1} onClick={save} icon={<Check size={19} />}>Сохранить</Button>
+        {onDelete && <button onClick={onDelete} className="mt-2 w-full py-2 text-center text-[14px] font-medium text-[#D70015]">Удалить точку с плана</button>}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId, onOpenTrap, onClose, onChanged, draft: isDraftPlan }: {
   objectId: string; title?: string;
+  /** станции изменены (номер, подпись, цвет) — обновить список выезда */
+  onChanged?: () => void;
   /** план рисуют заранее, без клиента: после рисования — «Чей это объект?» */
   draft?: boolean;
   /** станции выезда (с результатами проверки) — для цвета точек */
@@ -216,6 +322,8 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
   const [confirmDel, setConfirmDel] = useState(false);
   const [rename, setRename] = useState<string | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [edit, setEdit] = useState<{ trap: string } | { spot: number } | null>(null);
+  const [renumAsk, setRenumAsk] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
   const camRef = useRef<HTMLInputElement>(null);
@@ -396,7 +504,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
   // ---------- рисование ----------
   const commit = (next: PlanShape[]) => { setHist((h) => [...h.slice(-40), shapes]); setShapes(next); setDirty(true); };
   function down(e: RPointerEvent<SVGSVGElement>) {
-    if (mode !== 'draw' || tool === 'erase' || tool === 'move' || tool === 'pan' || ptrs.current.size > 1) return;
+    if (mode !== 'draw' || tool === 'erase' || tool === 'move' || tool === 'pan' || tool === 'edit' || ptrs.current.size > 1) return;
     const p = pt(e);
     if (tool === 'text') { setAsk({ kind: 'text', x: snap(p.x), y: snap(p.y) }); setAskText(''); return; }
     if (tool === 'spot') {
@@ -502,11 +610,39 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
     } catch (e) { toast((e as Error).message, 'error'); }
   }
 
+  // ---------- v86: правка станций (номер, подпись, цвет, вид) ----------
+  async function saveTrapEdit(id: string, v: StationEditValue) {
+    await api.patchTrap(id, { number: v.number, label: v.label, color: v.color, target: v.target, kind: v.kind, location: v.location });
+    apply(await api.objectPlans(objectId), planId);
+    setEdit(null); toast('Станция изменена'); onChanged?.();
+  }
+  async function saveSpotEdit(i: number, v: StationEditValue) {
+    if (!plan) return;
+    const next = shapes.map((sh, j) => (j === i && sh.t === 'spot' ? { ...sh, n: v.number, label: v.label, color: v.color, target: v.target, kind: v.kind } : sh));
+    commit(next);
+    const r = await api.savePlan(plan.id, { drawing: next });
+    setD((x) => (x ? { ...x, plans: x.plans.map((p) => (p.id === plan.id ? r.plan : p)) } : x));
+    setDirty(false); setEdit(null);
+  }
+  async function renumber() {
+    if (!plan) return;
+    if (!renumAsk) { setRenumAsk(true); haptic.tap(); return; }
+    setBusy(true);
+    try {
+      if (dirty) await saveDrawing();
+      apply(await api.renumberPlan(plan.id), plan.id);
+      setRenumAsk(false); haptic.success(); toast('Номера расставлены по порядку'); onChanged?.();
+    } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(false); }
+  }
+  const editTrap = edit && 'trap' in edit ? traps.find((t) => t.id === edit.trap) : undefined;
+  const editSpot = edit && 'spot' in edit ? shapes[edit.spot] : undefined;
+
   const cardTrap = traps.find((t) => t.id === card);
   const selTrap = traps.find((t) => t.id === sel);
   const tools: { id: Tool; icon: JSX.Element; label: string }[] = [
     { id: 'pan', icon: <Hand size={18} />, label: 'Листать' },
     { id: 'move', icon: <Move size={18} />, label: 'Двигать' },
+    { id: 'edit', icon: <Tag size={18} />, label: 'Править' },
     { id: 'rect', icon: <Square size={18} />, label: 'Комната' },
     { id: 'line', icon: <Minus size={18} className="-rotate-45" />, label: 'Стена' },
     { id: 'door', icon: <DoorOpen size={18} />, label: 'Дверь' },
@@ -620,11 +756,12 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                   )}
                   <Drawing shapes={mode === 'draw' ? shapes : plan.drawing} h={plan.h} ms={ms}
                     onErase={mode === 'draw' && tool === 'erase' ? (i) => { haptic.tap(); commit(shapes.filter((_, j) => j !== i)); } : undefined}
-                    onDown={mode === 'draw' && tool === 'move' ? startDrag : undefined} />
+                    onDown={mode === 'draw' && tool === 'move' ? startDrag : undefined}
+                    onPick={(mode === 'draw' && tool === 'edit') || mode === 'view' ? (i) => { haptic.tap(); setEdit({ spot: i }); } : undefined} />
                   {draft && <Drawing shapes={[draft]} h={plan.h} ms={ms} />}
                   {onPlan.map((t) => (
-                    <Marker key={t.id} ms={ms} t={t} x={t.plan_x!} y={t.plan_y!} fill={fillOf(t)} ring={t.id === card || t.id === sel || t.id === focusId} dim={mode === 'draw'}
-                      onClick={mode === 'draw' ? undefined : () => {
+                    <Marker key={t.id} ms={ms} t={t} x={t.plan_x!} y={t.plan_y!} fill={fillOf(t)} ring={t.id === card || t.id === sel || t.id === focusId} dim={mode === 'draw' && tool !== 'edit'}
+                      onClick={mode === 'draw' ? (tool === 'edit' ? () => { haptic.tap(); setEdit({ trap: t.id }); } : undefined) : () => {
                         if (moved.current) return;
                         if (mode === 'place') { setSel(t.id); haptic.tap(); return; }
                         setCard(t.id); haptic.tap();
@@ -652,8 +789,9 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                   <button onClick={() => setCard('')} className="p-1 text-muted"><X size={18} /></button>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  {onOpenTrap && <Button className="h-[44px] text-[14px]" onClick={() => onOpenTrap(cardTrap.id)}>Открыть</Button>}
-                  <Button variant="secondary" className={cx('h-[44px] text-[14px]', !onOpenTrap && 'col-span-2')} onClick={() => { setMode('place'); setSel(cardTrap.id); setCard(''); }} icon={<Move size={16} />}>Передвинуть</Button>
+                  {onOpenTrap && <Button className="col-span-2 h-[44px] text-[14px]" onClick={() => onOpenTrap(cardTrap.id)}>Открыть</Button>}
+                  <Button variant="secondary" className="h-[44px] text-[14px]" onClick={() => { setMode('place'); setSel(cardTrap.id); setCard(''); }} icon={<Move size={16} />}>Передвинуть</Button>
+                  <Button variant="secondary" className="h-[44px] text-[14px]" onClick={() => setEdit({ trap: cardTrap.id })} icon={<Tag size={16} />}>Изменить</Button>
                 </div>
               </div>
             ) : (
@@ -688,7 +826,16 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                     </button>
                   ))}
                 </div>
-                {selTrap?.plan_id && <button onClick={() => unplace(selTrap.id)} className="mt-1 px-1 text-[13px] text-[#D70015]">Убрать № {selTrap.number} с плана</button>}
+                <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[13px]">
+                  {selTrap && <button onClick={() => setEdit({ trap: selTrap.id })} className="font-medium text-accent-ink"><Tag size={13} className="inline -translate-y-px" /> Изменить № {selTrap.number}</button>}
+                  {selTrap?.plan_id && <button onClick={() => unplace(selTrap.id)} className="text-[#D70015]">Убрать с плана</button>}
+                  {(onPlan.length > 1 || spots.length > 1) && (
+                    <button onClick={renumber} disabled={busy} className={cx('ml-auto font-medium', renumAsk ? 'rounded-full bg-accent px-3 py-1 text-white' : 'text-accent-ink')}>
+                      <ListOrdered size={13} className="inline -translate-y-px" /> {renumAsk ? 'Точно перенумеровать?' : 'Пронумеровать по порядку'}
+                    </button>
+                  )}
+                </div>
+                {renumAsk && <div className="mt-1 px-1 text-[12px] leading-snug text-muted">Номера пойдут сверху вниз, слева направо по этому плану: сначала станции объекта, потом запланированные точки. Подписи и цвета не меняются.</div>}
               </div>
             )}
 
@@ -721,7 +868,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
                     </div>
                   )}
                   <div className="mt-1.5 px-1 text-[12px] text-muted">
-                    {tool === 'pan' ? 'Листайте одним пальцем, увеличивайте двумя (щипком) — потом выберите инструмент и рисуйте, сетка станет мельче' : tool === 'move' ? 'Потяните фигуру — она переедет; синий уголок комнаты — растянуть или сжать' : tool === 'spot' ? 'Тапайте, где будут станции — номера идут по порядку. На объекте отсканируете QR и тапнете точку' : tool === 'gate' ? 'Проведите по ширине ворот' : tool === 'rect' ? 'Проведите пальцем по диагонали — получится комната' : tool === 'line' ? 'Проведите пальцем — стена (ровняется сама)' : tool === 'door' ? 'Проведите по ширине проёма' : tool === 'text' ? 'Тапните, где поставить подпись' : 'Тапните по фигуре, чтобы удалить'}
+                    {tool === 'edit' ? 'Тапните станцию или запланированную точку — поменяйте номер, подпись, цвет и вид' : tool === 'pan' ? 'Листайте одним пальцем, увеличивайте двумя (щипком) — потом выберите инструмент и рисуйте, сетка станет мельче' : tool === 'move' ? 'Потяните фигуру — она переедет; синий уголок комнаты — растянуть или сжать' : tool === 'spot' ? 'Тапайте, где будут станции — номера идут по порядку. На объекте отсканируете QR и тапнете точку' : tool === 'gate' ? 'Проведите по ширине ворот' : tool === 'rect' ? 'Проведите пальцем по диагонали — получится комната' : tool === 'line' ? 'Проведите пальцем — стена (ровняется сама)' : tool === 'door' ? 'Проведите по ширине проёма' : tool === 'text' ? 'Тапните, где поставить подпись' : 'Тапните по фигуре, чтобы удалить'}
                   </div>
                   <div className="mt-2 flex items-center gap-1.5 px-1 text-[12.5px] text-muted">
                     <span className="mr-auto">Весь рисунок</span>
@@ -747,6 +894,15 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
         </>
       )}
 
+      {editTrap && (
+        <StationEditSheet value={{ number: editTrap.number, label: editTrap.label || '', color: editTrap.color || '', target: editTrap.target, kind: editTrap.kind, location: editTrap.location }}
+          onCancel={() => setEdit(null)} onSave={(v) => saveTrapEdit(editTrap.id, v)} />
+      )}
+      {editSpot?.t === 'spot' && edit && 'spot' in edit && (
+        <StationEditSheet spot value={{ number: editSpot.n, label: editSpot.label || '', color: editSpot.color || '', target: editSpot.target, kind: editSpot.kind }}
+          onCancel={() => setEdit(null)} onSave={(v) => saveSpotEdit(edit.spot, v)}
+          onDelete={() => { const i = edit.spot; setEdit(null); commit(shapes.filter((_, j) => j !== i)); }} />
+      )}
       {attachOpen && (
         <AttachForm draft={objectId} onCancel={() => setAttachOpen(false)}
           onDone={(o) => { setAttachOpen(false); toast(`План привязан: ${o.company_name} · ${o.address}`); onClose(); }} />

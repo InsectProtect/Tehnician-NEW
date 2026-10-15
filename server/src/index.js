@@ -232,7 +232,7 @@ async function loadObservations(visitId) {
  *  { all: true } — вместе с подготовленными заранее, но ещё не установленными (экран выезда, скан). */
 async function visitRows(visit, { all = false } = {}) {
   return db.query(
-    `SELECT t.id, t.code, t.number, t.kind, t.location, t.target, t.prepared, t.plan_id, t.plan_x, t.plan_y,
+    `SELECT t.id, t.code, t.number, t.kind, t.location, t.target, t.prepared, t.plan_id, t.plan_x, t.plan_y, t.label, t.color,
             i.status, i.pest, i.count, i.bait_replaced, i.comment, i.created_at AS checked_at, i.condition, i.bait_eaten
        FROM traps t
        LEFT JOIN inspections i ON i.trap_id = t.id AND i.visit_id = $1
@@ -274,6 +274,7 @@ function shapeRow(r) {
   return {
     id: r.id, code: r.code, number: Number(r.number), kind: r.kind, location: r.location, target: r.target || '', prepared: Number(r.prepared) === 1,
     plan_id: r.plan_id || null, plan_x: r.plan_x == null ? null : Number(r.plan_x), plan_y: r.plan_y == null ? null : Number(r.plan_y),
+    label: r.label || '', color: r.color || '',
     inspection: r.status
       ? {
         status: r.status, pest: r.pest, count: Number(r.count), bait_replaced: Boolean(Number(r.bait_replaced)), comment: r.comment, checked_at: r.checked_at,
@@ -3908,11 +3909,23 @@ route('PATCH', '/api/traps/:id', async ({ params, body }) => {
   must(t, 404, 'Ловушка не найдена');
   const kind = body.kind !== undefined ? str(body.kind, 100) : t.kind;
   must(TRAP_KINDS.includes(kind), 400, 'Неизвестный тип ловушки');
-  await db.query('UPDATE traps SET number = $1, kind = $2, location = $3, active = $4 WHERE id = $5', [
-    body.number !== undefined ? Math.max(1, Math.floor(Number(body.number)) || 1) : t.number,
+  // v86: назначение, номер (без повторов на объекте), своя подпись и цвет на плане
+  const target = body.target !== undefined ? str(body.target, 20) : t.target || '';
+  must(!target || STATION_TARGETS.some((x) => x.id === target), 400, 'Неизвестное назначение станции');
+  const number = body.number !== undefined ? Math.max(1, Math.min(9999, Math.floor(Number(body.number)) || 1)) : Number(t.number);
+  if (number !== Number(t.number) && t.object_id !== 'stock') {
+    const [busy] = await db.query('SELECT id FROM traps WHERE object_id = $1 AND active = 1 AND number = $2 AND id <> $3', [t.object_id, number, t.id]);
+    must(!busy, 409, `Номер ${number} на этом объекте уже занят`);
+  }
+  const color = body.color !== undefined ? (/^#[0-9a-f]{6}$/i.test(String(body.color)) ? String(body.color) : '') : t.color || '';
+  await db.query('UPDATE traps SET number = $1, kind = $2, location = $3, active = $4, target = $5, label = $6, color = $7 WHERE id = $8', [
+    number,
     kind,
     body.location !== undefined ? str(body.location, 200) : t.location,
     body.active !== undefined ? (body.active ? 1 : 0) : t.active,
+    target,
+    body.label !== undefined ? str(body.label, 14) : t.label || '',
+    color,
     t.id,
   ]);
   return { ok: true };

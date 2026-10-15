@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Camera, CheckCircle2, MessageSquareWarning, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Map as MapIcon, Pencil, Printer, RefreshCw, ScanLine, Send, Share2, Target, Trash2 } from 'lucide-react';
+import { Camera, CheckCircle2, MessageSquareWarning, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Map as MapIcon, Pencil, Printer, RefreshCw, ScanLine, Send, Share2, Tag, Target, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { fmtDate, plural, useConfig } from '../config';
 import { callPhone, canScanQr, getLocation, haptic, openLink, prettyPhone, scanQr, useBackButton } from '../telegram';
@@ -18,7 +18,7 @@ import { MediaCard } from '../components/MediaUpload';
 import { FinishSheet, InspectSheet, ManualSheet, MessageSheet, ObservationSheet, RegisterSheet, RemarkSheet } from './VisitSheets';
 import { playSound } from '../sounds';
 import { takePendingScan } from '../pendingScan';
-import { PlanSheet } from './Plan';
+import { PlanSheet, StationEditSheet, deviceStyle } from './Plan';
 
 type SheetState =
   | null
@@ -424,7 +424,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           title={t.location || t.kind}
           subtitle={
             <>
-              <div className="truncate">{[targetLabel(t.target), t.kind].filter(Boolean).join(' · ')}</div>
+              <div className="truncate">{(t.label || t.color) && <i className="mr-1 inline-block h-2.5 w-2.5 rounded-full align-[-1px]" style={{ background: t.color || deviceStyle(t.kind).color }} />}{[t.label, targetLabel(t.target), t.kind].filter(Boolean).join(' · ')}</div>
               {trapResult(t) && <div className="mt-0.5 truncate text-ink">{trapResult(t)}</div>}
             </>
           }
@@ -946,6 +946,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           trap={sheet.trap}
           onClose={() => setSheet(sheet.back ? { type: 'service', focusId: sheet.trap.id } : null)}
           onScan={() => { setSheet(null); setTimeout(startScan, 250); }}
+          onEdited={() => { load(); setSheet(sheet.back ? { type: 'service', focusId: sheet.trap.id } : null); }}
           onRecoded={(trap) => { load(); setSheet(trap.prepared ? { type: 'install', trap, back: sheet.back } : { type: 'inspect', trap, back: sheet.back }); }}
         />
       )}
@@ -1006,6 +1007,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           focusId={sheet.focusId}
           placeId={sheet.placeId}
           onOpenTrap={openTrapById}
+          onChanged={load}
           onClose={() => { const then = sheet.then; load(); setSheet(then ? { type: 'inspect', trap: then } : null); }}
         />
       )}
@@ -1226,10 +1228,11 @@ function ServiceSheet({ traps, focusId, statusLabel, targetLabel, trapResult, on
  * QR станции: повреждённую/потерянную этикетку меняют на новую прямо на объекте — станция та же
  * (номер, место, история осмотров), меняется только код. Можно и перепечатать этот же код (PDF).
  */
-function TrapQrSheet({ visitId, trap, onClose, onScan, onRecoded }: {
-  visitId: string; trap: Trap; onClose: () => void; onScan: () => void; onRecoded: (t: Trap) => void;
+function TrapQrSheet({ visitId, trap, onClose, onScan, onRecoded, onEdited }: {
+  visitId: string; trap: Trap; onClose: () => void; onScan: () => void; onRecoded: (t: Trap) => void; onEdited: () => void;
 }) {
   const toast = useToast();
+  const [editOpen, setEditOpen] = useState(false);
   const [busy, setBusy] = useState<'' | 'scan' | 'manual' | 'print'>('');
   const [manual, setManual] = useState(false);
   const [code, setCode] = useState('PT-');
@@ -1292,7 +1295,18 @@ function TrapQrSheet({ visitId, trap, onClose, onScan, onRecoded }: {
           <Button variant="plain" onClick={() => setManual(true)} icon={<Keyboard size={18} strokeWidth={1.75} />}>Ввести код новой этикетки</Button>
         )}
         <Button variant="plain" loading={busy === 'print'} onClick={reprint} icon={<Printer size={18} strokeWidth={1.75} />}>Напечатать этот же QR заново</Button>
+        <Button variant="plain" onClick={() => setEditOpen(true)} icon={<Tag size={18} strokeWidth={1.75} />}>Номер, подпись и цвет станции</Button>
       </div>
+      {editOpen && (
+        <StationEditSheet value={{ number: trap.number, label: trap.label || '', color: trap.color || '', target: trap.target || '', kind: trap.kind, location: trap.location }}
+          onCancel={() => setEditOpen(false)}
+          onSave={async (v) => {
+            await api.patchTrap(trap.id, { number: v.number, label: v.label, color: v.color, target: v.target, kind: v.kind, location: v.location });
+            toast('Станция изменена');
+            setEditOpen(false);
+            onEdited();
+          }} />
+      )}
     </Sheet>
   );
 }

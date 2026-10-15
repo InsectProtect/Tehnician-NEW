@@ -511,6 +511,9 @@ const MIGRATIONS = [
   'ALTER TABLE traps ADD COLUMN plan_x REAL',
   'ALTER TABLE traps ADD COLUMN plan_y REAL',
   'ALTER TABLE object_plans ADD COLUMN mscale REAL',
+  // v86: своя подпись и цвет станции на плане
+  "ALTER TABLE traps ADD COLUMN label TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE traps ADD COLUMN color TEXT NOT NULL DEFAULT ''",
   "CREATE TABLE IF NOT EXISTS qr_batches (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'new', codes TEXT NOT NULL, opts TEXT NOT NULL DEFAULT '{}', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)",
   "ALTER TABLE traps ADD COLUMN old_codes TEXT NOT NULL DEFAULT ''",
 ];

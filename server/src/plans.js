@@ -26,7 +26,7 @@ function cleanDrawing(list, h) {
       if ([r.x, r.y, r.w, r.h].every((v) => v != null)) out.push(r);
     } else if (s.t === 'spot') {
       // запланированная станция (без QR): поставят на объекте — привяжется к этой точке
-      const sp = { t: 'spot', id: String(s.id || '').slice(0, 24) || Math.random().toString(36).slice(2, 10), x: X(s.x), y: Y(s.y), target: ['rodents', 'crawling', 'flying'].includes(s.target) ? s.target : 'rodents', kind: String(s.kind || '').slice(0, 60), n: Math.max(0, Math.min(9999, Math.floor(Number(s.n)) || 0)) };
+      const sp = { t: 'spot', id: String(s.id || '').slice(0, 24) || Math.random().toString(36).slice(2, 10), x: X(s.x), y: Y(s.y), target: ['rodents', 'crawling', 'flying'].includes(s.target) ? s.target : 'rodents', kind: String(s.kind || '').slice(0, 60), n: Math.max(0, Math.min(9999, Math.floor(Number(s.n)) || 0)), label: String(s.label || '').slice(0, 14), color: /^#[0-9a-f]{6}$/i.test(String(s.color || '')) ? String(s.color) : '' };
       if (sp.x != null && sp.y != null) out.push(sp);
     } else if (s.t === 'line' || s.t === 'door' || s.t === 'gate') {
       const l = { t: s.t, x1: X(s.x1), y1: Y(s.y1), x2: X(s.x2), y2: Y(s.y2) };
@@ -121,12 +121,13 @@ export function initPlans(ctx) {
     let plans = await db.query('SELECT * FROM object_plans WHERE object_id = $1 ORDER BY sort, created_at', [objectId]);
     if (!plans.length) { await adoptPlans(objectId); plans = await db.query('SELECT * FROM object_plans WHERE object_id = $1 ORDER BY sort, created_at', [objectId]); }
     const traps = await db.query(
-      'SELECT id, code, number, kind, target, location, prepared, plan_id, plan_x, plan_y FROM traps WHERE object_id = $1 AND active = 1 ORDER BY number, created_at', [objectId],
+      'SELECT id, code, number, kind, target, location, prepared, plan_id, plan_x, plan_y, label, color FROM traps WHERE object_id = $1 AND active = 1 ORDER BY number, created_at', [objectId],
     );
     return {
       plans: plans.map(shape),
       traps: traps.map((t) => ({
         id: t.id, code: t.code, number: Number(t.number), kind: t.kind, target: t.target || '', location: t.location || '', prepared: Number(t.prepared) === 1,
+        label: t.label || '', color: t.color || '',
         plan_id: t.plan_id || null, plan_x: t.plan_x == null ? null : Number(t.plan_x), plan_y: t.plan_y == null ? null : Number(t.plan_y),
       })),
     };
@@ -232,6 +233,26 @@ export function initPlans(ctx) {
     await db.query('UPDATE object_plans SET object_id = $1 WHERE object_id = $2', [o.id, draft]);
     await audit(user, 'План объекта привязан', `${o.company_name} · ${o.address}`, `${n} план(а)`);
     return { object: { id: o.id, company_name: o.company_name, address: o.address } };
+  });
+
+  // v86: перенумеровать по порядку на плане (сверху вниз, слева направо): станции объекта, затем запланированные точки
+  route('POST', '/api/plans/:id/renumber', async ({ params, user }) => {
+    must(canEdit(user), 403, 'Нет доступа');
+    const p = await planOf(params.id);
+    const ROW = 90; // точки в одной «полосе» по высоте считаем одним рядом
+    const order = (a, b) => (Math.round(a.y / ROW) - Math.round(b.y / ROW)) || (a.x - b.x);
+    const traps = await db.query('SELECT id, number, plan_id, plan_x, plan_y FROM traps WHERE object_id = $1 AND active = 1', [p.object_id]);
+    const onPlan = traps.filter((t) => t.plan_id === p.id && t.plan_x != null).map((t) => ({ id: t.id, x: Number(t.plan_x), y: Number(t.plan_y) })).sort(order);
+    const rest = traps.filter((t) => !onPlan.some((o) => o.id === t.id)).sort((a, b) => Number(a.number) - Number(b.number));
+    let n = 0;
+    for (const t of [...onPlan, ...rest]) await db.query('UPDATE traps SET number = $1 WHERE id = $2', [++n, t.id]);
+    let drawing = [];
+    try { drawing = JSON.parse(p.drawing || '[]'); } catch { /* пусто */ }
+    const spots = drawing.filter((d) => d.t === 'spot').sort(order);
+    for (const sp of spots) sp.n = ++n;
+    if (spots.length) await db.query('UPDATE object_plans SET drawing = $1, updated_at = $2 WHERE id = $3', [JSON.stringify(drawing), now(), p.id]);
+    await audit(user, 'Станции перенумерованы', p.title, `${n} шт.`);
+    return objectPlans(p.object_id);
   });
 
   /** Свободные запланированные точки объекта (для подсказки при установке). */

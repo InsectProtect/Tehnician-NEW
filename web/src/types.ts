@@ -150,6 +150,8 @@ export type Trap = {
   /** подготовлена заранее, ещё не установлена на объекте */
   prepared?: boolean;
   plan_id?: string | null; plan_x?: number | null; plan_y?: number | null;
+  /** своя подпись и цвет на плане (v86) */
+  label?: string; color?: string;
   inspection: Inspection | null;
 };
 
@@ -157,10 +159,10 @@ export type Trap = {
 export type PlanShape =
   | { t: 'rect'; x: number; y: number; w: number; h: number; label?: string }
   | { t: 'line' | 'door' | 'gate'; x1: number; y1: number; x2: number; y2: number }
-  | { t: 'spot'; id: string; x: number; y: number; target: string; kind: string; n: number }
+  | { t: 'spot'; id: string; x: number; y: number; target: string; kind: string; n: number; label?: string; color?: string }
   | { t: 'text'; x: number; y: number; s: string };
 export interface ObjectPlan { id: string; object_id: string; title: string; w: number; h: number; mscale?: number; image_url: string | null; drawing: PlanShape[]; updated_at: string }
-export interface PlanTrap { id: string; code: string; number: number; kind: string; target: string; location: string; prepared: boolean; plan_id: string | null; plan_x: number | null; plan_y: number | null }
+export interface PlanTrap { id: string; code: string; number: number; kind: string; target: string; location: string; prepared: boolean; plan_id: string | null; plan_x: number | null; plan_y: number | null; label?: string; color?: string }
 export interface PlansRes { object?: { id: string; company_name: string; address: string }; plans: ObjectPlan[]; traps: PlanTrap[]; plan?: ObjectPlan }
 
 /** Оплата при завершении: наличные / перечисление / без оплаты (гарантия) / несколько дней. */
