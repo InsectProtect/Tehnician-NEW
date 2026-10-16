@@ -18,7 +18,7 @@ import { makeT } from '../i18n';
 import { playSound } from '../sounds';
 import { CashWidget } from './Cash';
 import { ScanButton } from './ScanStart';
-import { PrepButton } from './Prep';
+import { PlanButton, PrepButton } from './Prep';
 import { PestMask } from '../components/PestMask';
 import { LevelsSheet } from '../components/LevelsSheet';
 import { LOC } from '../locale';
@@ -347,6 +347,7 @@ export function GameTop({ onOpenVisit }: { onOpenVisit: (id: string) => void }) 
       <InboxPreview onOpen={open} />
       <ScanButton onOpenVisit={onOpenVisit} />
       <PrepButton />
+      <PlanButton />
       <PlanBoss />
       <MoreWorkButton />
       {sheets}

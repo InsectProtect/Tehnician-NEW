@@ -17,6 +17,54 @@ import { PlanSheet } from './Plan';
  * На объекте при скане такой станции специалист отмечает, где именно её поставил.
  * ================================================================================================ */
 
+/** v88: «Нарисовать план» — отдельная кнопка на главной: новый план без клиента или незаконченные черновики. */
+const newDraftId = () => `draft-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+export function PlanButton() {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [drafts, setDrafts] = useState<{ id: string; plans: number; updated_at: string; created_by: string }[] | null>(null);
+  const [planDraft, setPlanDraft] = useState('');
+
+  async function open() {
+    haptic.tap();
+    setBusy(true);
+    try {
+      const r = await api.planDrafts();
+      // черновиков нет — сразу к рисованию
+      if (!r.items.length) { setDrafts(null); setPlanDraft(newDraftId()); } else setDrafts(r.items);
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <GameButton className="mb-5" tone="ghost" loading={busy} icon={<MapIcon size={20} strokeWidth={2.2} />} onClick={open}>
+        Нарисовать план
+      </GameButton>
+      {planDraft && <PlanSheet draft objectId={planDraft} onClose={() => { setPlanDraft(''); setDrafts(null); }} />}
+      {drafts && !planDraft && (
+        <Sheet open onClose={() => setDrafts(null)} title="План объекта">
+          <p className="-mt-3 mb-4 text-[14.5px] leading-relaxed text-muted">
+            Нарисуйте план или загрузите чертёж, отметьте станции, потом укажите юрлицо и адрес — план сам подтянется в обработку.
+          </p>
+          <Button onClick={() => { haptic.tap(); setPlanDraft(newDraftId()); }} icon={<Plus size={19} />}>Новый план</Button>
+          <div className="mb-2 mt-6 px-1 font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Незаконченные · {drafts.length}</div>
+          <Group>
+            {drafts.map((x) => (
+              <Row key={x.id} left={<IconBadge tone="orange"><MapIcon size={18} strokeWidth={1.75} /></IconBadge>}
+                title="Черновик плана — не привязан" subtitle={`${x.plans} ${plural(x.plans, ['план', 'плана', 'планов'])}${x.created_by ? ` · ${x.created_by}` : ''} · нажмите, чтобы закончить`}
+                onClick={() => { haptic.tap(); setPlanDraft(x.id); }} />
+            ))}
+          </Group>
+        </Sheet>
+      )}
+    </>
+  );
+}
+
 export function PrepButton() {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -24,17 +72,14 @@ export function PrepButton() {
   const [stock, setStock] = useState(0);
   const [stockOpen, setStockOpen] = useState(false);
   const [task, setTask] = useState<Task | null>(null);
-  const [drafts, setDrafts] = useState<{ id: string; plans: number; updated_at: string; created_by: string }[]>([]);
-  const [planDraft, setPlanDraft] = useState('');
 
   async function open() {
     haptic.tap();
     setBusy(true);
     try {
-      const [r, dr] = await Promise.all([api.prepTasks(), api.planDrafts().catch(() => ({ items: [] }))]);
+      const r = await api.prepTasks();
       setTasks(r.items);
       setStock(r.stock);
-      setDrafts(dr.items);
     } catch (e) {
       toast((e as Error).message, 'error');
     } finally {
@@ -48,8 +93,7 @@ export function PrepButton() {
         Подготовить ловушки
       </GameButton>
 
-      {planDraft && <PlanSheet draft objectId={planDraft} onClose={() => { setPlanDraft(''); open(); }} />}
-      {tasks && !task && !stockOpen && !planDraft && (
+      {tasks && !task && !stockOpen && (
         <Sheet open onClose={() => setTasks(null)} title="Подготовить ловушки">
           <p className="-mt-3 mb-4 text-[14.5px] leading-relaxed text-muted">
             Выберите заявку — станции привяжутся к её объекту. Можно готовить и для коллеги, или просто на склад — без объекта.
@@ -60,15 +104,6 @@ export function PrepButton() {
                 title={stock > 0 ? `На склад · в запасе ${stock} ${plural(stock, ['станция', 'станции', 'станций'])}` : 'На склад — без объекта'}
                 subtitle="Подготовить станции заранее, не назначая на объект — потом забрать на любую заявку"
                 onClick={() => { haptic.tap(); setStockOpen(true); }} />
-              <Row left={<IconBadge tone="blue"><MapIcon size={18} strokeWidth={1.75} /></IconBadge>}
-                title="Нарисовать план объекта заранее"
-                subtitle="Чертёж или рисунок + станции; потом указать юрлицо и адрес — план сам подтянется в обработку"
-                onClick={() => { haptic.tap(); setPlanDraft(`draft-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`); }} />
-              {drafts.map((x) => (
-                <Row key={x.id} left={<IconBadge tone="orange"><MapIcon size={18} strokeWidth={1.75} /></IconBadge>}
-                  title="Черновик плана — не привязан" subtitle={`${x.plans} ${plural(x.plans, ['план', 'плана', 'планов'])}${x.created_by ? ` · ${x.created_by}` : ''} · нажмите, чтобы закончить`}
-                  onClick={() => { haptic.tap(); setPlanDraft(x.id); }} />
-              ))}
             </Group>
           </div>
           {tasks.length ? (
