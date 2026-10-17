@@ -33,6 +33,7 @@ import { PestsDash, RemarksPanel, TasksDash } from './AdminDash';
 import { BotStatusSheet } from './BotStatus';
 import { KpiPanel } from './Kpi';
 import { MgrHero, SalesPanel, setSalesFocus } from './Sales';
+import { AttendCard } from './Attend';
 import { RoomsDisputesWidget } from './Rooms';
 import { CarsPanel } from './Car';
 import { CashPanel } from './Cash';
@@ -132,6 +133,7 @@ function Overview({ period, setPeriod, onOpen, onActs, onSettings, onTab }: { pe
   return (
     <>
       <RoomsDisputesWidget />
+      {cfg.user.role === 'manager' && <AttendCard />}
       {cfg.user.role === 'manager' && <MgrHero onOpen={(f) => { setSalesFocus(f || ''); onTab('sales'); }} />}
       {cfg.user.role === 'manager' && <AnnouncementBanners />}
       {cfg.user.role === 'manager' && <OpenWork />}

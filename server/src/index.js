@@ -21,6 +21,7 @@ import { initCar } from './car.js';
 import { initCrm } from './crm.js';
 import { initCash } from './cash.js';
 import { initPlans } from './plans.js';
+import { initAttend } from './attend.js';
 import { PREMISES, REENTRY, reentryDefault } from './premises.js';
 import { reverseGeocode, forwardGeocode } from './geo.js';
 import { qrSvg } from './qr.js';
@@ -4802,6 +4803,8 @@ function distM(a, b) {
   const x = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
   return Math.round(2 * R * Math.asin(Math.sqrt(x)));
 }
+// v89: пунктуальность менеджеров (отметка прихода по геопозиции офиса)
+const attend = initAttend({ db, route, must, str, uid, now, getSetting, setSetting, audit, awardXp, notifyTech, publicBase, TZN, questsCfg, distM });
 /** «Утренний кофе в офисе»: точка рядом с офисом в утреннем окне → квест засчитан (один раз в день). */
 async function checkCoffee(tgId, lat, lon, { notify = false } = {}) {
   const q = await questsCfg();
@@ -6618,6 +6621,16 @@ async function handleCallback(q) {
   if (data.startsWith('tclaim:')) {
     const r = await claimTask(data.slice(7), q.from?.id);
     return answerCallback(q.id, r.error || 'Заявка ваша!');
+  }
+  if (data.startsWith('attok:')) {
+    const [actor] = await db.query("SELECT * FROM users WHERE tg_id = $1 AND status = 'active'", [String(q.from?.id)]);
+    const u = actor ? { ...actor, id: actor.tg_id, isOwner: actor.role === 'admin' } : null;
+    if (!u?.isOwner) return answerCallback(q.id, 'Только главный администратор');
+    let r;
+    try { r = await attend.onCallback(data, u); } catch (e) { return answerCallback(q.id, e.message); }
+    await answerCallback(q.id, r || 'Готово');
+    if (q.message) await editMessage(chatId, q.message.message_id, `${escHtml(q.message.text || '')}\n\n✅ Засчитано · ${escHtml(actor.name || '')}`).catch(() => {});
+    return;
   }
   if (data.startsWith('pgok:')) {
     if (!(await isAdminTg(q.from?.id))) return answerCallback(q.id, 'Только администратор');

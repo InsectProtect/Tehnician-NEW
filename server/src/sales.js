@@ -6,6 +6,7 @@
 // ====================================================================================================
 import { sendMessage, deleteMessage, escHtml, botEnabled } from './tgbot.js';
 import { zonedIso } from './tasks.js';
+import { ATTEND_PENALTIES, attendDayIso } from './attend.js';
 
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
 const MONTHS_FULL = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
@@ -33,6 +34,7 @@ export const PENALTIES = {
     label: 'Долгая отправка технику', amount: 1, param: 30, param_unit: 'мин',
     hint: 'штраф за каждую заявку, если от создания (менеджером) до отправки технику проходит больше N минут',
   },
+  ...ATTEND_PENALTIES, // v89: опоздание / неявка (attend.js)
 };
 
 export const SUPERS = {
@@ -488,7 +490,17 @@ export function initSales(ctx) {
     }
   }
   /** По id/типу записи каталога PENALTIES — какая функция проверяет нарушения. Новый тип штрафа добавляется сюда. */
-  const PENALTY_EVALUATORS = { late_dispatch: evalLateDispatch };
+  /** v89: опоздания и неявки из отметок прихода (attend_days), без засчитанных. Ключ записи — att:<tg>:<day>. */
+  async function evalAttend(tg, p, id) {
+    const rows = id === 'late_arrival'
+      ? await db.query("SELECT day, late_min, in_at FROM attend_days WHERE tg_id = $1 AND status = 'late' AND excused = 0 AND late_min > $2", [String(tg), Math.max(0, p.param || 0)])
+      : await db.query("SELECT day, late_min, in_at FROM attend_days WHERE tg_id = $1 AND status = 'absent' AND excused = 0 AND in_at IS NULL", [String(tg)]);
+    for (const r of rows) {
+      await db.query('INSERT INTO mgr_penalties (id, task_id, penalty_id, tg_id, minutes, created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (task_id, penalty_id) DO NOTHING',
+        [uid(), `att:${tg}:${r.day}`, id, String(tg), Number(r.late_min) || 0, r.in_at || attendDayIso(r.day)]);
+    }
+  }
+  const PENALTY_EVALUATORS = { late_dispatch: evalLateDispatch, late_arrival: (tg, p) => evalAttend(tg, p, 'late_arrival'), absence: (tg, p) => evalAttend(tg, p, 'absence') };
 
   async function penaltyTick() {
     for (const m of await managers()) {

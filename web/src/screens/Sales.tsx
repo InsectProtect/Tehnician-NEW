@@ -8,6 +8,7 @@ import { Button, Chips, Collapse, Field, Input, Label, Segmented, Sheet, Spinner
 import { FatBar, GameButton, Segments, XpChip } from '../components/game';
 import { playOnce } from '../sounds';
 import { LOC } from '../locale';
+import { AttendAdminPanel } from './Attend';
 
 /* ================================================================================================
  * «Продажи»: KPI менеджеров как в таблице «KPI менеджера» + игра «Звонилка» + бот-коуч.
@@ -581,8 +582,14 @@ export const setSalesFocus = (f: string) => { nextFocus = f; };
 export function SalesPanel() {
   const cfg = useConfig();
   const [focus] = useState(() => { const f = nextFocus; nextFocus = ''; return f; });
+  const [view, setView] = useState<'kpi' | 'attend'>(focus === 'attend' ? 'attend' : 'kpi');
   if (!cfg.user.isOwner) return <MySales focus={focus} />;
-  return <AdminSales />;
+  return (
+    <>
+      <div className="mb-4"><Segmented options={[{ id: 'kpi', label: 'KPI и бонусы' }, { id: 'attend', label: '⏰ Пунктуальность' }]} value={view} onChange={setView} /></div>
+      {view === 'attend' ? <AttendAdminPanel /> : <AdminSales />}
+    </>
+  );
 }
 
 function AdminSales() {

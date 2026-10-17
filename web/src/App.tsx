@@ -122,7 +122,7 @@ export default function App() {
       adminStart.current = true;
       // кнопка бота «Мой KPI» / «Дополнить заявку» / «Звонилка» открывает раздел «Продажи»
       const sales = new URLSearchParams(window.location.search).get('sales');
-      if (sales) setSalesFocus(sales === 'calls' ? 'calls' : 'money');
+      if (sales) setSalesFocus(sales === 'calls' ? 'calls' : sales === 'attend' ? 'attend' : 'money');
       const cars = new URLSearchParams(window.location.search).get('cars');
       setRoute((r) => (r.name === 'home' ? { name: 'admin', tab: cars ? 'cars' : sales || cfg.user.role === 'manager' ? 'sales' : 'overview' } : r));
     }

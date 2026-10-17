@@ -3,8 +3,7 @@ import type {
   LabelBatch, LabelsInfo, LabelsInput, ObjectPlan, PlanShape, PlansRes,
   PrepState, PrepTask, PrepTrap, CrmProvider, QuestsSettings,
   AdminStats, AdminVisit, BotStatus, KpiRes, MonthSummary, NotificationsRes, RemarksRes, TasksStats, PestsStats, AuditItem, Bootstrap, CompanySettings, Task, BootstrapPartial, Company, ImportStats, Invite, Lead, Observation, OfficeChat,
-  RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup,
-} from './types';
+  RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup, AttendAdmin, AttendMe, AttendRow } from './types';
 
 // Сессия после ввода PIN хранится только в памяти: закрыли приложение — PIN спросят снова.
 let session = '';
@@ -253,6 +252,15 @@ export const api = {
   mgrCallUndo: (id: string) => request<{ ok: true; game: MgrGame }>('DELETE', `/api/mgr/calls/${id}`),
   mgrCallbackDone: (id: string) => request<{ ok: true }>('POST', `/api/mgr/callbacks/${id}/done`),
   taskFill: (id: string, d: Record<string, string>) => request<{ ok: true; missing: string[] }>('POST', `/api/tasks/${id}/fill`, d),
+  attendMe: (month?: string) => request<AttendMe>('GET', `/api/attend/me${month ? `?month=${month}` : ''}`),
+  attendIn: (lat: number | null, lon: number | null) => request<{ ok: true; already?: boolean; row: AttendRow; xp?: number; late_min?: number; status?: string; mode?: string }>('POST', '/api/attend/in', { lat, lon }),
+  attendOut: (lat: number | null, lon: number | null) => request<{ ok: true; row: AttendRow; early_min: number }>('POST', '/api/attend/out', { lat, lon }),
+  attendReason: (text: string, day?: string) => request<{ ok: true }>('POST', '/api/attend/reason', { text, day }),
+  adminAttend: (month?: string) => request<AttendAdmin>('GET', `/api/admin/attend${month ? `?month=${month}` : ''}`),
+  attendSettings: (body: Record<string, unknown>) => request<{ ok: true }>('PUT', '/api/admin/attend-settings', body),
+  attendDay: (tg: string, day: string, action: 'excuse' | 'unexcuse' | 'off' | 'clear', note?: string) => request<{ ok: true }>('POST', `/api/admin/attend/${tg}/day`, { day, action, note }),
+  attendOff: (tg: string, body: { from: string; to: string; kind: string; note?: string }) => request<{ ok: true }>('POST', `/api/admin/attend/${tg}/off`, body),
+  attendOffDelete: (id: string) => request<{ ok: true }>('DELETE', `/api/admin/attend/off/${id}`),
   adminSales: (month?: string) => request<SalesList>('GET', `/api/admin/sales${month ? `?month=${month}` : ''}`),
   adminSalesOne: (tg: string, month?: string) => request<SalesDetail>('GET', `/api/admin/sales/${tg}${month ? `?month=${month}` : ''}`),
   saveSalesConfig: (tg: string, d: { cfg?: Partial<SalesCfg>; preset?: string; all?: boolean }) => request<{ ok: true; cfg: SalesCfg }>('PUT', `/api/admin/sales/${tg}/config`, d),

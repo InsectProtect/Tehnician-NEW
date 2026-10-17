@@ -599,3 +599,23 @@ export interface PrepState {
 export type PrepTrap = PrepState['traps'][number];
 /** Заявка в списке «Подготовить ловушки»: свои и коллег. */
 export type PrepTask = Task & { mine: boolean; prepared: number };
+
+/* ---------- Пунктуальность менеджеров (v89) ---------- */
+export type AttendStatus = 'ok' | 'late' | 'absent' | 'off' | 'rest' | 'future' | 'waiting' | 'before';
+export interface AttendRow { day: string; status: AttendStatus; in_at: string | null; in_mode: string; in_dist: number | null; late_min: number; out_at: string | null; early_min: number; reason: string; excused: boolean; decided_by: string }
+export interface AttendDay extends Partial<AttendRow> { day: string; wd: number; work: boolean; future: boolean; before?: boolean; status: AttendStatus; off: { id: string; kind: string; label: string; note: string } | null }
+export interface AttendSchedule { days: number[]; from: string; to: string; remote: boolean; skip: boolean; custom?: boolean }
+export interface AttendStats { work_days: number; ontime: number; late: number; late_min: number; absent: number; early: number; streak: number; pct: number | null }
+export interface AttendMe {
+  on: boolean; grace: number; office: { label: string; radius: number } | null;
+  today: { day: string; work: boolean; off: { kind: string; label: string } | null; from: string; to: string; remote: boolean; skip: boolean; now_min: number; row: AttendRow | null };
+  month: string; schedule: AttendSchedule; days: AttendDay[]; stats: AttendStats;
+}
+export interface AttendSettings { on: boolean; since: string; schedule: { days: number[]; from: string; to: string }; per: Record<string, Partial<AttendSchedule>>; grace: number; remind_min: number; absent_after: number; strike_after: number; digest: boolean; xp: number }
+export interface AttendAdmin {
+  month: string; settings: AttendSettings; office: { lat: number; lon: number; radius: number; label: string } | null;
+  today: { tg_id: string; name: string; state: 'ok' | 'late' | 'absent' | 'missing' | 'waiting' | 'off' | 'rest'; from: string; to: string; off: string; row: AttendRow | null; late_now: number }[];
+  items: { tg_id: string; name: string; schedule: AttendSchedule; stats: AttendStats; days: AttendDay[] }[];
+  offs: { id: string; tg_id: string; name: string; from: string; to: string; kind: string; label: string; note: string }[];
+  off_kinds: Record<string, string>;
+}
