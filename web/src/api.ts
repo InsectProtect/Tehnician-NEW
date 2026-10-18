@@ -244,6 +244,7 @@ export const api = {
   saveFeatures: (f: Partial<Features>) => request<{ ok: true; features: Features }>('PUT', '/api/admin/features', f),
   contest: () => request<ContestRes>('GET', '/api/contest'),
   saveContest: (c: Partial<ContestSettings>) => request<{ ok: true; settings: ContestSettings }>('PUT', '/api/admin/contest', c),
+  editTask: (id: string, body: Record<string, unknown>) => request<{ ok: true; changed: string[] }>('PUT', `/api/tasks/${id}/edit`, body),
   createAdminTask: (data: AdminTaskInput) => request<{ ok: true; id: string; task_no: number; open?: boolean }>('POST', '/api/admin/tasks', data),
   // KPI менеджеров, «Звонилка»
   mgrMe: (month?: string) => request<MgrMe>('GET', `/api/mgr/me${month ? `?month=${month}` : ''}`),

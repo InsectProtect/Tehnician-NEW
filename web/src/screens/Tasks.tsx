@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Ban, CalendarClock, Home, Car, RotateCcw, CalendarDays, Copy, MapPin, MessageSquare, Phone, PhoneCall, Play, Receipt, Send, User } from 'lucide-react';
+import { Ban, Pencil, CalendarClock, Home, Car, RotateCcw, CalendarDays, Copy, MapPin, MessageSquare, Phone, PhoneCall, Play, Receipt, Send, User } from 'lucide-react';
 import { api, type ApiError } from '../api';
 import { plural, useConfig } from '../config';
 import { callPhone, copyText, haptic, intlPhone, openTgChat, prettyPhone } from '../telegram';
 import type { Task } from '../types';
-import { Button, Chips, Field, Group, IconBadge, Input, Label, MultPill, Pill, Row, Segmented, Sheet, TextArea, cx, multLabel, useToast } from '../components/ui';
+import { Button, Chips, Field, Group, IconBadge, Input, Label, MultiChips, MultPill, Pill, Row, Segmented, Sheet, TextArea, cx, multLabel, useToast } from '../components/ui';
 import { AddressFields, joinAddress, splitAddress } from '../components/AddressFields';
 import { QuestPath } from '../components/game';
 import { RouteCard } from './Play';
@@ -249,6 +249,8 @@ export function TaskSheet({ task, onClose, onStarted, onCancelled }: {
   const address = task.address || joinAddress(addr.city, addr.street);
   const [busy, setBusy] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const canEdit = ['new', 'pending', 'open', 'in_progress'].includes(task.status) && (cfg.isAdmin || task.tech_id === cfg.user.id);
   const now = useNow();
   const [t2, setT2] = useState(task);
   const [stepBusy, setStepBusy] = useState<'' | 'call' | 'route'>('');
@@ -325,6 +327,12 @@ export function TaskSheet({ task, onClose, onStarted, onCancelled }: {
       {!task.ack_at && task.tech_id === cfg.user.id && <AckButton task={task} onDone={onCancelled} />}
       {!task.ack_at && task.status !== 'open' && task.tech_id !== cfg.user.id && (
         <div className="mb-4 rounded-2xl bg-[#D71921]/10 px-4 py-3 text-[14px]">🔔 {task.tech_name || 'Сотрудник'} ещё не подтвердил получение — бот напоминает каждые 5 минут.</div>
+      )}
+      {canEdit && (
+        <button onClick={() => { haptic.tap(); setEditOpen(true); }}
+          className="mb-4 flex h-[44px] w-full items-center justify-center gap-2 rounded-full bg-card text-[14.5px] font-semibold text-accent-ink ring-1 ring-inset ring-line active:opacity-70">
+          <Pencil size={16} strokeWidth={2} /> {cfg.isAdmin ? 'Исправить заявку — дата, адрес, данные' : 'Исправить адрес, телефон, комментарий'}
+        </button>
       )}
       <TaskMultBlock task={task} canEdit={cfg.isAdmin} onChanged={onCancelled} />
       {cfg.user.isAdmin && <CrmLeadField task={t2} onChanged={(id) => setT2((x) => ({ ...x, crm_lead_id: id }))} />}
@@ -444,7 +452,96 @@ export function TaskSheet({ task, onClose, onStarted, onCancelled }: {
       {cfg.isAdmin && <Button className="mt-2" variant="plain" onClick={cancel}><span className="text-[#D70015] dark:text-[#FF453A]">Отменить заявку (офис)</span></Button>}
     </Sheet>
     {phoneOpen && <PhoneSheet task={task} onClose={() => setPhoneOpen(false)} />}
+    {editOpen && <TaskEditSheet task={task} office={cfg.isAdmin} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); onCancelled(); }} />}
     </>
+  );
+}
+
+/* ---------- v90: исправить заявку (офис — всё, исполнитель — адрес/телефон/клиент/комментарий) ---------- */
+
+export function TaskEditSheet({ task, office, onClose, onSaved }: { task: Task; office: boolean; onClose: () => void; onSaved: () => void }) {
+  const cfg = useConfig();
+  const toast = useToast();
+  const [ctype, setCtype] = useState<'person' | 'company'>(task.client_type === 'company' || (!task.client_type && task.company_name) ? 'company' : 'person');
+  const [company, setCompany] = useState(task.company_name || '');
+  const [address, setAddress] = useState(task.address || '');
+  const [phone, setPhone] = useState(task.phone || '');
+  const [comment, setComment] = useState(task.comment || '');
+  const [date, setDate] = useState(task.planned_at ? dayKey(task.planned_at) : '');
+  const [time, setTime] = useState(task.planned_at && task.has_time ? new Date(task.planned_at).toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit' }) : '');
+  const [procedure, setProcedure] = useState(task.procedure || '');
+  const [pests, setPests] = useState<string[]>(task.pests || []);
+  const [price, setPrice] = useState(task.price != null ? String(task.price).replace('.', ',') : '');
+  const [rooms, setRooms] = useState(task.rooms ? String(task.rooms) : '');
+  const [sotki, setSotki] = useState(task.sotki != null ? String(task.sotki).replace('.', ',') : '');
+  const [stage, setStage] = useState(task.stage || '');
+  const [pointCat, setPointCat] = useState(task.point_cat || '');
+  const [busy, setBusy] = useState(false);
+  const pestOptions = [...new Set([...(cfg.pestsByProcedure?.[procedure] ?? []), ...pests])];
+  const quick = (d: number) => new Date(Date.now() + d * 86400000).toLocaleDateString('en-CA', { timeZone: TZ });
+
+  async function save() {
+    setBusy(true);
+    try {
+      const body: Record<string, unknown> = { client_type: ctype, company: ctype === 'company' ? company.trim() : '', address: address.trim(), phone: phone.trim(), comment: comment.trim() };
+      if (office) Object.assign(body, { date, time: date ? time : '', procedure, pests, price, rooms, sotki, stage, point_cat: pointCat });
+      const r = await api.editTask(task.id, body);
+      haptic.success();
+      toast(r.changed.length ? `Исправлено: ${r.changed.join(', ')}` : 'Изменений нет');
+      onSaved();
+    } catch (e) {
+      haptic.error();
+      toast((e as Error).message, 'error');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet open onClose={onClose} title={`Заявка № ${task.task_no}`}>
+      <div className="space-y-4">
+        <Segmented<'person' | 'company'> options={[{ id: 'person', label: 'Физлицо' }, { id: 'company', label: 'Юрлицо' }]} value={ctype} onChange={(v) => { haptic.tap(); setCtype(v); }} />
+        {ctype === 'company' && <Field label="Название фирмы"><Input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="SRL «…»" /></Field>}
+        <Field label="Адрес"><Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="str. …, nr. …, oraș" /></Field>
+        <Field label="Телефон"><Input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0 6x xxx xxx" /></Field>
+        {office && (
+          <>
+            <Field label="Дата и время">
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="w-[120px]" />
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {[['Сегодня', 0], ['Завтра', 1], ['Послезавтра', 2]].map(([l, d]) => (
+                  <button key={String(l)} data-chip={date === quick(Number(d)) ? 'on' : ''} onClick={() => { haptic.tap(); setDate(quick(Number(d))); }}
+                    className={cx('rounded-full px-3 py-1.5 text-[13px] font-medium', date === quick(Number(d)) ? 'bg-ink text-card' : 'bg-card ring-1 ring-inset ring-line')}>{l}</button>
+                ))}
+                {time && <button onClick={() => setTime('')} className="rounded-full px-3 py-1.5 text-[13px] text-muted ring-1 ring-inset ring-line">без времени</button>}
+                {date && <button onClick={() => { setDate(''); setTime(''); }} className="rounded-full px-3 py-1.5 text-[13px] text-muted ring-1 ring-inset ring-line">без даты</button>}
+              </div>
+            </Field>
+            <Field label="Обработка">
+              <Chips columns={3} value={procedure} onChange={(v) => { haptic.tap(); setProcedure(v); }} options={cfg.procedures.map((x) => ({ id: x, label: x }))} />
+            </Field>
+            {pestOptions.length > 0 && (
+              <Field label="Вредители"><MultiChips options={pestOptions} value={pests} onChange={setPests} columns={pestOptions.length > 4 ? 3 : 2} /></Field>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Цена, лей"><Input inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="—" /></Field>
+              <Field label="Комнат"><Input inputMode="numeric" value={rooms} onChange={(e) => setRooms(e.target.value.replace(/\D/g, ''))} placeholder="—" /></Field>
+              <Field label="Соток"><Input inputMode="decimal" value={sotki} onChange={(e) => setSotki(e.target.value)} placeholder="—" /></Field>
+              <Field label="Этап (1/2)"><Input value={stage} onChange={(e) => setStage(e.target.value)} placeholder="—" /></Field>
+            </div>
+            <Field label="Тип помещения (баллы)">
+              <Chips columns={3} value={pointCat} onChange={(v) => { haptic.tap(); setPointCat(v === pointCat ? '' : v); }} options={cfg.pointCats.map((c) => ({ id: c.id, label: c.label }))} />
+            </Field>
+          </>
+        )}
+        <Field label="Комментарий"><TextArea rows={3} value={comment} onChange={(e) => setComment(e.target.value)} /></Field>
+        {!office && <div className="px-1 text-[12.5px] leading-snug text-muted">Дату и время меняет офис. Клиент просит перенести — кнопка «Перенести» в заявке.</div>}
+        {office && task.tech_id && <div className="px-1 text-[12.5px] leading-snug text-muted">Исполнитель получит уведомление, сообщение заявки в группе обновится. Новая дата — шаги «позвонил / еду» начнутся заново.</div>}
+        <Button loading={busy} disabled={address.trim().length < 3} onClick={save}>Сохранить</Button>
+      </div>
+    </Sheet>
   );
 }
 

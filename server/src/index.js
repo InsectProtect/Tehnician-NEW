@@ -3048,6 +3048,74 @@ route('POST', '/api/tasks/:id/reschedule/confirm', async ({ params, user }) => {
   return { ok: true };
 }, { access: 'admin' });
 
+// v90: исправить заявку в приложении — дата/время, клиент, адрес, телефон, обработка, цена и т.д.
+// Офис (главный админ, менеджер с правом «Заявки», автор-менеджер) — всё; исполнитель — только адрес, телефон, название и комментарий.
+route('PUT', '/api/tasks/:id/edit', async ({ params, body, user }) => {
+  const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [params.id]);
+  must(t, 404, 'Заявка не найдена');
+  must(['new', 'pending', 'open', 'in_progress'].includes(t.status), 400, 'Заявка уже закрыта — исправлять можно акт (кнопка «Исправить» в выезде)');
+  const office = user.isOwner || (user.isAdmin && ((user.perms || []).includes('tasks') || String(t.author_id) === String(user.id)));
+  const own = !user.isAdmin && t.tech_tg_id === user.id;
+  must(office || own, 403, 'Исправить заявку может офис или исполнитель');
+  const set = {};
+  const changed = [];
+  const put = (col, val, label) => { if (String(val ?? '') !== String(t[col] ?? '')) { set[col] = val; if (label && !changed.includes(label)) changed.push(label); } };
+  if (body.company !== undefined) put('company_name', str(body.company, 200), 'клиент');
+  if (body.client_type !== undefined && ['', 'person', 'company'].includes(body.client_type)) put('client_type', body.client_type, 'клиент');
+  if (body.address !== undefined) { const a = str(body.address, 300); must(a.length >= 3, 400, 'Укажите адрес'); put('address', a, 'адрес'); }
+  if (body.phone !== undefined) put('phone', str(body.phone, 40), 'телефон');
+  if (body.comment !== undefined) put('comment', str(body.comment, 1000), 'комментарий');
+  if (office) {
+    if (body.date !== undefined) {
+      if (!body.date) { put('planned_at', null, 'дата'); put('has_time', 0, 'дата'); }
+      else {
+        const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str(body.date, 10));
+        must(d, 400, 'Некорректная дата');
+        const tm = /^(\d{1,2}):(\d{2})$/.exec(str(body.time, 5));
+        const planned = zonedIso(+d[1], +d[2], +d[3], tm ? +tm[1] : 9, tm ? +tm[2] : 0);
+        if (planned !== t.planned_at || (tm ? 1 : 0) !== Number(t.has_time)) { set.planned_at = planned; set.has_time = tm ? 1 : 0; changed.push('дата/время'); }
+      }
+    }
+    if (body.procedure !== undefined) put('procedure', str(body.procedure, 120), 'обработка');
+    if (Array.isArray(body.pests)) put('pests', JSON.stringify(body.pests.map((p) => str(p, 60)).filter(Boolean).slice(0, 20)), 'вредители');
+    if (body.price !== undefined) {
+      const price = body.price === '' || body.price == null ? null : Number(String(body.price).replace(',', '.'));
+      must(price == null || (Number.isFinite(price) && price >= 0), 400, 'Некорректная цена');
+      put('price', price, 'цена');
+    }
+    if (body.rooms !== undefined) { const r = body.rooms === '' || body.rooms == null ? null : Math.round(Number(body.rooms)); put('rooms', Number.isFinite(r) && r > 0 ? r : null, 'комнаты'); }
+    if (body.sotki !== undefined) {
+      const so = body.sotki === '' || body.sotki == null ? null : Number(String(body.sotki).replace(',', '.'));
+      must(so == null || (Number.isFinite(so) && so > 0 && so <= 10000), 400, 'Некорректное количество соток');
+      put('sotki', so, 'сотки');
+    }
+    if (body.stage !== undefined) put('stage', str(body.stage, 10), 'этап');
+    if (body.point_cat !== undefined) {
+      const pc = (await pointsConfig()).cats.find((c) => c.id === body.point_cat);
+      must(!body.point_cat || pc, 400, 'Неизвестный тип помещения');
+      put('point_cat', body.point_cat || '', 'тип помещения');
+      put('point_zone', pc?.zones ? (POINT_ZONES.some((z) => z.id === body.point_zone) ? body.point_zone : (t.point_zone || 'city')) : '', 'тип помещения');
+    }
+  }
+  const keys = Object.keys(set);
+  if (!keys.length) return { ok: true, changed: [] };
+  // новая дата — шаги «позвонил / еду» начинаются заново, напоминания — с нуля
+  const dateMoved = 'planned_at' in set;
+  await db.query(`UPDATE tasks SET ${keys.map((k, i) => `${k} = $${i + 1}`).join(', ')}, updated_at = $${keys.length + 1}${dateMoved && !t.visit_id ? ", reschedule_req = 0, ack_at = NULL, alert_count = 0, call_status = '', en_route_at = NULL, call_undo = 0, route_undo = 0" : ''} WHERE id = $${keys.length + 2}`,
+    [...keys.map((k) => set[k]), now(), t.id]);
+  // выезд уже открыт — клиент и адрес в акте тоже исправляем
+  if (t.visit_id && (set.company_name !== undefined || set.address !== undefined)) {
+    await db.query("UPDATE visits SET company_name = COALESCE($1, company_name), address = COALESCE($2, address) WHERE id = $3 AND status = 'open'", [set.company_name ?? null, set.address ?? null, t.visit_id]);
+  }
+  await audit(user, 'Заявка исправлена', `№ ${t.task_no} · ${set.company_name ?? t.company_name ?? ''} ${set.address ?? t.address ?? ''}`.trim(), changed.join(', '));
+  const nt = await refreshTaskMsg(t.id, `✏️ Исправлено в приложении (${escHtml(user.name || '')}): ${escHtml(changed.join(', '))}.`);
+  if (t.tech_tg_id && t.tech_tg_id !== user.id && ['new', 'in_progress'].includes(t.status)) {
+    notifyTech(t.tech_tg_id, `✏️ <b>Заявка № ${t.task_no} исправлена</b> (${escHtml(changed.join(', '))})\n${taskSummary(nt || t)}`, { kind: 'task_update', task_id: t.id });
+  }
+  sales.onTaskSaved(t.id).catch(() => {});
+  return { ok: true, changed };
+});
+
 route('GET', '/api/cancel-reasons', async () => ({ items: CANCEL_REASONS }));
 
 /** Команда заявки: кто ещё едет на объект (ответственный — tech_tg_id, меняется через «Переназначить»). */
