@@ -3073,6 +3073,7 @@ route('PUT', '/api/tasks/:id/edit', async ({ params, body, user }) => {
         must(d, 400, 'Некорректная дата');
         const tm = /^(\d{1,2}):(\d{2})$/.exec(str(body.time, 5));
         const planned = zonedIso(+d[1], +d[2], +d[3], tm ? +tm[1] : 9, tm ? +tm[2] : 0);
+        must(Date.parse(planned) > Date.now() - 60 * 86400000, 400, `Дата ${d[3]}.${d[2]}.${d[1]} давно прошла — проверьте год`);
         if (planned !== t.planned_at || (tm ? 1 : 0) !== Number(t.has_time)) { set.planned_at = planned; set.has_time = tm ? 1 : 0; changed.push('дата/время'); }
       }
     }

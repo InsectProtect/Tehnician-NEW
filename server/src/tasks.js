@@ -108,10 +108,12 @@ function parseDate(str, now) {
     const dt = new Date(Date.UTC(today.y, today.m - 1, today.d + days));
     return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
   };
-  const build = (d, mo, yy) => {
+  const build = (d, mo, yy) => { // eslint-disable-line no-param-reassign
     if (d < 1 || d > 31 || mo < 1 || mo > 12) return null;
     let y = yy ? +yy : today.y;
     if (y < 100) y += 2000;
+    // v91: год с опечаткой («19.10.25» в 2026-м) — заявка в прошлом не бывает: берём ближайшую такую дату
+    if (yy && Date.UTC(y, mo - 1, d) < Date.UTC(today.y, today.m - 1, today.d) - 60 * 86400000) { y = today.y; yy = undefined; }
     // без года и дата уже прошла больше чем на месяц — значит, следующий год
     if (!yy && Date.UTC(y, mo - 1, d) < Date.UTC(today.y, today.m - 1, today.d) - 30 * 86400000) y += 1;
     return { y, m: mo, d };

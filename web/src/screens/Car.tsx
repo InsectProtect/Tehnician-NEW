@@ -735,7 +735,7 @@ export function CarsPanel() {
       <div className="grid gap-2.5 md:grid-cols-2">
         {d.items.map((i) => (
           <button key={i.tg_id} disabled={!i.car} onClick={() => setOpen(i.tg_id)} className="overflow-hidden rounded-[20px] bg-card text-left active:opacity-70 disabled:active:opacity-100">
-            {i.car && <CarArt body={i.body} plate={i.plate} className="block aspect-[16/7] w-full" />}
+            {i.car && <CarArt body={i.body} model={i.car} plate={i.plate} className="block aspect-[16/7] w-full" />}
             <div className="p-4">
             {i.service_due && (
               <div className={cx('mb-2 mr-1.5 inline-flex rounded-full px-2.5 py-1 text-[11.5px] font-bold', i.service_due.overdue ? 'bg-[#FF453A] text-white' : 'bg-[#FF9F0A]/15 text-[#C93400] dark:text-[#FF9F0A]')}>
