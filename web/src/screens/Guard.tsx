@@ -88,9 +88,12 @@ export function GuardSettingsPanel() {
   const [minM, setMinM] = useState('');
   const [maxU, setMaxU] = useState('');
   const [hour, setHour] = useState('');
+  const [openH, setOpenH] = useState('');
+  const [lateH, setLateH] = useState('');
+  const [remH, setRemH] = useState('');
   const [busy, setBusy] = useState('');
   useEffect(() => {
-    api.guard().then((r) => { setS(r.settings); setMinM(String(r.settings.min_minutes)); setMaxU(String(r.settings.max_unplanned_day)); setHour(String(r.settings.digest_hour)); })
+    api.guard().then((r) => { setS(r.settings); setMinM(String(r.settings.min_minutes)); setMaxU(String(r.settings.max_unplanned_day)); setHour(String(r.settings.digest_hour)); setOpenH(String(r.settings.max_open_hours ?? 3)); setLateH(String(r.settings.late_start_hours ?? 12)); setRemH(String(r.settings.remind_open_hours ?? 2)); })
       .catch((e: Error) => toast(e.message, 'error'));
   }, [toast]);
   if (!s) return <Spinner />;
@@ -114,7 +117,18 @@ export function GuardSettingsPanel() {
             <Field label="Итог, час"><Input inputMode="numeric" value={hour} onChange={(e) => setHour(e.target.value)} /></Field>
           </div>
           <div className="-mt-1 px-1 text-[12px] leading-snug text-muted">Минимум минут от начала до завершения акта · сколько выездов без заявки в день считать нормой · во сколько присылать итог дня.</div>
-          <Button loading={busy === 'save'} onClick={() => save({ min_minutes: Number(minM), max_unplanned_day: Number(maxU), digest_hour: Number(hour) })}>Сохранить</Button>
+          <div className="mt-2 font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Поздно закрытые акты</div>
+          <div className="grid grid-cols-3 items-end gap-2.5">
+            <Field label="Напомнить, ч"><Input inputMode="numeric" value={remH} onChange={(e) => setRemH(e.target.value)} /></Field>
+            <Field label="Открыт дольше, ч"><Input inputMode="numeric" value={openH} onChange={(e) => setOpenH(e.target.value)} /></Field>
+            <Field label="Позже заявки, ч"><Input inputMode="numeric" value={lateH} onChange={(e) => setLateH(e.target.value)} /></Field>
+          </div>
+          <div className="-mt-1 px-1 text-[12px] leading-snug text-muted">Через сколько часов напомнить специалисту закрыть акт · через сколько часов открытый акт — это «поздно закрыт» (сообщение офису и в «Контроль баллов») · насколько позже назначенного времени заявки начатый акт считать «задним числом».</div>
+          <div className="rounded-2xl bg-card px-4 py-3">
+            <Toggle label="Надбавки по времени заявки, если акт начат намного позже" checked={s.late_auto ?? true} onChange={(v) => save({ late_auto: v }, 'auto')} />
+          </div>
+          <div className="-mt-1 px-1 text-[12px] leading-snug text-muted">Вечерняя надбавка и коэффициент по часам считаются по времени начала акта, не закрытия. Если акт начат позже заявки больше чем на указанные часы (например, «оформил ночью задним числом»), — по назначенному времени заявки.</div>
+          <Button loading={busy === 'save'} onClick={() => save({ min_minutes: Number(minM), max_unplanned_day: Number(maxU), digest_hour: Number(hour), max_open_hours: Number(openH), late_start_hours: Number(lateH), remind_open_hours: Number(remH) })}>Сохранить</Button>
           <Button variant="secondary" icon={<ScanSearch size={18} strokeWidth={1.75} />} loading={busy === 'scan'} onClick={async () => {
             setBusy('scan');
             try { const r = await api.guardScan(); haptic.success(); toast(`Проверено актов: ${r.checked}, с замечаниями: ${r.found}`); } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(''); }
@@ -129,6 +143,7 @@ export function GuardSettingsPanel() {
           <li>добавлен вредитель с большим коэффициентом (например, клопы к тараканам);</li>
           <li>выезд начат в воскресенье / «повышенное» время, хотя заявка была на другой день или время;</li>
           <li>вечерняя надбавка при дневной заявке;</li>
+          <li>акт закрыт поздно (открыт дольше указанных часов) или начат намного позже назначенного времени заявки;</li>
           <li>второй акт по тому же адресу за сутки или много выездов без заявки за день.</li>
         </ul>
         <div className="mt-1.5">Сотрудник об этих проверках не получает сообщений. Баллы сами не меняются — решаете вы: «Всё в порядке» или «Нарушение», исправить баллы можно в акте. Раз в месяц видно, у кого замечания повторяются.</div>

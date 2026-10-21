@@ -425,7 +425,7 @@ export type Announcement = { id: string; title: string; body: string; color: Ann
 export type AnnouncementAdmin = Omit<Announcement, 'acked'> & { audience: Audience | 'everyone'; total: number; read: number; unread: string[] };
 export type AnnouncementInput = { title: string; body: string; color: AnnColor; audience: Audience | 'everyone'; expires_at: string | null };
 
-export type GuardSettings = { enabled: boolean; mode: 'instant' | 'digest'; min_minutes: number; max_unplanned_day: number; digest_hour: number; notify_min_extra: number };
+export type GuardSettings = { enabled: boolean; mode: 'instant' | 'digest'; min_minutes: number; max_unplanned_day: number; digest_hour: number; notify_min_extra: number; max_open_hours: number; late_start_hours: number; remind_open_hours: number; late_auto: boolean };
 export type GuardFlag = {
   id: string; visit_id: string; tg_id: string; tech_name: string; flags: { kind: string; text: string }[]; extra: number; status: 'new' | 'ok' | 'fixed'; note: string;
   company_name: string; address: string; points: number | null; started_at: string | null; finished_at: string | null; created_at: string; decided_by: string;

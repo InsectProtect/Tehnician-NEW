@@ -2171,7 +2171,7 @@ const windowLabel = (w) => `${(w.days || []).map((d) => WD_SHORT[d]).join(', ')}
 const multRu = (m) => `×${String(Math.round(m * 100) / 100).replace('.', ',')}`;
 /** Повышенный коэффициент выезда: наибольший из «день недели», «особый период» и заданного вручную для заявки/выезда. */
 function visitMult(v, cfg) {
-  const t = v.started_at || v.finished_at || new Date().toISOString();
+  const t = v.time_ref || v.started_at || v.finished_at || new Date().toISOString();
   const day = new Date(t).toLocaleDateString('en-CA', { timeZone: TZN });
   const wd = (new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7; // 0 = Пн
   const cands = [{ m: Number(cfg.weekday?.[wd]) || 1, why: WEEKDAY_RU[wd] }];
@@ -2229,11 +2229,12 @@ function calcPoints(v, cfg) {
   if (!cat || !c) return { points: null, detail: '' };
   const z = zone || 'city';
   const base = c.zones ? Number(c.zones[z] ?? c.points) : Number(c.points);
-  const t = v.finished_at || v.started_at;
+  // v92: вечерняя надбавка — по времени начала (или назначенному времени заявки, если акт начат сильно позже),
+  // а не по времени закрытия: поздно закрытый акт баллов не прибавляет
+  const t = v.time_ref || v.started_at || v.finished_at;
   const h = t ? localHour(t) : 12;
-  const hs = v.started_at ? localHour(v.started_at) : h;
   const from = Number(cfg.night_from) || 20;
-  const night = (h >= from || h < 6 || hs >= from) ? Number(cfg.night) || 0 : 0;
+  const night = (h >= from || h < 6) ? Number(cfg.night) || 0 : 0;
   const zoneLabel = c.zones ? POINT_ZONES.find((x) => x.id === z)?.label : '';
   const mult = visitMult(v, cfg);
   // вредитель с наибольшим коэффициентом (тараканы ×1, клопы ×1,2 …)
@@ -4113,8 +4114,10 @@ route('POST', '/api/visits/:id/finish', async ({ params, body, req, user }) => {
   const pay = parsePayment(body, v);
   const xpBefore = await xpTotal(user.id);
   const finishedAt = now();
+  // v92: акт начат намного позже назначенного времени (оформление «задним числом» ночью) — надбавки по времени заявки
+  v.time_ref = await lateTimeRef(v);
   const pts = calcPoints({ ...v, point_zone: pcat.zones ? pd.zone : '', finished_at: finishedAt }, await pointsConfig());
-  await db.query('UPDATE visits SET point_cat = $1, point_zone = $2, points = $3 WHERE id = $4', [pd.cat, pcat.zones ? pd.zone : '', pts.points, v.id]);
+  await db.query('UPDATE visits SET point_cat = $1, point_zone = $2, points = $3, time_ref = $4 WHERE id = $5', [pd.cat, pcat.zones ? pd.zone : '', pts.points, v.time_ref, v.id]);
   await syncTeamShares(v.id, pts.points, finishedAt);
   if (v.task_id) {
     const [ct] = await db.query('SELECT task_no, claim_bonus FROM tasks WHERE id = $1', [v.task_id]);
@@ -4233,7 +4236,7 @@ route('POST', '/api/visits/:id/finish', async ({ params, body, req, user }) => {
 
 // ---------- контроль баллов: бот ищет признаки «накрутки» и сообщает администратору ----------
 // Правила без ИИ: каждое проверяет конкретный признак, результат — строка в point_flags и сообщение админам.
-const DEFAULT_GUARD = { enabled: true, mode: 'instant', min_minutes: 10, max_unplanned_day: 3, digest_hour: 19, notify_min_extra: 0 };
+const DEFAULT_GUARD = { enabled: true, mode: 'instant', min_minutes: 10, max_unplanned_day: 3, digest_hour: 19, notify_min_extra: 0, max_open_hours: 3, late_start_hours: 12, remind_open_hours: 2, late_auto: true };
 async function guardSettings() { return { ...DEFAULT_GUARD, ...((await getSetting('point_guard')) || {}) }; }
 const GUARD_KINDS = {
   fast: 'Слишком быстро',
@@ -4245,7 +4248,19 @@ const GUARD_KINDS = {
   night: 'Вечерняя надбавка при дневной заявке',
   dup_address: 'Повторный акт по адресу',
   unplanned_many: 'Много выездов без заявки',
+  late_close: 'Акт закрыт поздно',
+  late_start: 'Акт начат намного позже заявки',
 };
+/** v92: время, по которому считаются надбавки (вечер, коэффициент по часам): назначенное время заявки,
+ *  если акт начат позже него больше чем на late_start_hours (и включено late_auto), иначе null — по началу. */
+async function lateTimeRef(v) {
+  if (!v.task_id || !v.started_at) return null;
+  const s = await guardSettings();
+  if (!s.enabled || !s.late_auto) return null;
+  const [t] = await db.query('SELECT planned_at, has_time FROM tasks WHERE id = $1', [v.task_id]);
+  if (!t?.planned_at || !Number(t.has_time)) return null;
+  return Date.parse(v.started_at) - Date.parse(t.planned_at) > Number(s.late_start_hours || 12) * 3600000 ? t.planned_at : null;
+}
 const normAddr = (a) => String(a || '').toLowerCase().replace(/[^a-zа-яёăâîșşțţ0-9]+/gi, '');
 const parseArr = (s) => { try { const a = JSON.parse(s || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
 const hm = (iso) => new Date(iso).toLocaleTimeString('ru-RU', { timeZone: TZN, hour: '2-digit', minute: '2-digit' });
@@ -4292,10 +4307,22 @@ async function guardCheck(v, s, cfg) {
       }
     }
     const from = Number(cfg.night_from) || 20;
-    if (Number(cfg.night) > 0 && t.planned_at && Number(t.has_time) && localHour(t.planned_at) < from - 2
+    if (Number(cfg.night) > 0 && !v.time_ref && t.planned_at && Number(t.has_time) && localHour(t.planned_at) < from - 2
       && (localHour(v.started_at) >= from || localHour(v.finished_at || v.started_at) >= from)) {
       add('night', `заявка на ${hm(t.planned_at)}, выезд ${hm(v.started_at)}–${hm(v.finished_at || v.started_at)} — надбавка +${ptsRu(cfg.night)}`);
       base.started_at = t.planned_at; base.finished_at = t.planned_at;
+    }
+  }
+  // v92: поздно закрыт / начат намного позже заявки
+  if (v.started_at && v.finished_at && Number(s.max_open_hours) > 0) {
+    const hrs = (Date.parse(v.finished_at) - Date.parse(v.started_at)) / 3600000;
+    if (hrs > Number(s.max_open_hours)) add('late_close', `начат ${dayRu(v.started_at)} ${hm(v.started_at)}, закрыт ${dayRu(v.finished_at)} ${hm(v.finished_at)} — через ${hrs >= 24 ? `${String(Math.round(hrs / 24 * 10) / 10).replace('.', ',')} сут.` : `${String(Math.round(hrs * 10) / 10).replace('.', ',')} ч`}`);
+  }
+  if (t?.planned_at && Number(t.has_time) && v.started_at && Number(s.late_start_hours) > 0) {
+    const hrs = (Date.parse(v.started_at) - Date.parse(t.planned_at)) / 3600000;
+    if (hrs > Number(s.late_start_hours)) {
+      add('late_start', `заявка на ${dayRu(t.planned_at)} ${hm(t.planned_at)}, акт начат ${dayRu(v.started_at)} ${hm(v.started_at)} — позже на ${hrs >= 24 ? `${String(Math.round(hrs / 24 * 10) / 10).replace('.', ',')} сут.` : `${Math.round(hrs)} ч`}${v.time_ref ? ' (надбавки посчитаны по времени заявки)' : ''}`);
+      if (!v.time_ref) base.time_ref = t.planned_at;
     }
   }
   // повторный акт по тому же адресу за сутки
@@ -4396,6 +4423,33 @@ async function guardDigestTick() {
 }
 setInterval(() => { guardDigestTick().catch((e) => console.error('guard digest:', e.message)); }, 5 * 60000).unref?.();
 
+/** v92: незакрытый акт — напомнить специалисту (через remind_open_hours) и офису (через max_open_hours). */
+async function openActsTick() {
+  const s = await guardSettings();
+  if (!s.enabled || !botEnabled || !(Number(s.remind_open_hours) > 0)) return;
+  const st = (await getSetting('open_acts_remind')) || {};
+  const open = await db.query("SELECT id, tech_tg_id, tech_name, company_name, address, started_at FROM visits WHERE status = 'open' AND started_at IS NOT NULL AND started_at > $1", [new Date(Date.now() - 7 * 86400000).toISOString()]);
+  const alive = new Set(open.map((v) => v.id));
+  let dirty = false;
+  for (const k of Object.keys(st)) if (!alive.has(k)) { delete st[k]; dirty = true; }
+  const base = publicBase();
+  for (const v of open) {
+    const hrs = (Date.now() - Date.parse(v.started_at)) / 3600000;
+    const done = st[v.id] || 0; // 1 — напомнили специалисту, 2 — сообщили офису
+    if (done < 1 && hrs >= Number(s.remind_open_hours)) {
+      st[v.id] = 1; dirty = true;
+      if (/^\d+$/.test(String(v.tech_tg_id))) sendMessage(v.tech_tg_id, `⏳ <b>Акт не закрыт</b> уже ${Math.floor(hrs)} ч\n${escHtml(v.company_name || '')} · ${escHtml(v.address || '')}\n\nЗакончили работу — завершите выезд сейчас. Поздно закрытые акты проверяет офис, баллы за время закрытия не начисляются.`,
+        base ? { replyMarkup: { inline_keyboard: [[{ text: '📝 Открыть акт', web_app: { url: `${base}/?visit=${v.id}` } }]] } } : {}).catch(() => {});
+    }
+    if (done < 2 && Number(s.max_open_hours) > 0 && hrs >= Number(s.max_open_hours)) {
+      st[v.id] = 2; dirty = true;
+      await notifyAdmins(`⏳ <b>Акт открыт ${Math.floor(hrs)} ч</b> · ${escHtml(v.tech_name || '')}\n${escHtml(v.company_name || '')} · ${escHtml(v.address || '')}\nНачат ${escHtml(dayRu(v.started_at))} ${escHtml(hm(v.started_at))}. Если закроют позже — придёт в «Контроль баллов».`);
+    }
+  }
+  if (dirty) await setSetting('open_acts_remind', st);
+}
+setInterval(() => { openActsTick().catch((e) => console.error('open acts:', e.message)); }, 10 * 60000).unref?.();
+
 route('GET', '/api/admin/guard', async ({ query }) => {
   const status = ['new', 'all'].includes(query.get('status')) ? query.get('status') : 'new';
   const rows = await db.query(`SELECT f.*, v.company_name, v.address, v.points, v.points_total, v.started_at, v.finished_at FROM point_flags f LEFT JOIN visits v ON v.id = f.visit_id
@@ -4411,6 +4465,8 @@ route('PUT', '/api/admin/guard', async ({ body, user }) => {
   if (body.enabled !== undefined) s.enabled = Boolean(body.enabled);
   if (body.mode !== undefined) { must(['instant', 'digest'].includes(body.mode), 400, 'Режим: сразу или раз в день'); s.mode = body.mode; }
   const num = (k, lo, hi, name) => { if (body[k] === undefined) return; const n = Number(String(body[k]).replace(',', '.')); must(Number.isFinite(n) && n >= lo && n <= hi, 400, `${name}: от ${lo} до ${hi}`); s[k] = n; };
+  num('max_open_hours', 0, 72, 'Акт открыт дольше, ч'); num('late_start_hours', 0, 240, 'Начат позже заявки, ч'); num('remind_open_hours', 0, 24, 'Напомнить закрыть акт, ч');
+  if (body.late_auto !== undefined) s.late_auto = Boolean(body.late_auto);
   num('min_minutes', 0, 240, 'Минимум минут на выезд'); num('max_unplanned_day', 1, 50, 'Выездов без заявки в день'); num('digest_hour', 0, 23, 'Час итога'); num('notify_min_extra', 0, 50, 'Порог лишних баллов');
   await setSetting('point_guard', s);
   await audit(user, 'Контроль баллов', `${s.enabled ? 'вкл' : 'выкл'} · ${s.mode === 'instant' ? 'сразу' : `итог в ${s.digest_hour}:00`} · мин ${s.min_minutes} мин · без заявки ≤ ${s.max_unplanned_day}/день`);

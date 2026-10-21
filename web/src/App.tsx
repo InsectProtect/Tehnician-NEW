@@ -133,6 +133,14 @@ export default function App() {
     load(); // обновить счётчики (заявки на доступ, чат офиса)
   };
   const openVisit = (id: string) => setRoute((r) => ({ name: 'visit', id, back: r.name === 'visit' ? r.back : r }));
+  // v92: кнопка бота «Открыть акт» (?visit=<id>) — сразу на экран выезда
+  const visitParam = useRef(false);
+  useEffect(() => {
+    if (!cfg || visitParam.current) return;
+    visitParam.current = true;
+    const vid = new URLSearchParams(window.location.search).get('visit');
+    if (vid && /^[\w-]{8,64}$/.test(vid)) setRoute({ name: 'visit', id: vid, back: { name: 'home' } });
+  }, [cfg]);
 
   let content;
   if (needLogin) {
