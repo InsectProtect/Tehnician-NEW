@@ -271,6 +271,22 @@ async function journalData(v) {
   return { visit: v, rows: await visitRows(v), history: await stationHistory(v), company: await companySettings() };
 }
 
+/** v93: последние осмотры каждой станции на прошлых выездах (для быстрого осмотра): trapId → [{at, status, count, pest, bait}] (новые первыми). */
+async function trapHistory(v, per = 3) {
+  if (!v.object_id) return {};
+  const rows = await db.query(
+    `SELECT i.trap_id, i.status, i.count, i.pest, i.bait_eaten, COALESCE(x.finished_at, i.created_at) AS at
+       FROM inspections i JOIN visits x ON x.id = i.visit_id
+      WHERE x.object_id = $1 AND x.id <> $2 AND x.status = 'done'
+      ORDER BY COALESCE(x.finished_at, i.created_at) DESC LIMIT 600`, [v.object_id, v.id]);
+  const out = {};
+  for (const r of rows) {
+    const list = out[r.trap_id] || (out[r.trap_id] = []);
+    if (list.length < per) list.push({ at: r.at, status: r.status, count: Number(r.count) || 0, pest: r.pest || '', bait: r.bait_eaten || '' });
+  }
+  return out;
+}
+
 function shapeRow(r) {
   return {
     id: r.id, code: r.code, number: Number(r.number), kind: r.kind, location: r.location, target: r.target || '', prepared: Number(r.prepared) === 1,
@@ -3363,7 +3379,10 @@ route('GET', '/api/visits/:id', async ({ params, user }) => {
       monitoring: v.monitoring == null ? null : Number(v.monitoring) === 1,
       journal_url: v.status === 'done' && user.isAdmin && rows.length ? `/r/journal/${v.id}.pdf?${signLink(`journal:${v.id}`)}` : null,
     },
-    traps: rows.map(shapeRow),
+    traps: await (async () => {
+      const hist = v.status === 'open' ? await trapHistory(v) : {};
+      return rows.map((r) => ({ ...shapeRow(r), history: hist[r.id] || [] }));
+    })(),
     observations: await loadObservations(v.id),
     task: v.task_id ? await db.query('SELECT * FROM tasks WHERE id = $1', [v.task_id]).then(([t]) => (t ? shapeTask(t) : null)) : null,
   };
@@ -3461,12 +3480,13 @@ route('PATCH', '/api/visits/:id', async ({ params, body, user }) => {
 });
 
 // Замечание с фотографиями: { category, comment, photos: [base64 JPEG/PNG] }
+const STATION_OBS = 'Станция: замечание'; // v93: фото активности/повреждения станции из быстрого осмотра
 const ROD_OBS = 'Грызун в станции'; // категория для фото грызуна из осмотра станции (не зависит от OBS_CATEGORIES в ENV)
 route('POST', '/api/visits/:id/observations', async ({ params, body, user }) => {
   const v = await getWorkVisit(params.id, user);
   must(v.status === 'open', 409, 'Выезд уже завершён');
   const category = str(body.category, 100);
-  must(OBS_CATEGORIES.includes(category) || category === ROD_OBS, 400, 'Выберите категорию');
+  must(OBS_CATEGORIES.includes(category) || category === ROD_OBS || category === STATION_OBS, 400, 'Выберите категорию');
   const comment = str(body.comment, 2000);
   const list = Array.isArray(body.photos) ? body.photos : [];
   must(list.length <= 10, 400, 'Не больше 10 фото за раз');

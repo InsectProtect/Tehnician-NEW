@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Camera, CheckCircle2, MessageSquareWarning, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Map as MapIcon, Pencil, Printer, RefreshCw, ScanLine, Send, Share2, Tag, Target, Trash2 } from 'lucide-react';
+import { Camera, CheckCircle2, MessageSquareWarning, Navigation, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Map as MapIcon, Pencil, Printer, RefreshCw, ScanLine, Send, Share2, Tag, Target, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { fmtDate, plural, useConfig } from '../config';
 import { callPhone, canScanQr, getLocation, haptic, openLink, prettyPhone, scanQr, useBackButton } from '../telegram';
@@ -20,6 +20,7 @@ import { playSound } from '../sounds';
 import { takePendingScan } from '../pendingScan';
 import { PlanSheet, StationEditSheet, deviceStyle } from './Plan';
 import { ActChecklist, ActStepBar, ActStepNav, type ActStep } from '../components/ActSteps';
+import { RouteSheet } from './Route';
 
 type SheetState =
   | null
@@ -27,6 +28,7 @@ type SheetState =
   | { type: 'qr'; trap: Trap; back?: boolean } // QR станции: заменить повреждённую этикетку / перепечатать
   | { type: 'scanned'; trap: Trap } // отсканирована станция этого объекта: пока не подтверждено «я на объекте» — спрашиваем
   | { type: 'service'; focusId?: string } // список всех станций объекта к обслуживанию
+  | { type: 'route'; after?: string; skipped?: string[]; done?: boolean } // v93: маршрут обхода — следующая станция / итог
   | { type: 'register'; code: string; next: number }
   | { type: 'install'; trap: Trap; back?: boolean } // подготовленная заранее станция: отметить, где установлена
   | { type: 'manual' }
@@ -54,6 +56,8 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
   // «Я на объекте» подтверждён при первом скане станции — запоминаем на выезд, чтобы не спрашивать каждый раз
   const [onSiteOk, setOnSiteOk] = useState(() => { try { return localStorage.getItem(`onsite:${id}`) === '1'; } catch { return false; } });
 
+  // v93: станции, пропущенные в обходе (вернёмся к ним в конце)
+  const [routeSkipped, setRouteSkipped] = useState<string[]>([]);
   // v87: акт заполняется по шагам (можно переключить на «всё одним списком»)
   const [step, setStep] = useState('start');
   const [stepsOff, setStepsOff] = useState(() => { try { return localStorage.getItem('act_steps_off') === '1'; } catch { return false; } });
@@ -225,7 +229,8 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       setData((d) => (d ? { ...d, visit: { ...d.visit, monitoring: true } } : d));
       api.setMonitoring(id, true).catch(() => load());
     }
-    setSheet({ type: 'service', focusId: trap.id });
+    // v93: сразу осмотр отсканированной станции, после него — маршрут обхода
+    setSheet(trap.prepared ? { type: 'install', trap } : { type: 'inspect', trap });
   }
 
   const inspectEl = (trap: Trap, back = false) => (
@@ -237,7 +242,8 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       onQr={() => setSheet({ type: 'qr', trap, back })}
       onSaved={(next) => {
         load();
-        if (next) { setSheet(null); setTimeout(startScan, 350); }
+        // v93: после осмотра — следующая станция по маршруту обхода
+        if (next) setSheet({ type: 'route', after: trap.id, skipped: routeSkipped });
         else setSheet(back ? { type: 'service' } : null);
       }}
     />
@@ -1009,6 +1015,23 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           </div>
         </Sheet>
       ))}
+      {sheet?.type === 'route' && (
+        <RouteSheet
+          visitId={id}
+          traps={traps}
+          after={sheet.after}
+          skipped={sheet.skipped || []}
+          showDone={Boolean(sheet.done)}
+          targetLabel={targetLabel}
+          onScan={() => { setSheet(null); setTimeout(startScan, 250); }}
+          onOpen={(t) => setSheet(t.prepared ? { type: 'install', trap: t, back: true } : t.inspection ? { type: 'inspect', trap: t, back: true } : { type: 'qr', trap: t, back: true })}
+          onSkip={(tid) => { setRouteSkipped((x) => [...new Set([...x, tid])]); setSheet({ type: 'route', after: tid, skipped: [...new Set([...routeSkipped, tid])] }); }}
+          onFinishRoute={() => setSheet({ type: 'route', after: sheet.after, skipped: routeSkipped, done: true })}
+          onPlan={(tid) => setSheet({ type: 'plan', focusId: tid })}
+          onSaved={() => load()}
+          onClose={() => setSheet(null)}
+        />
+      )}
       {sheet?.type === 'service' && (
         <ServiceSheet
           traps={traps}
@@ -1018,6 +1041,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           trapResult={trapResult}
           onOpen={(t) => setSheet(t.prepared ? { type: 'install', trap: t, back: true } : { type: 'inspect', trap: t, back: true })}
           onScan={() => { setSheet(null); setTimeout(startScan, 250); }}
+          onRoute={() => setSheet({ type: 'route', after: sheet.focusId, skipped: routeSkipped })}
           onPlan={() => setSheet({ type: 'plan', focusId: sheet.focusId })}
           onClose={() => setSheet(null)}
         />
@@ -1224,9 +1248,9 @@ function RoomsFromTask({ visit, onChanged }: { visit: Visit; onChanged: () => vo
 }
 
 /** Список всех станций объекта к обслуживанию: после подтверждения «Я на объекте» и по кнопке в выезде. */
-function ServiceSheet({ traps, focusId, statusLabel, targetLabel, trapResult, onOpen, onScan, onPlan, onClose }: {
+function ServiceSheet({ traps, focusId, statusLabel, targetLabel, trapResult, onOpen, onScan, onRoute, onPlan, onClose }: {
   traps: Trap[]; focusId?: string; statusLabel: (s: string) => string; targetLabel: (id: string) => string; trapResult: (t: Trap) => string;
-  onOpen: (t: Trap) => void; onScan: () => void; onPlan: () => void; onClose: () => void;
+  onOpen: (t: Trap) => void; onScan: () => void; onRoute: () => void; onPlan: () => void; onClose: () => void;
 }) {
   const left = traps.filter((t) => !t.inspection).length;
   return (
@@ -1260,7 +1284,8 @@ function ServiceSheet({ traps, focusId, statusLabel, targetLabel, trapResult, on
         </Group>
       )}
       <div className="mt-4 space-y-2">
-        {left > 0 && <Button onClick={onScan} icon={<ScanLine size={20} strokeWidth={1.75} />}>Сканировать следующую</Button>}
+        {left > 0 && <Button onClick={onRoute} icon={<Navigation size={19} strokeWidth={1.9} />}>Обход по порядку</Button>}
+        {left > 0 && <Button variant="secondary" onClick={onScan} icon={<ScanLine size={20} strokeWidth={1.75} />}>Сканировать любую</Button>}
         <Button variant="secondary" onClick={onPlan} icon={<MapIcon size={18} strokeWidth={1.75} />}>{focusId ? 'Где она на плане' : 'План объекта'}</Button>
         <Button variant={left > 0 ? 'plain' : 'primary'} onClick={onClose}>{left > 0 ? 'Закрыть' : 'Готово'}</Button>
       </div>

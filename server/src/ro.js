@@ -46,6 +46,8 @@ export const roCategory = map({
   'Нет доступа': 'Lipsă de acces',
   'Санитарное состояние': 'Starea sanitară',
   'Другое': 'Altele',
+  'Грызун в станции': 'Rozătoare în stație',
+  'Станция: замечание': 'Stație: observație',
 });
 
 export const roTrapKind = map({

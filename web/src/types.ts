@@ -152,6 +152,8 @@ export type Trap = {
   plan_id?: string | null; plan_x?: number | null; plan_y?: number | null;
   /** своя подпись и цвет на плане (v86) */
   label?: string; color?: string;
+  /** v93: последние осмотры на прошлых выездах (новые первыми) — для быстрого осмотра */
+  history?: { at: string; status: string; count: number; pest: string; bait: string }[];
   inspection: Inspection | null;
 };
 

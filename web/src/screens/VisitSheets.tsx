@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from 'react';
-import { AlertTriangle, Camera, Image as ImageIcon, Keyboard, Loader2, PenLine, Send, X } from 'lucide-react';
+import { AlertTriangle, Camera, CheckCircle2, Image as ImageIcon, Keyboard, Loader2, PenLine, Send, X } from 'lucide-react';
 import { SignatureSheet } from '../components/SignaturePad';
 import { api } from '../api';
 import { RemarkTypePicker } from '../components/RemarkTypes';
@@ -9,6 +9,7 @@ import type { Observation, Reward, Trap, Visit, RemarkType } from '../types';
 import { QuestPath } from '../components/game';
 import { openPhotos } from '../components/PhotoViewer';
 import { compressImage } from '../image';
+import { LOC } from '../locale';
 import { PaymentPicker, defaultPayNote, defaultPayment, type PayState } from '../components/Payment';
 import { Button, Chips, Field, Input, Sheet, Stepper, TextArea, Toggle, cx, useToast } from '../components/ui';
 
@@ -31,11 +32,15 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
   const [count, setCount] = useState(prev?.count || 1);
   const [replaced, setReplaced] = useState(prev?.bait_replaced ?? false);
   const [comment, setComment] = useState(prev?.comment ?? '');
-  const [busy, setBusy] = useState<'save' | 'next' | null>(null);
+  const [busy, setBusy] = useState<'save' | 'next' | 'clean' | null>(null);
+  // v93: новая проверка начинается с быстрого экрана «Чисто · дальше»; повторный осмотр — сразу полная форма
+  const [full, setFull] = useState(Boolean(prev));
   const blocked = BLOCKED.includes(condition);
   const pestOptions = target?.pests ?? cfg.pests;
   // грызун в станции: можно сделать фото и прикрепить файл — уйдёт в замечания выезда (и в акт)
   const isRodent = /мыш|крыс|грызун/i.test(pest);
+  // фото обязательно, если в станции кто-то есть или она повреждена
+  const needPhoto = (!blocked && caught === 'yes') || condition === 'damaged';
   const camera = useRef<HTMLInputElement>(null);
   const gallery = useRef<HTMLInputElement>(null);
   const [shots, setShots] = useState<{ key: string; data: string }[]>([]);
@@ -67,11 +72,12 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
         pest: !blocked && caught === 'yes' ? pest : '', count: !blocked && caught === 'yes' ? count : 0,
         bait_replaced: !blocked && replaced, comment,
       });
-      if (!blocked && caught === 'yes' && isRodent && shots.length) {
+      if (needPhoto && shots.length) {
         try {
+          const what = !blocked && caught === 'yes' ? `${pest} × ${count}` : 'станция повреждена';
           await api.addObservation(visitId, {
-            category: 'Грызун в станции',
-            comment: `Станция №${trap.number}${trap.location ? ` · ${trap.location}` : ''}: ${pest} × ${count}${comment.trim() ? `. ${comment.trim()}` : ''}`,
+            category: !blocked && caught === 'yes' && isRodent ? 'Грызун в станции' : 'Станция: замечание',
+            comment: `Станция №${trap.number}${trap.location ? ` · ${trap.location}` : ''}: ${what}${comment.trim() ? `. ${comment.trim()}` : ''}`,
             photos: shots.map((x) => x.data),
           });
         } catch (e) {
@@ -88,7 +94,86 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
     }
   }
 
-  const invalid = processing || !condition || (!blocked && ((isBait && !bait) || !caught || (caught === 'yes' && !pest)));
+  const invalid = processing || !condition || (!blocked && ((isBait && !bait) || !caught || (caught === 'yes' && !pest))) || (needPhoto && !shots.length);
+
+  /** «Чисто · дальше»: в порядке, никого нет, приманка как отмечена (по умолчанию не тронута). */
+  async function saveClean() {
+    setBusy('clean');
+    try {
+      await api.saveInspection(visitId, {
+        trap_id: trap.id, condition: 'ok', bait_eaten: isBait ? (bait || 'none') : '', pest: '', count: 0, bait_replaced: replaced, comment: '',
+      });
+      haptic.success();
+      toast(isBait && bait && bait !== 'none' ? `№${trap.number}: приманка ${baitLabel(bait).toLowerCase()}` : `№${trap.number} — чисто`);
+      onSaved(true);
+    } catch (e) {
+      haptic.error();
+      toast((e as Error).message, 'error');
+      setBusy(null);
+    }
+  }
+  const baitLabel = (id: string) => cfg.baitLevels.find((x) => x.id === id)?.label ?? '';
+  const hist = trap.history || [];
+  const histCell = (h: NonNullable<Trap['history']>[number]) => {
+    const bad = h.status === 'activity' || h.count > 0;
+    const blk = BLOCKED.includes(h.status);
+    return {
+      tone: bad ? 'text-[#D70015] dark:text-[#FF453A]' : blk ? 'text-[#C93400] dark:text-[#FF9F0A]' : 'text-[#248A3D] dark:text-[#30D158]',
+      text: h.count > 0 ? `${h.pest || 'улов'} ${h.count}` : bad ? `приманка: ${baitLabel(h.bait).toLowerCase() || 'тронута'}` : blk ? (cfg.conditions.find((c) => c.id === h.status)?.label || h.status).toLowerCase() : 'чисто',
+    };
+  };
+  const histBlock = hist.length > 0 && (
+    <div className="mb-5">
+      <div className="mb-1.5 px-1 font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted">Прошлые разы</div>
+      <div className="grid grid-cols-3 gap-1.5">
+        {hist.map((h, i) => {
+          const c = histCell(h);
+          return (
+            <div key={i} className="rounded-xl bg-card px-2 py-2 text-center">
+              <div className="text-[11.5px] text-muted">{new Date(h.at).toLocaleDateString(LOC, { day: '2-digit', month: '2-digit' })}</div>
+              <div className={cx('truncate text-[13px] font-semibold', c.tone)}>{c.text}</div>
+            </div>
+          );
+        })}
+      </div>
+      {hist.filter((h) => h.status === 'activity' || h.count > 0).length >= 2 && (
+        <div className="mt-2 rounded-xl bg-[#FF3B30]/10 px-3 py-2 text-[13px] text-[#D70015] dark:text-[#FF453A]">Активность уже {hist.filter((h) => h.status === 'activity' || h.count > 0).length} раза — проверьте, откуда заходят</div>
+      )}
+    </div>
+  );
+
+  if (!full) {
+    return (
+      <Sheet open onClose={onClose} title={`Станция №${trap.number}`}>
+        <div className="-mt-3 mb-5 text-[15px] text-muted">
+          {[trap.location, target?.label, trap.kind].filter(Boolean).join(' · ')}
+        </div>
+        {histBlock}
+        {isBait && (
+          <Field label="Приманка">
+            <Chips options={cfg.baitLevels} value={bait || 'none'} onChange={(v) => { haptic.tap(); setBait(v); }} />
+          </Field>
+        )}
+        <div className="mt-4">
+          <Toggle label={isBait ? 'Заменил / добавил приманку' : 'Заменил клеевую пластину / вкладыш'} checked={replaced} onChange={setReplaced} />
+        </div>
+        <div className="mt-6 space-y-2.5">
+          <button onClick={saveClean} disabled={busy !== null} data-btn="primary"
+            className="flex h-[72px] w-full items-center justify-center gap-2.5 rounded-2xl bg-[#34C759] text-[19px] font-bold text-[#06200e] active:opacity-80 disabled:opacity-60">
+            {busy === 'clean' ? <Loader2 size={22} className="animate-spin" /> : <CheckCircle2 size={24} strokeWidth={2.2} />}
+            {isBait && bait && bait !== 'none' ? 'Сохранить · дальше' : 'Чисто · дальше'}
+          </button>
+          <div className="text-center text-[12.5px] text-muted">сохранит и покажет следующую станцию</div>
+          <Button variant="secondary" onClick={() => { haptic.tap(); setFull(true); }} icon={<AlertTriangle size={19} strokeWidth={1.9} />}>
+            Есть замечание
+          </Button>
+          {onQr && (
+            <button onClick={onQr} className="w-full py-2 text-center text-[14px] font-medium text-accent-ink">QR на станции повреждён? Заменить этикетку</button>
+          )}
+        </div>
+      </Sheet>
+    );
+  }
 
   return (
     <Sheet open onClose={onClose} title={`Станция №${trap.number}`}>
@@ -96,6 +181,7 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
         {[target?.label, trap.kind, trap.location].filter(Boolean).join(' · ')}
         <span className="ml-1 font-mono text-[12px] opacity-60">· {trap.code}</span>
       </div>
+      {histBlock}
 
       <div className="space-y-6">
         <Field label="Состояние станции">
@@ -121,8 +207,12 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
                 <Field label="Количество">
                   <Stepper value={count} onChange={setCount} min={1} />
                 </Field>
-                {isRodent && (
-                  <Field label={`Фото грызуна${shots.length ? ` · ${shots.length}` : ''}`}>
+              </>
+            )}
+          </>
+        )}
+        {needPhoto && (
+                  <Field label={`Фото${shots.length ? ` · ${shots.length}` : ' — обязательно'}`}>
                     {shots.length > 0 && (
                       <div className="mb-3 grid grid-cols-3 gap-2">
                         {shots.map((x) => (
@@ -145,13 +235,11 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
                       <Button variant="secondary" className="text-[15px]" disabled={shots.length >= MAX_SHOTS}
                         onClick={() => gallery.current?.click()} icon={<ImageIcon size={18} strokeWidth={1.75} />}>Прикрепить файл</Button>
                     </div>
-                    <div className="mt-1.5 px-1 text-[12.5px] leading-snug text-muted">Необязательно. Фото попадёт в замечания выезда и в акт.</div>
+                    <div className="mt-1.5 px-1 text-[12.5px] leading-snug text-muted">Нужно, когда в станции кто-то есть или она повреждена. Фото попадёт в замечания выезда и в акт.</div>
                   </Field>
-                )}
-              </>
-            )}
-            <Toggle label={isBait ? 'Приманка заменена / добавлена' : 'Клеевая пластина / вкладыш заменены'} checked={replaced} onChange={setReplaced} />
-          </>
+        )}
+        {!blocked && (
+          <Toggle label={isBait ? 'Приманка заменена / добавлена' : 'Клеевая пластина / вкладыш заменены'} checked={replaced} onChange={setReplaced} />
         )}
 
         <Field label="Комментарий">
@@ -160,13 +248,12 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
       </div>
 
       <div className="mt-7 space-y-2.5">
-        {canScanQr() && (
-          <Button disabled={invalid} loading={busy === 'next'} onClick={() => save(true)}>
-            Записать и сканировать следующую
-          </Button>
-        )}
-        <Button variant={canScanQr() ? 'secondary' : 'primary'} disabled={invalid} loading={busy === 'save'} onClick={() => save(false)}>
-          Записать
+        <Button disabled={invalid} loading={busy === 'next'} onClick={() => save(true)}>
+          Сохранить · дальше
+        </Button>
+        {needPhoto && !shots.length && <div className="text-center text-[12.5px] text-[#C93400] dark:text-[#FF9F0A]">Добавьте фото — без него не сохранить</div>}
+        <Button variant="plain" disabled={invalid} loading={busy === 'save'} onClick={() => save(false)}>
+          Сохранить и вернуться
         </Button>
         {onQr && (
           <button onClick={onQr} className="w-full py-2 text-center text-[14px] font-medium text-accent-ink">
