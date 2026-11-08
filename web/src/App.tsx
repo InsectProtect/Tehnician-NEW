@@ -18,6 +18,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { PinScreen } from './screens/Pin';
 import { VisitScreen } from './screens/Visit';
 import { setLocale } from './locale';
+import { startOutbox } from './offline';
 import { enableRomanian } from './i18n-dom';
 
 // кнопка бота «📷 Сфотографировать» (?car=check) — сразу вкладка «Авто»
@@ -83,6 +84,9 @@ export default function App() {
     onSessionLost(lock);
     onAppLoginNeeded(() => { if (isTelegram()) return; setCfg(null); setPartial(null); setNeedLogin(true); });
   }, [load, lock, needLogin]);
+
+  // v94: осмотры, сохранённые без связи (в т.ч. до закрытия приложения), отправляются в фоне
+  useEffect(() => { startOutbox(); }, []);
 
   // блокировка при долгом сворачивании
   useEffect(() => {

@@ -1,6 +1,6 @@
+import { saveOrQueue } from '../offline';
 import { useState } from 'react';
 import { ScanLine } from 'lucide-react';
-import { api } from '../api';
 import { haptic } from '../telegram';
 import type { Trap } from '../types';
 import { Button, Chips, Group, IconBadge, Row, Sheet, useToast } from '../components/ui';
@@ -68,7 +68,7 @@ export function RouteSheet({ visitId, traps, after, skipped, showDone, targetLab
     try {
       for (const t of list) {
         const r = SKIP_REASONS.find((x) => x.id === reasons[t.id])!;
-        await api.saveInspection(visitId, { trap_id: t.id, condition: r.condition, bait_eaten: '', pest: '', count: 0, bait_replaced: false, comment: r.comment });
+        await saveOrQueue('inspection', visitId, { trap_id: t.id, condition: r.condition, bait_eaten: '', pest: '', count: 0, bait_replaced: false, comment: r.comment });
       }
       haptic.success();
       toast(`Причины записаны: ${list.length}`);

@@ -1,3 +1,4 @@
+import { saveOrQueue } from '../offline';
 import { useRef, useState, useEffect } from 'react';
 import { AlertTriangle, Camera, CheckCircle2, Image as ImageIcon, Keyboard, Loader2, PenLine, Send, X } from 'lucide-react';
 import { SignatureSheet } from '../components/SignaturePad';
@@ -67,25 +68,25 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
   async function save(next: boolean) {
     setBusy(next ? 'next' : 'save');
     try {
-      await api.saveInspection(visitId, {
+      let queued = (await saveOrQueue('inspection', visitId, {
         trap_id: trap.id, condition, bait_eaten: isBait && !blocked ? bait : '',
         pest: !blocked && caught === 'yes' ? pest : '', count: !blocked && caught === 'yes' ? count : 0,
         bait_replaced: !blocked && replaced, comment,
-      });
+      })) === 'queued';
       if (needPhoto && shots.length) {
         try {
           const what = !blocked && caught === 'yes' ? `${pest} × ${count}` : 'станция повреждена';
-          await api.addObservation(visitId, {
+          if (await saveOrQueue('observation', visitId, {
             category: !blocked && caught === 'yes' && isRodent ? 'Грызун в станции' : 'Станция: замечание',
             comment: `Станция №${trap.number}${trap.location ? ` · ${trap.location}` : ''}: ${what}${comment.trim() ? `. ${comment.trim()}` : ''}`,
             photos: shots.map((x) => x.data),
-          });
+          }) === 'queued') queued = true;
         } catch (e) {
           toast(`Станция записана, но фото не загрузилось: ${(e as Error).message}`, 'error');
         }
       }
       haptic.success();
-      toast(`Станция №${trap.number} записана в журнал`);
+      toast(queued ? `Нет связи — №${trap.number} сохранена в телефоне, отправится сама` : `Станция №${trap.number} записана в журнал`);
       onSaved(next);
     } catch (e) {
       haptic.error();
@@ -100,11 +101,12 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
   async function saveClean() {
     setBusy('clean');
     try {
-      await api.saveInspection(visitId, {
+      const r = await saveOrQueue('inspection', visitId, {
         trap_id: trap.id, condition: 'ok', bait_eaten: isBait ? (bait || 'none') : '', pest: '', count: 0, bait_replaced: replaced, comment: '',
       });
       haptic.success();
-      toast(isBait && bait && bait !== 'none' ? `№${trap.number}: приманка ${baitLabel(bait).toLowerCase()}` : `№${trap.number} — чисто`);
+      if (r === 'queued') toast(`Нет связи — №${trap.number} сохранена в телефоне, отправится сама`);
+      else toast(isBait && bait && bait !== 'none' ? `№${trap.number}: приманка ${baitLabel(bait).toLowerCase()}` : `№${trap.number} — чисто`);
       onSaved(true);
     } catch (e) {
       haptic.error();

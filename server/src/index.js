@@ -3482,6 +3482,14 @@ route('PATCH', '/api/visits/:id', async ({ params, body, user }) => {
 // Замечание с фотографиями: { category, comment, photos: [base64 JPEG/PNG] }
 const STATION_OBS = 'Станция: замечание'; // v93: фото активности/повреждения станции из быстрого осмотра
 const ROD_OBS = 'Грызун в станции'; // категория для фото грызуна из осмотра станции (не зависит от OBS_CATEGORIES в ENV)
+/** v94: время, записанное телефоном без связи (не в будущем и не старше 24 ч), иначе null. */
+function clientTime(at) {
+  const t = Date.parse(String(at || ''));
+  if (!Number.isFinite(t)) return null;
+  const d = Date.now() - t;
+  return d >= -60_000 && d <= 86_400_000 ? new Date(Math.min(t, Date.now())).toISOString() : null;
+}
+
 route('POST', '/api/visits/:id/observations', async ({ params, body, user }) => {
   const v = await getWorkVisit(params.id, user);
   must(v.status === 'open', 409, 'Выезд уже завершён');
@@ -3498,8 +3506,14 @@ route('POST', '/api/visits/:id/observations', async ({ params, body, user }) => 
     must(buf.length <= 5_000_000, 400, 'Фото больше 5 МБ');
     return { buf, mime };
   });
-  const id = uid();
-  const ts = now();
+  // v94: офлайн-обход — телефон присылает свой id (повтор после обрыва связи не создаёт дубль) и время записи
+  const cid = /^c-[a-z0-9-]{8,48}$/i.test(String(body.client_id || '')) ? String(body.client_id) : '';
+  if (cid) {
+    const [dup] = await db.query('SELECT id FROM observations WHERE id = $1', [cid]);
+    if (dup) return { observations: await loadObservations(v.id) };
+  }
+  const id = cid || uid();
+  const ts = clientTime(body.at) || now();
   await db.query('INSERT INTO observations (id, visit_id, category, comment, created_at) VALUES ($1,$2,$3,$4,$5)', [id, v.id, category, comment, ts]);
   for (const p of photos) {
     await db.query('INSERT INTO photos (id, observation_id, visit_id, mime, data, created_at) VALUES ($1,$2,$3,$4,$5,$6)',
@@ -4055,7 +4069,7 @@ route('POST', '/api/visits/:id/inspections', async ({ params, body, user }) => {
        status = EXCLUDED.status, pest = EXCLUDED.pest, count = EXCLUDED.count,
        bait_replaced = EXCLUDED.bait_replaced, comment = EXCLUDED.comment, created_at = EXCLUDED.created_at,
        condition = EXCLUDED.condition, bait_eaten = EXCLUDED.bait_eaten`,
-    [uid(), v.id, trap.id, status, pest, caught, body.bait_replaced ? 1 : 0, str(body.comment, 500), now(), condition, bait],
+    [uid(), v.id, trap.id, status, pest, caught, body.bait_replaced ? 1 : 0, str(body.comment, 500), clientTime(body.at) || now(), condition, bait],
   );
   if (v.monitoring == null) await db.query('UPDATE visits SET monitoring = 1 WHERE id = $1', [v.id]);
   return { ok: true };

@@ -155,6 +155,8 @@ export type Trap = {
   /** v93: последние осмотры на прошлых выездах (новые первыми) — для быстрого осмотра */
   history?: { at: string; status: string; count: number; pest: string; bait: string }[];
   inspection: Inspection | null;
+  /** v94: осмотр сохранён в телефоне и ещё не отправлен */
+  pending?: boolean;
 };
 
 /* ---------- План объекта (v78) ---------- */
@@ -277,6 +279,8 @@ export type LabelsInput = Partial<LabelOpts> & { count?: number; start?: number;
 
 export type InspectionInput = {
   trap_id: string;
+  /** v94: время осмотра, записанного без связи */
+  at?: string;
   status?: string;
   condition?: string;
   bait_eaten?: string;

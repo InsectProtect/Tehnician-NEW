@@ -14,7 +14,7 @@ let onAppLogin: (() => void) | null = null;
 export const onAppLoginNeeded = (fn: () => void) => { onAppLogin = fn; };
 
 export class ApiError extends Error {
-  constructor(message: string, public code?: string, public data?: Record<string, unknown>) { super(message); }
+  constructor(message: string, public code?: string, public data?: Record<string, unknown>, public status?: number) { super(message); }
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -34,7 +34,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       session = '';
       onLocked?.();
     }
-    throw new ApiError(data.error || `Ошибка ${res.status}`, data.code, data);
+    throw new ApiError(data.error || `Ошибка ${res.status}`, data.code, data, res.status);
   }
   return data as T;
 }
@@ -72,7 +72,7 @@ export const api = {
     client_rep?: string; client_rep_function?: string; locality?: string; premises?: string[]; reentry?: string; address?: string; point_cat?: string; point_zone?: string; quick?: boolean; mode?: 'full' | 'quick' | 'stations'; rooms?: number | null; sotki?: number | string | null;
   }) =>
     request<{ ok: true; recommendations: RecBlock[]; reentry: string; reentry_default: string }>('PATCH', `/api/visits/${id}`, data),
-  addObservation: (visitId: string, data: { category: string; comment: string; photos: string[] }) =>
+  addObservation: (visitId: string, data: { category: string; comment: string; photos: string[]; client_id?: string; at?: string }) =>
     request<{ observations: Observation[] }>('POST', `/api/visits/${visitId}/observations`, data),
   deleteObservation: (id: string) => request<{ ok: true }>('DELETE', `/api/observations/${id}`),
   shareVisit: (visitId: string, via: 'link' | 'bot' | 'qr' | 'file' | 'whatsapp' | 'telegram' | 'copy' = 'link') =>

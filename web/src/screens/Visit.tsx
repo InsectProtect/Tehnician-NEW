@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Camera, CheckCircle2, MessageSquareWarning, Navigation, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Map as MapIcon, Pencil, Printer, RefreshCw, ScanLine, Send, Share2, Tag, Target, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Camera, CheckCircle2, CloudOff, CloudUpload, MessageSquareWarning, Navigation, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Map as MapIcon, Pencil, Printer, RefreshCw, ScanLine, Send, Share2, Tag, Target, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { fmtDate, plural, useConfig } from '../config';
 import { callPhone, canScanQr, getLocation, haptic, openLink, prettyPhone, scanQr, useBackButton } from '../telegram';
@@ -21,6 +21,7 @@ import { takePendingScan } from '../pendingScan';
 import { PlanSheet, StationEditSheet, deviceStyle } from './Plan';
 import { ActChecklist, ActStepBar, ActStepNav, type ActStep } from '../components/ActSteps';
 import { RouteSheet } from './Route';
+import { dropOutboxItem, flushOutbox, isNetError, startOutbox, useOutbox, withPending } from '../offline';
 
 type SheetState =
   | null
@@ -58,6 +59,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
 
   // v93: станции, пропущенные в обходе (вернёмся к ним в конце)
   const [routeSkipped, setRouteSkipped] = useState<string[]>([]);
+  const trapsRef = useRef<Trap[]>([]);
   // v87: акт заполняется по шагам (можно переключить на «всё одним списком»)
   const [step, setStep] = useState('start');
   const [stepsOff, setStepsOff] = useState(() => { try { return localStorage.getItem('act_steps_off') === '1'; } catch { return false; } });
@@ -66,11 +68,23 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
 
   const [loadErr, setLoadErr] = useState('');
   const [slow, setSlow] = useState(false);
+  // v94: офлайн-обход — осмотры без связи лежат в телефоне и отправляются сами
+  const box = useOutbox(id);
+  const hasData = useRef(false);
   const load = useCallback(
-    () => api.visit(id).then((d) => { setData(d); setLoadErr(''); }).catch((e: Error) => { setLoadErr(e.message); toast(e.message, 'error'); }),
+    () => api.visit(id).then((d) => { hasData.current = true; setData(d); setLoadErr(''); }).catch((e: Error) => {
+      // выезд уже открыт, а связи нет — работаем с тем, что есть, без красных ошибок
+      if (hasData.current && isNetError(e)) return;
+      setLoadErr(e.message); toast(e.message, 'error');
+    }),
     [id, toast],
   );
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { startOutbox(); }, []);
+  // очередь опустела — подтягиваем свежие данные с сервера
+  const waitingN = box.waiting.length;
+  const prevWaiting = useRef(waitingN);
+  useEffect(() => { if (prevWaiting.current > 0 && waitingN === 0) load(); prevWaiting.current = waitingN; }, [waitingN, load]);
   // сервер на бесплатном Render мог «проснуться» не сразу — через 12 с показываем «Повторить» вместо бесконечной загрузки
   useEffect(() => { const t = setTimeout(() => setSlow(true), 12000); return () => clearTimeout(t); }, []);
 
@@ -93,9 +107,21 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
         setSheet({ type: 'message', title: 'Старая этикетка', text: `QR ${r.code} заменён: у станции № ${r.number} теперь код ${r.new_code}. Снимите старую наклейку, чтобы не путать, и сканируйте новую.` });
       else setSheet({ type: 'message', title: 'Ловушка снята', text: `Ловушка ${r.code} отключена на этом объекте.` });
     } catch (e) {
-      haptic.error();
-      setSheet(null);
-      toast((e as Error).message, 'error');
+      // v94: нет связи — ищем станцию среди уже загруженных станций выезда
+      const code = String(text || '').toUpperCase().match(/PT-?([A-HJ-NP-Z2-9]{6})/);
+      const local = isNetError(e) && code ? trapsRef.current.find((t) => t.code === `PT-${code[1]}`) : undefined;
+      if (local && !local.prepared) {
+        haptic.success();
+        playSound('qr');
+        setSheet({ type: 'scanned', trap: local });
+      } else if (isNetError(e) && code) {
+        haptic.error();
+        setSheet({ type: 'message', title: 'Нет связи', text: `Станции ${`PT-${code[1]}`} нет среди станций этого выезда. Новую станцию или установку заготовленной можно оформить, когда появится интернет — остальные станции проверяйте дальше, осмотры сохраняются в телефоне.` });
+      } else {
+        haptic.error();
+        setSheet(null);
+        toast((e as Error).message, 'error');
+      }
     } finally {
       setScanning(false);
     }
@@ -133,8 +159,11 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       </Screen>
     );
   }
-  const { visit, traps, observations } = data;
+  const { visit, observations } = data;
+  const traps = withPending(data.traps, box.items, cfg.rodenticide);
+  trapsRef.current = traps;
   const isOpen = visit.status === 'open';
+  const unsent = box.waiting.length;
 
   // Выезд без заявки ждёт решения администратора — работать с ним пока нельзя
   if (isOpen && visit.approval) {
@@ -498,6 +527,32 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       />
       {!cfg.isAdmin && isOpen && !visit.revision && !stepMode && <QuestPath step={2} className="mb-4" />}
       {stepMode && <ActStepBar steps={steps} current={cur} onGo={goStep} />}
+      {isOpen && (unsent > 0 || box.failed.length > 0 || !box.online) && (
+        <div data-panel className={cx('mb-4 rounded-2xl p-4', box.failed.length ? 'bg-[#D71921]/10' : 'bg-[#FF9500]/12')}>
+          <div className="flex items-start gap-3">
+            {box.online ? <CloudUpload size={20} className="mt-0.5 shrink-0 text-[#FF9500]" /> : <CloudOff size={20} className="mt-0.5 shrink-0 text-[#FF9500]" />}
+            <div className="min-w-0 flex-1">
+              <div className="text-[15.5px] font-semibold">
+                {!box.online ? 'Нет связи — работайте дальше' : box.flushing ? 'Отправляю…' : unsent ? 'Не отправлено' : 'Не принято сервером'}
+              </div>
+              <div className="mt-0.5 text-[13.5px] leading-snug text-muted">
+                {unsent > 0
+                  ? `В телефоне ${unsent} ${plural(unsent, ['запись', 'записи', 'записей'])} обхода. Отправятся сами, когда появится интернет.`
+                  : !box.failed.length ? 'Осмотры станций сохраняются в телефоне и отправятся сами.' : ''}
+              </div>
+              {box.failed.map((f) => (
+                <div key={f.id} className="mt-2 flex items-center gap-2 text-[13px]">
+                  <span className="min-w-0 flex-1 text-[#D70015] dark:text-[#FF453A]">{f.kind === 'inspection' ? `№${traps.find((t) => t.id === f.data.trap_id)?.number ?? '?'}` : 'Фото'}: {f.error}</span>
+                  <button className="shrink-0 font-semibold text-muted" onClick={() => dropOutboxItem(f.id)}>Убрать</button>
+                </div>
+              ))}
+              {unsent > 0 && box.online && !box.flushing && (
+                <button className="mt-2 text-[14px] font-semibold text-accent" onClick={() => { haptic.tap(); flushOutbox().then((n) => { if (n) toast(`Отправлено: ${n}`); }); }}>Отправить сейчас</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {data.task && isOpen && on('start') && (
         <div className="mb-4 rounded-2xl bg-accent/[0.06] p-4 text-[15px]">
@@ -508,7 +563,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
             </button>
           )}
           {data.task.comment && <div className="mt-1 whitespace-pre-line">{data.task.comment}</div>}
-          {data.observations.length === 0 && data.traps.every((t) => !t.inspection) && (
+          {data.observations.length === 0 && traps.every((t) => !t.inspection) && (
             <div className="mt-3"><ClientActions task={data.task} onChanged={onBack} /></div>
           )}
           {visit.can_undo_start && (
@@ -892,7 +947,15 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       )}
       {isOpen && on('finish') && (
         <>
-          <Button className="mt-6" onClick={() => setSheet({ type: 'finish' })}>
+          <Button className="mt-6" onClick={() => {
+            if (unsent > 0) {
+              haptic.error();
+              toast(`Сначала дождитесь отправки обхода (${unsent}) — нужен интернет`, 'error');
+              flushOutbox();
+              return;
+            }
+            setSheet({ type: 'finish' });
+          }}>
             {visit.lead_id ? 'Закрыть заявку' : visit.revision ? 'Сохранить исправленный акт' : 'Завершить выезд'}
           </Button>
           {visit.can_delete && (
