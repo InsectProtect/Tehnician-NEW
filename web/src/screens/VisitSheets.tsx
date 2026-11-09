@@ -1,6 +1,6 @@
 import { saveOrQueue } from '../offline';
 import { useRef, useState, useEffect } from 'react';
-import { AlertTriangle, Camera, CheckCircle2, Image as ImageIcon, Keyboard, Loader2, PenLine, Send, X } from 'lucide-react';
+import { AlertTriangle, Camera, CheckCircle2, Image as ImageIcon, Keyboard, Loader2, PenLine, RefreshCw, Send, X } from 'lucide-react';
 import { SignatureSheet } from '../components/SignaturePad';
 import { api } from '../api';
 import { RemarkTypePicker } from '../components/RemarkTypes';
@@ -42,6 +42,10 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
   const isRodent = /мыш|крыс|грызун/i.test(pest);
   // фото обязательно, если в станции кто-то есть или она повреждена
   const needPhoto = (!blocked && caught === 'yes') || condition === 'damaged';
+  // v95: в клеевой ловушке нет отравы — если кто-то попался, ловушку обязательно меняют
+  const isGlue = /кле[ей]|клей/i.test(trap.kind);
+  const mustReplace = isGlue && !blocked && caught === 'yes';
+  const replacedOut = !blocked && (replaced || mustReplace);
   const camera = useRef<HTMLInputElement>(null);
   const gallery = useRef<HTMLInputElement>(null);
   const [shots, setShots] = useState<{ key: string; data: string }[]>([]);
@@ -71,7 +75,7 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
       let queued = (await saveOrQueue('inspection', visitId, {
         trap_id: trap.id, condition, bait_eaten: isBait && !blocked ? bait : '',
         pest: !blocked && caught === 'yes' ? pest : '', count: !blocked && caught === 'yes' ? count : 0,
-        bait_replaced: !blocked && replaced, comment,
+        bait_replaced: replacedOut, comment,
       })) === 'queued';
       if (needPhoto && shots.length) {
         try {
@@ -157,7 +161,7 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
           </Field>
         )}
         <div className="mt-4">
-          <Toggle label={isBait ? 'Заменил / добавил приманку' : 'Заменил клеевую пластину / вкладыш'} checked={replaced} onChange={setReplaced} />
+          <Toggle label={isBait ? 'Заменил / добавил приманку' : isGlue ? 'Заменил клеевую ловушку' : 'Заменил клеевую пластину / вкладыш'} checked={replaced} onChange={setReplaced} />
         </div>
         <div className="mt-6 space-y-2.5">
           <button onClick={saveClean} disabled={busy !== null} data-btn="primary"
@@ -240,8 +244,16 @@ export function InspectSheet({ visitId, trap, onClose, onSaved, onQr }: {
                     <div className="mt-1.5 px-1 text-[12.5px] leading-snug text-muted">Нужно, когда в станции кто-то есть или она повреждена. Фото попадёт в замечания выезда и в акт.</div>
                   </Field>
         )}
-        {!blocked && (
-          <Toggle label={isBait ? 'Приманка заменена / добавлена' : 'Клеевая пластина / вкладыш заменены'} checked={replaced} onChange={setReplaced} />
+        {mustReplace ? (
+          <div data-panel className="flex items-start gap-3 rounded-2xl bg-[#FF9500]/12 px-4 py-3">
+            <RefreshCw size={20} className="mt-0.5 shrink-0 text-[#FF9500]" />
+            <div>
+              <div className="text-[16px] font-semibold">Замените клеевую ловушку</div>
+              <div className="mt-0.5 text-[13.5px] leading-snug text-muted">В ней нет отравы — раз кто-то попался, ставьте новую. В журнал и акт запишется «Заменена».</div>
+            </div>
+          </div>
+        ) : !blocked && (
+          <Toggle label={isBait ? 'Приманка заменена / добавлена' : isGlue ? 'Клеевая ловушка заменена' : 'Клеевая пластина / вкладыш заменены'} checked={replaced} onChange={setReplaced} />
         )}
 
         <Field label="Комментарий">

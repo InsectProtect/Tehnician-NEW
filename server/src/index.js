@@ -3482,6 +3482,9 @@ route('PATCH', '/api/visits/:id', async ({ params, body, user }) => {
 // Замечание с фотографиями: { category, comment, photos: [base64 JPEG/PNG] }
 const STATION_OBS = 'Станция: замечание'; // v93: фото активности/повреждения станции из быстрого осмотра
 const ROD_OBS = 'Грызун в станции'; // категория для фото грызуна из осмотра станции (не зависит от OBS_CATEGORIES в ENV)
+/** v95: клеевая ловушка (липучка, эко-станция с клеем) — отравы нет, кто попался — ловушку меняют. */
+const isGlueTrap = (kind) => /кле[ей]|клей/i.test(String(kind || ''));
+
 /** v94: время, записанное телефоном без связи (не в будущем и не старше 24 ч), иначе null. */
 function clientTime(at) {
   const t = Date.parse(String(at || ''));
@@ -4069,7 +4072,7 @@ route('POST', '/api/visits/:id/inspections', async ({ params, body, user }) => {
        status = EXCLUDED.status, pest = EXCLUDED.pest, count = EXCLUDED.count,
        bait_replaced = EXCLUDED.bait_replaced, comment = EXCLUDED.comment, created_at = EXCLUDED.created_at,
        condition = EXCLUDED.condition, bait_eaten = EXCLUDED.bait_eaten`,
-    [uid(), v.id, trap.id, status, pest, caught, body.bait_replaced ? 1 : 0, str(body.comment, 500), clientTime(body.at) || now(), condition, bait],
+    [uid(), v.id, trap.id, status, pest, caught, body.bait_replaced || (caught && isGlueTrap(trap.kind)) ? 1 : 0, str(body.comment, 500), clientTime(body.at) || now(), condition, bait],
   );
   if (v.monitoring == null) await db.query('UPDATE visits SET monitoring = 1 WHERE id = $1', [v.id]);
   return { ok: true };
