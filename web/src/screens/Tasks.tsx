@@ -833,10 +833,10 @@ function Step({ n, done, title, value, children }: { n: number; done: boolean; t
 }
 
 /** «Этап 1 из 2 · 3 комн. · 4300 лей» (short: «1/2 · 3 комн. · 4300 лей»). */
-export function dealLabel(t: { rooms?: number | null; stage?: string; price?: number | null; sotki?: number | null }, short = false) {
+export function dealLabel(t: { rooms?: number | null; stage?: string; price?: number | null; sotki?: number | null; area?: string }, short = false) {
   const [a, b] = (t.stage || '').split('/');
   const stage = t.stage ? (short ? t.stage : `Этап ${a} из ${b}`) : '';
-  return [stage, t.rooms ? `${t.rooms} комн.` : '', t.sotki ? `${String(t.sotki).replace('.', ',')} сот.` : '', t.price != null ? `${t.price.toLocaleString(LOC)} лей` : ''].filter(Boolean).join(' · ');
+  return [stage, t.rooms ? `${t.rooms} комн.` : '', t.sotki ? `${String(t.sotki).replace('.', ',')} сот.` : '', t.area || '', t.price != null ? (t.price === 0 ? 'по договору' : `${t.price.toLocaleString(LOC)} лей`) : ''].filter(Boolean).join(' · ');
 }
 
 /* ---------- Повышенный коэффициент заявки ---------- */

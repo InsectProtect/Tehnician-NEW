@@ -162,6 +162,70 @@ function parseTime(str, keyed) {
 /**
  * Возвращает { company, address, planned_at, has_time, procedure, pests, phone, comment, area } или null, если это не похоже на заявку.
  */
+// ---------- v96: короткий шаблон офиса «объект адрес город Исполнитель 40 m2 1/2 МЕТОД 1500» ----------
+// Метка на месте вырезанного фрагмента (имя сотрудника, площадь, метод): после неё «1/2» — этап, число — цена.
+const CUT = ' § ';
+// города и районные центры: отдельной частью — это город к адресу, а не название клиента
+const CITY_RE = /^(?:(?:or\.?|ora[șs]ul|mun\.?|municipiul|г\.?|город|s\.|sat(?:ul)?|com\.?)\s*)?(chi[șşs]i?n[aă]u|кишин[её]в|b[aă]l[țţt]i|бельцы|orhei|оргеев|tiraspol|тирасполь|bender[y]?|tighina|бендеры|dub[aă]s[aă]ri|дубоссары|r[îiâ]bni[țţt]a|рыбница|cahul|кагул|comrat|комрат|ungheni|унгены|soroca|сороки|h[îi]nce[șşs]ti|ialoveni|яловены|str[aă][șşs]eni|страшены|criuleni|anenii\s+noi|c[aă]u[șşs]eni|кэушень|edine[țţt]|drochia|flore[șşs]ti|s[îi]ngerei|telene[șşs]ti|rezina|[șşs]old[aă]ne[șşs]ti|nisporeni|c[aă]l[aă]ra[șşs]i|cimi[șşs]lia|basarabeasca|leova|cantemir|taraclia|ceadîr[\s-]?lunga|чадыр[\s-]?лунга|vulc[aă]ne[șşs]ti|вулканешты|glodeni|f[aă]le[șşs]ti|r[îi][șşs]cani|briceni|ocni[țţt]a|dondu[șşs]eni|codru|durle[șşs]ti|st[aă]uceni|s[îi]ngera|vadul\s+lui\s+vod[aă]|slobozia|слободзея|grigoriopol|григориополь|camenca|каменка)$/iu;
+// метод обработки (пишут капслоком после адреса) — в комментарий отдельной строкой «Метод: …»
+const METHOD_RE = /^(pulveriz\p{L}*|pul|intens\p{L}*|gel|gel-?\p{L}*|capcan\p{L}*|pudr\p{L}*|praf|cea[țţt][aă]|fum\p{L}*|nebuliz\p{L}*|barier\p{L}*|exterior|interior|termic\p{L}*|rece|cald[aă]?|sp?ray|гель|ловушк\p{L}*|пудр\p{L}*|туман\p{L}*|опрыск\p{L}*|барьер\p{L}*)$/iu;
+// квартира / подъезд / этаж отдельной строкой — часть адреса
+const APT_LINE = /^((?:ap|apt|sc|et|bl|etaj|scara|кв|под|подъезд|эт|этаж)\.?\s*\d+\p{L}?[\s,;]*)+$/iu;
+// уменьшительные имена сотрудников: «Sania» = Alexandr, «Artem» = Artiom …
+const NAME_ALIASES = {
+  alexandr: ['alexandru', 'sania', 'sanea', 'sasha', 'sașa', 'sasa', 'alex', 'саша', 'саня', 'александр'],
+  alexandru: ['alexandr', 'sania', 'sanea', 'sasha', 'alex', 'саша', 'саня'],
+  artiom: ['artem', 'artiom', 'артем', 'артём', 'artyom'],
+  artem: ['artiom', 'артем', 'артём'],
+  radu: ['раду'], ion: ['ivan', 'иван', 'vanea', 'ваня'], vasile: ['vasea', 'вася', 'василий'],
+  dmitrii: ['dima', 'дима', 'dmitri'], dumitru: ['dima', 'дима'], nicolai: ['colea', 'коля', 'nicolae'], nicolae: ['colea', 'коля', 'nicolai'],
+  serghei: ['serioja', 'сергей', 'серёжа', 'sergiu'], sergiu: ['serghei', 'сергей'], andrei: ['андрей'], victor: ['виктор', 'vitea', 'витя'],
+  vladimir: ['vova', 'вова', 'володя'], mihai: ['misha', 'миша', 'mihail'], mihail: ['misha', 'миша', 'mihai'], igor: ['игорь'], oleg: ['олег'],
+};
+const norm = (w) => String(w || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[șş]/g, 's').replace(/[țţ]/g, 't');
+
+/** Сотрудники для разбора: [{ id, name }] → [{ id, keys:Set }] (имя, фамилия, уменьшительные). */
+export function staffKeys(users) {
+  return (users || []).map((u) => {
+    const words = String(u.name || '').split(/\s+/).filter((w) => w.length >= 3);
+    const keys = new Set();
+    for (const w of words) { keys.add(norm(w)); for (const a of NAME_ALIASES[norm(w)] || []) keys.add(norm(a)); }
+    return { id: String(u.id ?? u.tg_id), keys };
+  }).filter((x) => x.keys.size);
+}
+
+/** Вырезает из текста имена сотрудников, площадь и метод обработки. */
+function cutShortTemplate(text, staff) {
+  const res = { area: '', team: [], methods: [] };
+  let t = String(text || '');
+  // площадь: «40 m2», «250 м²», «120 mp», «60 кв.м»
+  const AREA = /(?<![\d.,/])(\d{1,6}(?:[.,]\d{1,2})?)[ \t]*(?:m2|m²|м2|м²|mp|кв\.?[ \t]?м\.?)(?![\p{L}\d])/iu;
+  const lines = t.split(/\r?\n/).map((line0) => {
+    // строки «Ключ: значение» не трогаем (там клиент, площадь и т. п. разбираются по ключу)
+    if (/^\s*\p{L}[\p{L}\s.²]{1,24}:/u.test(line0)) return line0;
+    let line = line0;
+    const am = !res.area && line.match(AREA);
+    if (am) { res.area = `${am[1].replace(',', '.')} м²`; line = line.replace(am[0], CUT); }
+    return line.split(/(\s+)/).map((tok) => {
+      if (!tok.trim() || tok === CUT.trim()) return tok;
+      const parts = tok.split('+').map((p) => p.replace(/^[(«"„]+|[)»"”.,;:!?]+$/g, ''));
+      if (!parts.some((p) => p)) return tok;
+      let any = false;
+      const kinds = parts.map((p) => {
+        if (!p) return 'x';
+        const n = norm(p);
+        const st = /^\p{Lu}/u.test(p) && staff.find((s) => s.keys.has(n));
+        if (st) { if (!res.team.includes(st.id)) res.team.push(st.id); any = true; return 'staff'; }
+        if (METHOD_RE.test(p) && (p === p.toUpperCase() || parts.length > 1 || /^(gel|capcan|pudr|pulveriz|intens|nebuliz)/i.test(n))) { res.methods.push(p.toUpperCase()); any = true; return 'method'; }
+        if (p.length === 1) return 'x';
+        return 'other';
+      });
+      return any && !kinds.includes('other') ? CUT : tok;
+    }).join('');
+  });
+  return { ...res, text: lines.join('\n') };
+}
+
 /**
  * «3 1/2 4300» → комнат 3, этап 1 из 2, цена 4300 (первое число — комнаты, необязательно).
  * Также «этап 1/2», «4300 лей». Возвращает { rooms, stage, price, text } — text без распознанного фрагмента.
@@ -181,6 +245,19 @@ export function extractDeal(text) {
     const pr = t.match(/(?:цена|стоимость|pre[țt]|suma)?\s*[:\-]?\s*(\d{3,6})\s*(?:lei|лей|mdl)(?=[\s,;.]|$)/i);
     if (pr) { out.price = Number(pr[1]); t = t.replace(pr[0], ' '); }
   }
+  // v96: после вырезанного имени/площади/метода — «1 2/2» (комнаты + этап) и цена в конце строки
+  if (!out.stage) {
+    const st2 = t.match(/(^|§|\n)[\s,]*(?:(\d{1,2})\s+)?([1-9])\s*\/\s*([1-9])(?=[\s,;.]|$)/);
+    if (st2 && Number(st2[3]) <= Number(st2[4]) && Number(st2[4]) <= 6) {
+      out.stage = `${st2[3]}/${st2[4]}`;
+      if (st2[2] && !out.rooms && Number(st2[2]) >= 1 && Number(st2[2]) <= 20) out.rooms = Number(st2[2]);
+      t = t.replace(st2[0], `${st2[1]} § `);
+    }
+  }
+  if (out.price == null) {
+    const pr2 = t.match(/(^|§|\n)[\s,]*(\d{3,6})(?:\s*(?:lei|лей|mdl|л))?(?=[\s,.;]|$)/);
+    if (pr2 && Number(pr2[2]) >= 100) { out.price = Number(pr2[2]); t = t.replace(pr2[0], `${pr2[1]} `); }
+  }
   // участок: «10 соток», «6 сот.»
   const sk = t.match(/(^|[\s,;])(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:сот(?:ок|ки|ка|\.)?|ari|ar)(?=[\s,;.]|$)/i);
   if (sk) { out.sotki = Number(sk[2].replace(',', '.')); t = t.replace(sk[0], sk[1] + ' '); }
@@ -190,12 +267,13 @@ export function extractDeal(text) {
     const m = Number(mk[2].replace(',', '.'));
     if (m > 1 && m <= 10) { out.mult = m; t = t.replace(mk[0], mk[1] + ' '); }
   }
-  out.text = t.replace(/[ \t]{2,}/g, ' ');
+  out.text = t.replace(/\s*§\s*/g, ' ').replace(/[ \t]{2,}/g, ' ').replace(/ +\n/g, '\n').replace(/\n +/g, '\n');
   return out;
 }
 
-export function parseTask(text, now = new Date()) {
-  const deal = extractDeal(String(text || '').trim());
+export function parseTask(text, now = new Date(), opts = {}) {
+  const cut = cutShortTemplate(String(text || '').trim(), opts.staff || []);
+  const deal = extractDeal(cut.text);
   const raw = deal.text.trim();
   if (!raw || raw.startsWith('/')) return null;
   const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -224,7 +302,8 @@ export function parseTask(text, now = new Date()) {
       if (!line) continue;
     }
     const m = line.match(/^([^:–—-]{2,25})\s*[:–—-]\s*(.+)$/);
-    const key = m && Object.entries(KEYS).find(([, words]) => words.some((w) => m[1].toLowerCase().replace(/[^\p{L}\d.²]/gu, ' ').trim().startsWith(w)));
+    // «Дата 18.11 14:00» — двоеточие внутри времени, а не после ключа
+    const key = m && !/\d/.test(m[1].replace(/[мm][2²]/gi, '')) && Object.entries(KEYS).find(([, words]) => words.some((w) => m[1].toLowerCase().replace(/[^\p{L}\d.²]/gu, ' ').trim().startsWith(w)));
     if (m && key) {
       const [k] = key;
       const v = m[2].trim();
@@ -306,6 +385,8 @@ export function parseTask(text, now = new Date()) {
   const rest = [];
   const tail = []; // в однострочной заявке всё, что после адреса, — комментарий («…, осы под крышей»)
   const oneLine = free.length === 1 && parts !== free;
+  const aptParts = []; // «sc.1», «et.3», «ap.6» отдельными строками — к адресу
+  const cities = []; // «Orhei», «Tiraspol» отдельной частью — город к адресу
   for (const line of parts) {
     const clean0 = (out.phone ? line.replace(out.phone, '') : line)
       .replace(/(^|[\s,])\d{1,2}\.\d{1,2}(\.\d{2,4})?(?=[\s,]|$)|\b\d{1,2}:\d{2}\b|(^|[\s,])(в|la)\s*$/g, ' ')
@@ -317,6 +398,9 @@ export function parseTask(text, now = new Date()) {
     const noDate = clean0.replace(/(^|[\s,])(сегодня|завтра|послезавтра|azi|m[âa]ine|poim[âa]ine)(?=[\s,]|$)/giu, ' ')
       .replace(/(^|[\s,])(в|la)\s*$/g, ' ').replace(/(\s*,\s*)+/g, ', ').replace(/\s{2,}/g, ' ').replace(/^[,\s]+|[,\s]+$/g, '').trim();
     const clean = detectPests(noDate).length ? stripPests(noDate) : noDate;
+    const bare = clean.replace(/[,;.\s]+$/, '').trim();
+    if (bare && APT_LINE.test(bare)) { aptParts.push(bare); continue; }
+    if (bare && CITY_RE.test(bare)) { cities.push(bare); continue; }
     if (!out.address && ADDRESS_MARK.test(` ${line}`) && out.phone && line.includes(out.phone)) {
       // «str. Lupu 24 Radu 79672212 roscat 1 2/2 1000»: адрес — до имени и телефона, остальное — в комментарий
       let before = line.slice(0, line.indexOf(out.phone))
@@ -353,8 +437,34 @@ export function parseTask(text, now = new Date()) {
     out.address = out.address.slice(0, out.address.length - nameTail[2].length).trim();
     tail.unshift(`Контакт: ${nameTail[2]}`);
   }
+  // «DOUBLE BEER PUB Cuza Vodă 18/2», «Strada Columna 105 COMVALANSA» — название капслоком в начале/конце адреса
+  if (!out.company && out.address) {
+    const capsWord = (w) => /^[(«"„]?[\p{Lu}\d&'.\-]{2,}[)»"”]?$/u.test(w) && /\p{Lu}{2,}/u.test(w) && !ADDRESS_MARK.test(` ${w.toLowerCase()} `);
+    const ws = out.address.split(/\s+/);
+    let i = 0; while (i < ws.length - 1 && capsWord(ws[i])) i++;
+    let j = ws.length; while (j > i + 1 && capsWord(ws[j - 1])) j--;
+    const head = ws.slice(0, i); const tailW = ws.slice(j);
+    const restAddr = ws.slice(i, j).join(' ');
+    if ((head.length || tailW.length) && /\p{L}{3,}/u.test(restAddr)) {
+      out.company = [...head, ...tailW].join(' ').replace(/^[(«"„]+|[)»"”,]+$/g, '');
+      out.address = restAddr;
+    }
+  }
+  // город в начале адреса: «Tiraspol str. Marx Karl 120» → «str. Marx Karl 120, Tiraspol»
+  { const m0 = out.address.match(/^(\p{L}[\p{L}.\s-]{2,30}?)[,\s]+(?=\S)/u);
+    if (m0 && CITY_RE.test(m0[1].trim()) && /\d/.test(out.address.slice(m0[0].length))) { cities.push(m0[1].trim()); out.address = out.address.slice(m0[0].length); } }
+  // название клиента оказалось городом («Orhei») — это город, а не клиент
+  if (out.company && CITY_RE.test(out.company.replace(/[,;.\s]+$/, ''))) { cities.push(out.company); out.company = ''; }
+  // «Expeditiile FPF Fabrica nr.3» без улицы — это и есть адрес объекта
+  if (!out.address && out.company && /\d/.test(out.company)) { out.address = out.company; out.company = ''; }
+  if (aptParts.length) out.address = [out.address, ...aptParts].filter(Boolean).join(', ');
+  for (const c of cities) if (!norm(out.address).includes(norm(c).replace(/^(or|mun|г|s|sat|com)\.?\s*/, ''))) out.address = [out.address, c].filter(Boolean).join(', ');
   out.address = out.address.replace(/\s+(r-?l\.?|raionul|р-н)\s/giu, ', $1 ').replace(/,\s*,/g, ',');
-  if (rest.length || tail.length) out.comment = [out.comment, ...rest, ...tail].filter(Boolean).join('\n');
+  const methodLine = cut.methods.length ? `Метод: ${[...new Set(cut.methods)].join(' ')}` : '';
+  if (rest.length || tail.length || methodLine) out.comment = [methodLine, out.comment, ...rest, ...tail].filter(Boolean).join('\n');
+  out.comment = out.comment.replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+  out.company = out.company.replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+  out.address = out.address.replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').replace(/^[,\s]+|[,\s]+$/g, '').trim();
 
   // заявка должна содержать адрес или клиента плюс хоть какую-то деталь — иначе это обычная переписка
   // заявка = адрес, либо имя/название плюс вредитель или тип обработки
@@ -365,6 +475,8 @@ export function parseTask(text, now = new Date()) {
   out.price = deal.price;
   out.mult = deal.mult;
   out.sotki = deal.sotki;
+  if (cut.area && !out.area) out.area = cut.area;
+  out.team = cut.team;
   // только время без даты: ближайшее такое время (уже прошло сегодня — значит, завтра)
   let day = date;
   if (!day && time) {

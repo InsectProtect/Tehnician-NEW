@@ -31,7 +31,7 @@ import { sendDocument, getMe, getWebhookInfo, getChatMember, sendMedia, editCapt
 import { visitPdf } from './reportpdf.js';
 import { actRoPdf, actNumber } from './actro.js';
 import { DEFAULT_COMPANY, buildRecommendationsRo, localityFromAddress } from './ro.js';
-import { looksLikeTask, parseTask, TASK_TEMPLATE, zonedIso } from './tasks.js';
+import { looksLikeTask, parseTask, staffKeys, TASK_TEMPLATE, zonedIso } from './tasks.js';
 import { editMessage, answerCallback, deleteMessage } from './tgbot.js';
 import { storageOn, uploadMaxBytes, objectKey, headObject, getObject, deleteObject, objectUrl, presign } from './storage.js';
 import { buildRecommendations, PESTS_BY_PROCEDURE } from './recs.js';
@@ -2749,6 +2749,7 @@ route('POST', '/api/tasks/:id/assign', async ({ params, body, user }) => {
   await db.query('UPDATE tasks SET tech_tg_id = $1, ack_at = NULL, alert_msg_id = NULL, alert_count = 0, updated_at = $2 WHERE id = $3', [u.tg_id, now(), t.id]);
   const [nt] = await db.query('SELECT * FROM tasks WHERE id = $1', [t.id]);
   await audit(user, 'Заявка переназначена', `№ ${t.task_no}`, `→ ${u.name}`);
+  if (messageId) { const [ct] = await db.query('SELECT * FROM tasks WHERE id = $1', [t.id]); askPrice(ct).catch(() => {}); }
   addNotification(u.tg_id, 'task_new', `Заявка № ${t.task_no} · ${t.company_name || 'Физлицо'} · ${t.address}`, { task_id: t.id }).catch(() => {});
   await sendTaskAlert(nt);
   await boostCongrats(nt);
@@ -4845,7 +4846,7 @@ route('POST', '/api/hooks/crm/:token', async ({ params, body }) => {
     f('procedure', 60) ? `Обработка: ${f('procedure', 60)}` : '',
     pestsIn ? `Вредители: ${pestsIn}` : '',
   ].filter(Boolean);
-  const parsed = parseTask(lines.join('\n')) || { company: '', address: '', procedure: '', pests: [], phone: '', comment: '', area: '' };
+  const parsed = parseTask(lines.join('\n'), new Date(), await parseOpts()) || { company: '', address: '', procedure: '', pests: [], phone: '', comment: '', area: '' };
   if (f('address')) parsed.address = f('address');
   if (f('company', 200) || f('client', 200)) parsed.company = f('company', 200) || f('client', 200);
   if (f('phone', 40)) parsed.phone = f('phone', 40);
@@ -5577,6 +5578,18 @@ async function handleUpdate(u) {
       : await db.query('SELECT * FROM tasks WHERE chat_id = $1 AND confirm_id = $2', [String(c.id), rid]);
     if (t) {
       if (p) await db.query('DELETE FROM bot_prompts WHERE chat_id = $1 AND msg_id = $2', [String(c.id), rid]);
+      if (p?.kind === 'price' || p?.kind === 'edit') {
+        const r = p.kind === 'price' && !/\d/.test(text) && !/договор|contract/i.test(text)
+          ? { error: 'Нужна сумма числом, например 1500.' }
+          : await applyGroupEdit(t, p.kind === 'price' && /^\s*\d{2,6}\s*(lei|лей|mdl)?\s*$/i.test(text) ? `Цена ${text.trim()}` : text, who);
+        if (r.error) {
+          // вопрос остаётся в силе — можно ответить ещё раз
+          await db.query('INSERT INTO bot_prompts (chat_id, msg_id, kind, task_id, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING', [String(c.id), rid, p.kind, t.id, now()]).catch(() => {});
+          await sendMessage(c.id, `⚠️ ${escHtml(r.error)}`, { threadId, replyTo: m.message_id }).catch(() => {});
+        } else await sendMessage(c.id, `✅ Заявка № ${t.task_no}: исправлено — ${escHtml(r.changed.join(', '))}.`, { threadId, replyTo: m.message_id }).catch(() => {});
+        log(`исправление в группе → заявка № ${t.task_no}`);
+        return;
+      }
       if (p?.kind === 'company') {
         const name = text.trim().slice(0, 200);
         await db.query("UPDATE tasks SET company_name = $1, client_type = 'company', updated_at = $2 WHERE id = $3", [name, now(), t.id]);
@@ -5607,7 +5620,7 @@ async function handleUpdate(u) {
   }
   if (!tech) { log(threadId ? 'тема не привязана (/tech)' : 'сообщение вне темы — пропущено'); return; }
   if (await isAdminTg(tech)) {
-    if (parseTask(text)) {
+    if (parseTask(text, new Date(), await parseOpts())) {
       await sendMessage(c.id, '⚠️ Тема привязана к администратору, а у администраторов выездов нет. Привяжите тему к специалисту: /tech — и отправьте заявку заново (или отредактируйте сообщение).', { threadId, replyTo: m.message_id }).catch(() => {});
     }
     log('тема привязана к администратору — заявка не создана');
@@ -5623,7 +5636,7 @@ async function handleUpdate(u) {
     return;
   }
 
-  const parsed = parseTask(text);
+  const parsed = parseTask(text, new Date(), await parseOpts());
   if (!parsed) {
     if (looksLikeTask(text)) {
       await sendMessage(c.id, '⚠️ Не понял заявку: не нашёл адрес. Добавьте строку «Адрес: …» или отредактируйте сообщение. Шаблон — /help', { threadId, replyTo: m.message_id }).catch(() => {});
@@ -6321,7 +6334,7 @@ function taskSummary(t, techName) {
     t.planned_at ? `🗓 ${escHtml(fmtTaskDate(t.planned_at, t.has_time))}` : '🗓 <i>дата не указана</i>',
     (t.procedure || pests.length) && `🐞 ${escHtml([t.procedure, pests.join(', ')].filter(Boolean).join(' · '))}`,
     t.phone && `📞 ${escHtml(intlPhone(t.phone))}`,
-    (t.stage || t.rooms || t.price) && `🧾 ${[t.stage && `этап ${t.stage.replace('/', ' из ')}`, t.rooms && `${t.rooms} комн.`, t.price != null && `${t.price} лей`].filter(Boolean).join(' · ')}`,
+    (t.stage || t.rooms || t.price != null || t.area) && `🧾 ${[t.stage && `этап ${t.stage.replace('/', ' из ')}`, t.rooms && `${t.rooms} комн.`, t.area && escHtml(t.area), t.price != null && (Number(t.price) === 0 ? 'по договору' : `${t.price} лей`)].filter(Boolean).join(' · ')}`,
     t.comment && `💬 ${escHtml(t.comment)}`,
     t.office_note && `📝 <b>Комментарии офиса:</b>\n${escHtml(t.office_note)}`,
     t.point_cat && `🏠 ${escHtml(pointCatLabel(t))}`,
@@ -6382,6 +6395,7 @@ async function createTask({ parsed, tech, chatId, threadId, messageId, author, a
       if (sent?.message_id) await db.query('UPDATE tasks SET confirm_id = $1 WHERE id = $2', [String(sent.message_id), t.id]);
     } catch (e) { console.error('task confirm:', e.message); }
     const kb = { inline_keyboard: [[{ text: '✅ Подтвердить', callback_data: `tok:${t.id}` }, { text: '❌ Отменить', callback_data: `cancel:${t.id}` }]] };
+    if (messageId) { const [ct] = await db.query('SELECT * FROM tasks WHERE id = $1', [t.id]); askPrice(ct).catch(() => {}); }
     if (botEnabled) for (const aid of await adminIds(db)) sendMessage(aid, `🟠 <b>Новая заявка ждёт подтверждения</b>\n${taskSummary(t, u.name)}\nНаписал: ${escHtml(author || '—')}`, { replyMarkup: kb }).catch(() => {});
     return { ...t, tech_name: u.name };
   }
@@ -6548,7 +6562,7 @@ function notifyTech(tgId, html, meta = {}) {
 
 async function handleTaskEdit(m) {
   const [t] = await db.query('SELECT * FROM tasks WHERE chat_id = $1 AND message_id = $2', [String(m.chat.id), String(m.message_id)]);
-  const parsed = parseTask(String(m.text || m.caption || ''));
+  const parsed = parseTask(String(m.text || m.caption || ''), new Date(), await parseOpts());
   if (!t) {
     // сообщение не распознали как заявку, а после правки оно стало заявкой → создаём
     const threadId = m.is_topic_message ? m.message_thread_id : undefined;
@@ -6560,9 +6574,9 @@ async function handleTaskEdit(m) {
   }
   if (!['new', 'pending'].includes(t.status) || !parsed) return;
   await db.query(
-    'UPDATE tasks SET company_name = $1, address = $2, planned_at = $3, has_time = $4, procedure = $5, pests = $6, phone = $7, comment = $8, updated_at = $9, reschedule_req = 0, rooms = $11, stage = $12, price = $13, mult = COALESCE($14, mult) WHERE id = $10',
+    'UPDATE tasks SET company_name = $1, address = $2, planned_at = $3, has_time = $4, procedure = $5, pests = $6, phone = $7, comment = $8, updated_at = $9, reschedule_req = 0, rooms = $11, stage = $12, price = $13, mult = COALESCE($14, mult), area = $15 WHERE id = $10',
     [t.client_type === 'person' ? '' : (parsed.company || (t.client_type === 'company' ? t.company_name : '')), parsed.address, parsed.planned_at, parsed.has_time ? 1 : 0, parsed.procedure, JSON.stringify(parsed.pests), parsed.phone, parsed.comment, now(), t.id,
-      parsed.rooms || null, parsed.stage || '', parsed.price ?? null, parsed.mult || null],
+      parsed.rooms || null, parsed.stage || '', parsed.price ?? null, parsed.mult || null, parsed.area || ''],
   );
   sales.onTaskSaved(t.id).catch(() => {});
   const [nt] = await db.query('SELECT * FROM tasks WHERE id = $1', [t.id]);
@@ -6658,7 +6672,8 @@ function taskKb(t) {
   const ct = clientTypeOf(t);
   return { inline_keyboard: [
     [{ text: `${ct === 'person' ? '✅ ' : ''}👤 Физлицо`, callback_data: `ctype:p:${t.id}` }, { text: `${ct === 'company' ? '✅ ' : ''}🏢 Юрлицо`, callback_data: `ctype:c:${t.id}` }],
-    [{ text: '💬 Комментарий', callback_data: `tcom:${t.id}` }, { text: '❌ Отменить', callback_data: `cancel:${t.id}` }],
+    [{ text: '✏️ Исправить', callback_data: `tedit:${t.id}` }, { text: '💬 Комментарий', callback_data: `tcom:${t.id}` }],
+    [{ text: '❌ Отменить', callback_data: `cancel:${t.id}` }],
   ] };
 }
 const taskStatusLine = (t) => ({ new: '✅ Отправлено технику.', pending: '⏳ Ждёт подтверждения администратора.', in_progress: '🚗 Выезд начат.', open: '🙋 Ждёт, кто заберёт.' }[t.status] || '');
@@ -6682,6 +6697,76 @@ async function addOfficeNote(t, text, who) {
     notifyTech(t.tech_tg_id, `💬 <b>Комментарий к заявке № ${t.task_no}</b> (${escHtml(who)})\n${escHtml(t.company_name || t.address || '')}\n\n${escHtml(text)}`, { kind: 'task_update', task_id: t.id });
   }
 }
+/** v96: сотрудники для разбора заявок (имя «Radu» / «Sania» в тексте — исполнитель или напарник, а не клиент). */
+let staffCache = { at: 0, keys: [] };
+async function parseOpts() {
+  if (Date.now() - staffCache.at > 60000) {
+    const rows = await db.query("SELECT tg_id, name FROM users WHERE status = 'active' AND role IN ('tech', 'specialist')").catch(() => []);
+    staffCache = { at: Date.now(), keys: staffKeys(rows.map((r) => ({ id: r.tg_id, name: r.name }))) };
+  }
+  return { staff: staffCache.keys };
+}
+/** v96: цена не найдена — спрашиваем ответом в группе. */
+async function askPrice(t) {
+  if (!t?.chat_id || t.price != null) return;
+  await askInGroup(t, 'price', `💰 <b>Заявка № ${t.task_no}: не нашёл цену.</b> Ответьте на это сообщение суммой (например <b>1500</b>). Можно с этапом: «1/2 1500». По договору — ответьте «договор».`, 'Цена, лей');
+}
+const EDIT_HELP = 'Ответьте на это сообщение:\n• исправленной заявкой целиком — или\n• только тем, что меняется: «Цена 1500», «Дата 15.11 10:00», «Адрес: str. …», «Телефон 069…», «Этап 2/2», «120 m2», «Клиент: SRL …».';
+/** v96: «✏️ Исправить» ответом в группе — разбор ответа: целая заявка или отдельные поля. */
+async function applyGroupEdit(t, text, who) {
+  if (!['new', 'pending', 'open', 'in_progress'].includes(t.status)) return { error: 'Заявка уже закрыта — исправить можно только акт.' };
+  const opts = await parseOpts();
+  const full = parseTask(text, new Date(), opts);
+  const fullTask = full && full.address && (full.phone || full.planned_at);
+  const p = fullTask ? full : parseTask(`Адрес: -\n${text}`, new Date(), opts);
+  if (!p) return { error: 'Не понял, что исправить.' };
+  const set = {}; const changed = [];
+  const put = (col, val, label) => { if (val !== undefined && String(val ?? '') !== String(t[col] ?? '')) { set[col] = val; if (!changed.includes(label)) changed.push(label); } };
+  if (fullTask) {
+    if (t.client_type !== 'person') put('company_name', p.company || (t.client_type === 'company' ? t.company_name : ''), 'клиент');
+    put('address', p.address, 'адрес');
+    if (p.planned_at) { put('planned_at', p.planned_at, 'дата/время'); put('has_time', p.has_time ? 1 : 0, 'дата/время'); }
+    if (p.procedure) put('procedure', p.procedure, 'обработка');
+    if (p.pests.length) put('pests', JSON.stringify(p.pests), 'вредители');
+    if (p.phone) put('phone', p.phone, 'телефон');
+    put('comment', p.comment, 'комментарий');
+  } else {
+    const keyed = (re) => new RegExp(`^\\s*(${re})\\s*[:\\-–—]?`, 'imu').test(text);
+    if (keyed('адрес|adres[aă]|объект|obiect') && p.address && p.address !== '-') put('address', p.address, 'адрес');
+    if (keyed('клиент|компания|фирма|client|firma|beneficiar') && p.company) { put('company_name', p.company, 'клиент'); put('client_type', 'company', 'клиент'); }
+    if (p.planned_at && (keyed('дата|data|ziua|время|ora|timp') || /\d{1,2}[.\/]\d{1,2}|\d{1,2}:\d{2}|завтра|сегодня|azi|m[âa]ine/i.test(text))) {
+      put('planned_at', p.planned_at, 'дата/время'); put('has_time', p.has_time ? 1 : 0, 'дата/время');
+    }
+    if (p.phone) put('phone', p.phone, 'телефон');
+    if (p.pests.length) { put('pests', JSON.stringify(p.pests), 'вредители'); if (p.procedure) put('procedure', p.procedure, 'обработка'); }
+    if (keyed('коммент|comentariu|примеч') && p.comment) put('comment', p.comment, 'комментарий');
+  }
+  const priceM = text.match(/(?:цена|стоимость|pre[țt]|suma|price)\s*[:\-–—]?\s*(\d{2,6})/i);
+  if (priceM) put('price', Number(priceM[1]), 'цена');
+  else if (p.price != null) put('price', p.price, 'цена');
+  else if (/договор|contract/i.test(text)) put('price', 0, 'цена');
+  if (p.stage) put('stage', p.stage, 'этап');
+  if (p.rooms) put('rooms', p.rooms, 'комнаты');
+  if (p.area) put('area', p.area, 'площадь');
+  if (p.sotki != null) put('sotki', p.sotki, 'сотки');
+  const keys = Object.keys(set);
+  if (!keys.length) return { error: 'Не нашёл, что изменить. Напишите, например: «Цена 1500» или «Дата 15.11 10:00».' };
+  if (set.planned_at && Date.parse(set.planned_at) < Date.now() - 60 * 86400000) return { error: 'Эта дата давно прошла — проверьте число и месяц.' };
+  const dateMoved = 'planned_at' in set;
+  await db.query(`UPDATE tasks SET ${keys.map((k, i) => `${k} = $${i + 1}`).join(', ')}, updated_at = $${keys.length + 1}${dateMoved && !t.visit_id ? ", reschedule_req = 0, ack_at = NULL, alert_count = 0, call_status = '', en_route_at = NULL, call_undo = 0, route_undo = 0" : ''} WHERE id = $${keys.length + 2}`,
+    [...keys.map((k) => set[k]), now(), t.id]);
+  if (t.visit_id && (set.company_name !== undefined || set.address !== undefined)) {
+    await db.query("UPDATE visits SET company_name = COALESCE($1, company_name), address = COALESCE($2, address) WHERE id = $3 AND status = 'open'", [set.company_name ?? null, set.address ?? null, t.visit_id]);
+  }
+  await audit({ id: 'bot', name: who }, 'Заявка исправлена', `№ ${t.task_no} · ${set.company_name ?? t.company_name ?? ''} ${set.address ?? t.address ?? ''}`.trim(), `в группе: ${changed.join(', ')}`);
+  const nt = await refreshTaskMsg(t.id, `✏️ Исправлено (${escHtml(who)}): ${escHtml(changed.join(', '))}.`);
+  if (t.tech_tg_id && ['new', 'in_progress'].includes(t.status)) {
+    notifyTech(t.tech_tg_id, `✏️ <b>Заявка № ${t.task_no} исправлена</b> (${escHtml(changed.join(', '))})\n${taskSummary(nt || t)}`, { kind: 'task_update', task_id: t.id });
+  }
+  sales.onTaskSaved(t.id).catch(() => {});
+  return { changed };
+}
+
 /** Вопрос бота с полем ответа (ответить на сообщение) — запоминаем, к какой заявке он относится. */
 async function askInGroup(t, kind, html, placeholder) {
   const sent = await sendMessage(t.chat_id, html, { threadId: t.thread_id, replyTo: t.confirm_id || t.message_id,
@@ -6913,6 +6998,13 @@ async function handleCallback(q) {
     if (t.tech_tg_id) notifyTech(t.tech_tg_id, `🏢 Заявка № ${t.task_no} — <b>юрлицо</b>: ${escHtml(t.company_name)}.`, { kind: 'task_update', task_id: t.id });
     return answerCallback(q.id, 'Отмечено: юрлицо');
   }
+  if (data.startsWith('tedit:')) {
+    const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [data.slice(6)]);
+    if (!t) return answerCallback(q.id, 'Заявка не найдена');
+    if (!['new', 'pending', 'open', 'in_progress'].includes(t.status)) return answerCallback(q.id, 'Заявка уже закрыта');
+    await askInGroup(t, 'edit', `✏️ <b>Исправление заявки № ${t.task_no}.</b> ${EDIT_HELP}`, 'Что исправить');
+    return answerCallback(q.id, 'Напишите исправление ответом на сообщение бота');
+  }
   if (data.startsWith('tcom:')) {
     const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [data.slice(5)]);
     if (!t) return answerCallback(q.id, 'Заявка не найдена');
@@ -6950,6 +7042,7 @@ function shapeTask(t, techName) {
     call_undo: Boolean(Number(t.call_undo)),
     rooms: t.rooms == null ? null : Number(t.rooms),
     stage: t.stage || '',
+    area: t.area || '',
     price: t.price == null ? null : Number(t.price),
     route_undo: Boolean(Number(t.route_undo)),
     point_cat: t.point_cat || '', point_zone: t.point_zone || '', sotki: t.sotki == null ? null : Number(t.sotki),

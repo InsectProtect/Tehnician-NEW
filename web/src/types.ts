@@ -45,6 +45,8 @@ export type Task = {
   rooms?: number | null;
   stage?: string;
   price?: number | null;
+  /** v96: площадь из заявки («120 м²») */
+  area?: string;
   crm_lead_id?: string;
   /** физлицо / юрлицо (выбрано кнопкой в группе или по названию фирмы) */
   client_type?: 'person' | 'company';
