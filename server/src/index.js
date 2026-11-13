@@ -318,6 +318,33 @@ async function prevProducts(v) {
   const rows = await db.query("SELECT products FROM visits WHERE object_id = $1 AND id <> $2 AND status = 'done' AND products IS NOT NULL AND products <> '[]' ORDER BY finished_at DESC LIMIT 1", [v.object_id, v.id]);
   return rows.length ? visitProducts(rows[0]) : [];
 }
+/** v97: препараты для нового выезда — как в прошлый раз на объекте, иначе свой последний набор для этой обработки, иначе последний набор компании. */
+async function defaultProducts(v) {
+  const prev = v.object_id ? await prevProducts(v) : [];
+  if (prev.length) return { list: prev, src: 'object' };
+  const q = "SELECT products FROM visits WHERE procedure = $1 AND status = 'done' AND products IS NOT NULL AND products <> '[]' AND id <> $2";
+  const [own] = await db.query(`${q} AND tech_tg_id = $3 ORDER BY finished_at DESC LIMIT 1`, [v.procedure, v.id, v.tech_tg_id]);
+  if (own && visitProducts(own).length) return { list: visitProducts(own), src: 'tech' };
+  const [any] = await db.query(`${q} ORDER BY finished_at DESC LIMIT 1`, [v.procedure, v.id]);
+  if (any && visitProducts(any).length) return { list: visitProducts(any), src: 'common' };
+  return { list: [], src: '' };
+}
+/** v97: координаты телефона на «Начать» / «Завершить» — удалённость и баллы без трансляции боту. */
+function geoFromBody(g) {
+  if (!g || typeof g !== 'object') return null;
+  const lat = Number(g.lat); const lon = Number(g.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180 || (lat === 0 && lon === 0)) return null;
+  return { lat, lon };
+}
+async function saveVisitGeo(v, lat, lon) {
+  const km = kmFromCenter(lat, lon);
+  const zone = zoneFromKm(km);
+  await db.query('UPDATE visits SET geo_lat = $1, geo_lon = $2, geo_km = $3, geo_at = $4 WHERE id = $5', [lat, lon, km, now(), v.id]);
+  const pcat = (await pointsConfig()).cats.find((c) => c.id === pointDefaults(v).cat);
+  // офис задал удалённость в заявке — не трогаем; иначе ставим по геолокации
+  if (pcat?.zones && v.zone_src !== 'admin') await db.query("UPDATE visits SET point_zone = $1, zone_src = 'geo' WHERE id = $2", [zone, v.id]);
+  return { km, zone };
+}
 /** «Только станции»: вредители и заселённость — из результатов обхода. */
 function stationsAuto(v, rows) {
   const checked = rows.filter((r) => r.status);
@@ -2464,12 +2491,7 @@ route('POST', '/api/visits/:id/geo', async ({ params, body, user }) => {
   must(v.status === 'open', 400, 'Выезд уже завершён');
   const lat = Number(body.lat); const lon = Number(body.lon);
   must(Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180, 400, 'Некорректные координаты');
-  const km = kmFromCenter(lat, lon);
-  const zone = zoneFromKm(km);
-  const pcat = (await pointsConfig()).cats.find((c) => c.id === pointDefaults(v).cat);
-  await db.query('UPDATE visits SET geo_lat = $1, geo_lon = $2, geo_km = $3, geo_at = $4 WHERE id = $5', [lat, lon, km, now(), v.id]);
-  // офис задал удалённость в заявке — не трогаем; иначе ставим по геолокации
-  if (pcat?.zones && v.zone_src !== 'admin') await db.query("UPDATE visits SET point_zone = $1, zone_src = 'geo' WHERE id = $2", [zone, v.id]);
+  const { km, zone } = await saveVisitGeo(v, lat, lon);
   return { ok: true, km, zone, zone_label: POINT_ZONES.find((z) => z.id === zone)?.label || '' };
 });
 
@@ -2852,7 +2874,7 @@ route('POST', '/api/tasks/:id/start', async ({ params, body, user }) => {
   }
   if (!t.visit_id && (await features()).require_geo_start) {
     const [g] = await db.query('SELECT * FROM geo_live WHERE tg_id = $1', [String(user.id)]);
-    must(geoFresh(g), 400, 'Сначала поделитесь геолокацией: в боте включите трансляцию геопозиции (📎 → Геопозиция → «Транслировать»), затем начните обработку.');
+    must(geoFresh(g) || geoFromBody(body.geo), 400, 'Нет геолокации: разрешите Telegram доступ к местоположению (или включите трансляцию геопозиции боту) и нажмите ещё раз.');
   }
   if (t.visit_id) {
     const [v] = await db.query('SELECT id, status FROM visits WHERE id = $1', [t.visit_id]);
@@ -2887,6 +2909,14 @@ route('POST', '/api/tasks/:id/start', async ({ params, body, user }) => {
   if (t.sotki != null) await db.query('UPDATE visits SET sotki = $1 WHERE id = $2', [Number(t.sotki), id]);
   if (t.point_cat) await db.query('UPDATE visits SET point_cat = $1, point_zone = $2, zone_src = $3 WHERE id = $4', [t.point_cat, t.point_zone || '', t.point_zone ? 'admin' : '', id]);
   taskReply(t, `🚗 <b>${escHtml(user.name)}</b> начал выезд по заявке № ${t.task_no}`);
+  // v97: препараты «как в прошлый раз» и координаты телефона
+  {
+    const nv = await getVisit(id);
+    const dp = await defaultProducts(nv);
+    if (dp.list.length) await db.query('UPDATE visits SET products = $1, products_src = $2 WHERE id = $3', [JSON.stringify(dp.list), dp.src, id]);
+    const g = geoFromBody(body.geo);
+    if (g) await saveVisitGeo(await getVisit(id), g.lat, g.lon).catch((e) => console.error('start geo:', e.message));
+  }
   await applyShiftGeo(id, user.id).catch((e) => console.error('shift geo:', e.message));
   if (startedOnTime({ planned_at: t.planned_at, has_time: t.has_time, started_at: now() })) await awardXp(user.id, 'on_time', XP.on_time, `ontime:${t.id}`, `вовремя: заявка № ${t.task_no}`);
   return { id };
@@ -3365,7 +3395,8 @@ route('GET', '/api/visits/:id', async ({ params, user }) => {
       stations_only: v.stations_only == null ? null : Number(v.stations_only) === 1,
       // предложить «Только станции»: на объекте уже есть станции, режим ещё не выбирали
       suggest_stations: v.status === 'open' && v.stations_only == null && rows.filter((r) => !Number(r.prepared)).length > 0,
-      prev_products: v.status === 'open' && Number(v.stations_only) === 1 ? await prevProducts(v) : [],
+      prev_products: v.status === 'open' ? await prevProducts(v) : [],
+      products_src: v.products_src || '',
       annul_pending: Boolean(Number(v.annul_req)),
       annul_reason: v.annul_reason || '',
       can_annul: v.status === 'done' && (user.isAdmin || (v.tech_tg_id === user.id && !Number(v.annul_req))),
@@ -4140,9 +4171,12 @@ route('POST', '/api/visits/:id/finish', async ({ params, body, req, user }) => {
   }
   // баллы: категория объекта обязательна (для квартиры — и удалённость)
   if (quick) await db.query("UPDATE visits SET infestation = COALESCE(NULLIF(infestation, ''), 'medium'), preparation = COALESCE(NULLIF(preparation, ''), 'done') WHERE id = $1", [v.id]);
+  // v97: без препаратов акт не закрывается (они печатаются в акте)
+  must(stationsOnly || visitProducts(v).length, 400, 'Укажите препараты — они печатаются в акте');
+  { const g = geoFromBody(body.geo); if (g && v.geo_km == null) await saveVisitGeo(v, g.lat, g.lon).catch(() => {}); }
   await applyShiftGeo(v.id, v.tech_tg_id).catch(() => {});
   Object.assign(v, (await db.query('SELECT geo_km, point_zone, zone_src, infestation, preparation FROM visits WHERE id = $1', [v.id]))[0] || {});
-  if ((await features()).require_geo_start) must(v.geo_km != null, 400, 'Сначала поделитесь геолокацией (кнопка «Поделиться геолокацией» в блоке «Объект · баллы» или трансляция боту), затем завершите выезд.');
+  if ((await features()).require_geo_start) must(v.geo_km != null, 400, 'Нет геолокации: разрешите Telegram доступ к местоположению и нажмите «Завершить» ещё раз.');
   const pd = pointDefaults(v);
   pd.zone = autoZone(v);
   must(pd.cat, 400, 'Выберите категорию объекта (баллы): квартира, дом, поликлиника…');

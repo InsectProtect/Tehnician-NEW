@@ -518,6 +518,8 @@ const MIGRATIONS = [
   "ALTER TABLE traps ADD COLUMN old_codes TEXT NOT NULL DEFAULT ''",
   // v92: время для надбавок, если акт начат намного позже заявки
   'ALTER TABLE visits ADD COLUMN time_ref TEXT',
+  // v97: откуда подставлены препараты (object — прошлый выезд на объект, tech — свой набор, common — набор компании)
+  "ALTER TABLE visits ADD COLUMN products_src TEXT NOT NULL DEFAULT ''",
   // v89: пунктуальность менеджеров
   "CREATE TABLE IF NOT EXISTS attend_days (tg_id TEXT NOT NULL, day TEXT NOT NULL, in_at TEXT, in_mode TEXT NOT NULL DEFAULT '', in_dist REAL, late_min INTEGER NOT NULL DEFAULT 0, out_at TEXT, out_dist REAL, early_min INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'ok', reason TEXT NOT NULL DEFAULT '', excused INTEGER NOT NULL DEFAULT 0, decided_by TEXT NOT NULL DEFAULT '', PRIMARY KEY (tg_id, day))",
   "CREATE TABLE IF NOT EXISTS attend_off (id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, from_day TEXT NOT NULL, to_day TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'off', note TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)",

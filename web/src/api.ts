@@ -158,7 +158,7 @@ export const api = {
   deleteRemark: (id: string) => request<{ ok: true }>('DELETE', `/api/admin/remarks/${id}`),
   tasksStats: (p: { from?: string; to?: string }) => request<TasksStats>('GET', `/api/admin/tasks-stats?${qs(p)}`),
   pestsStats: (p: { from?: string; to?: string }) => request<PestsStats>('GET', `/api/admin/pests-stats?${qs(p)}`),
-  startTask: (id: string, data: { procedure?: string; address?: string }) => request<{ id: string }>('POST', `/api/tasks/${id}/start`, data),
+  startTask: (id: string, data: { procedure?: string; address?: string; geo?: { lat: number; lon: number } | null }) => request<{ id: string }>('POST', `/api/tasks/${id}/start`, data),
   taskPhone: (id: string) => request<{ ok: true; phone: string; bot: string }>('POST', `/api/tasks/${id}/phone`),
   clientCancel: (id: string, data: { reason: string; note: string }) => request<{ ok: true }>('POST', `/api/tasks/${id}/client-cancel`, data),
   reschedule: (id: string, data: { date: string; time: string; note: string }) => request<{ ok: true }>('POST', `/api/tasks/${id}/reschedule`, data),
@@ -185,7 +185,7 @@ export const api = {
   cancelledCount: () => request<{ week: number; month: number }>('GET', '/api/admin/cancelled/count'),
   resetCancelled: (period: 'week' | 'month') => request<{ ok: true; count: number }>('POST', '/api/admin/cancelled/reset', { period }),
   setMonitoring: (visitId: string, enabled: boolean) => request<{ ok: true }>('POST', `/api/visits/${visitId}/monitoring`, { enabled }),
-  finish: (visitId: string, comment: string, extra: { docs?: { proces: boolean; anexa: boolean; obs?: boolean; traps?: boolean }; signature?: string; payment?: Payment; pay_amount?: string; pay_note?: string; skip_reason?: string } = {}) =>
+  finish: (visitId: string, comment: string, extra: { docs?: { proces: boolean; anexa: boolean; obs?: boolean; traps?: boolean }; signature?: string; payment?: Payment; pay_amount?: string; pay_note?: string; skip_reason?: string; geo?: { lat: number; lon: number } | null } = {}) =>
     request<{ ok: true; report_url: string; amo_error: string | null; office_sent: boolean; office_error: string | null; office_none?: boolean; reward?: Reward | null }>('POST', `/api/visits/${visitId}/finish`, { comment, ...extra }),
   stamp: () => request<{ mode: 'default' | 'custom' | 'off'; image: string | null }>('GET', '/api/admin/stamp'),
   setStamp: (data: { mode: 'default' | 'custom' | 'off'; image?: string }) => request<{ ok: true }>('PUT', '/api/admin/stamp', data),

@@ -10,16 +10,9 @@ export type ActPatch = Partial<Pick<Visit, 'area' | 'location' | 'products' | 'c
 
 /** Данные для бланка акта: помещения, площадь, препараты, представитель заказчика. */
 export function ActData({ visit, editable, onPatch }: { visit: Visit; editable: boolean; onPatch: (p: ActPatch) => void }) {
-  const cfg = useConfig();
   const [location, setLocation] = useState(visit.location);
   const [area, setArea] = useState(visit.area);
-  const [rep, setRep] = useState(visit.client_rep);
-  const [func, setFunc] = useState(visit.client_rep_function);
   const [addr, setAddr] = useState(() => splitAddress(visit.address, visit.locality));
-  const [custom, setCustom] = useState('');
-
-  const listed = cfg.products?.[visit.procedure] ?? [];
-  const options = [...listed, ...visit.products.filter((p) => !listed.includes(p))];
 
   if (!editable) {
     return (
@@ -29,7 +22,6 @@ export function ActData({ visit, editable, onPatch }: { visit: Visit; editable: 
         <Row title={visit.locality || '—'} subtitle="Город / село" />
         <Row title={visit.address} subtitle="Адрес объекта" />
         <Row title={visit.products.join(', ') || '—'} subtitle="Препараты" />
-        <Row title={[visit.client_rep, visit.client_rep_function].filter(Boolean).join(', ') || '—'} subtitle="Представитель заказчика" />
       </Group>
     );
   }
@@ -37,14 +29,6 @@ export function ActData({ visit, editable, onPatch }: { visit: Visit; editable: 
   const save = (key: keyof ActPatch, value: string, prev: string) => {
     if (value.trim() !== prev) onPatch({ [key]: value.trim() });
   };
-
-  function addCustom() {
-    const v = custom.trim();
-    if (!v) return;
-    haptic.tap();
-    if (!visit.products.includes(v)) onPatch({ products: [...visit.products, v] });
-    setCustom('');
-  }
 
   return (
     <div className="space-y-5">
@@ -60,33 +44,9 @@ export function ActData({ visit, editable, onPatch }: { visit: Visit; editable: 
       </div>
 
       <Field label="Препараты">
-        {options.length > 0 && (
-          <div className="mb-2.5">
-            <MultiChips options={options} value={visit.products} onChange={(v) => { haptic.tap(); onPatch({ products: v }); }} />
-          </div>
-        )}
-        <div className="flex gap-2">
-          <div className="flex-1">
-            <Input placeholder={options.length ? 'Другой препарат' : 'Название препарата'} value={custom}
-              onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addCustom()} />
-          </div>
-          <button onClick={addCustom} disabled={!custom.trim()} aria-label="Добавить"
-            className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-2xl bg-accent text-black disabled:opacity-30">
-            <Plus size={20} strokeWidth={2} />
-          </button>
-        </div>
+        <ProductsPicker visit={visit} onChange={(products) => onPatch({ products })} />
       </Field>
 
-      <div className="grid grid-cols-2 gap-2.5">
-        <Field label="Представитель">
-          <Input placeholder="ФИО" value={rep}
-            onChange={(e) => setRep(e.target.value)} onBlur={() => save('client_rep', rep, visit.client_rep)} />
-        </Field>
-        <Field label="Должность">
-          <Input value={func}
-            onChange={(e) => setFunc(e.target.value)} onBlur={() => save('client_rep_function', func, visit.client_rep_function)} />
-        </Field>
-      </div>
       <div>
         <div className="mb-2.5 px-1 font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-muted">Адрес объекта</div>
         <AddressFields city={addr.city} street={addr.street} onChange={setAddr}
@@ -98,6 +58,49 @@ export function ActData({ visit, editable, onPatch }: { visit: Visit; editable: 
             if (Object.keys(p).length) onPatch(p);
           }} />
       </div>
+    </div>
+  );
+}
+
+const SRC_HINT: Record<string, string> = {
+  object: '💡 Подставлено как в прошлый раз на этом объекте — проверьте',
+  tech: '💡 Подставлен ваш последний набор для этой обработки — проверьте',
+  common: '💡 Подставлен обычный набор для этой обработки — проверьте',
+};
+
+/** v97: препараты — отметить из списка (прошлый раз на объекте + справочник) или вписать свой. */
+export function ProductsPicker({ visit, onChange }: { visit: Visit; onChange: (products: string[]) => void }) {
+  const cfg = useConfig();
+  const [custom, setCustom] = useState('');
+  const options = [...new Set([...(visit.prev_products || []), ...(cfg.products?.[visit.procedure] ?? []), ...visit.products])];
+  function addCustom() {
+    const v = custom.trim();
+    if (!v) return;
+    haptic.tap();
+    if (!visit.products.includes(v)) onChange([...visit.products, v]);
+    setCustom('');
+  }
+  return (
+    <div>
+      {options.length > 0 && (
+        <div className="mb-2.5">
+          <MultiChips options={options} value={visit.products} onChange={(v) => { haptic.tap(); onChange(v); }} />
+        </div>
+      )}
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <Input placeholder={options.length ? 'Другой препарат' : 'Название препарата'} value={custom}
+            onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addCustom()} />
+        </div>
+        <button onClick={addCustom} disabled={!custom.trim()} aria-label="Добавить"
+          className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-2xl bg-accent text-black disabled:opacity-30">
+          <Plus size={20} strokeWidth={2} />
+        </button>
+      </div>
+      {visit.products.length > 0 && visit.products_src && SRC_HINT[visit.products_src] && (
+        <div className="mt-2 px-1 text-[12.5px] leading-snug text-muted">{SRC_HINT[visit.products_src]}</div>
+      )}
+      {!visit.products.length && <div className="mt-2 px-1 text-[12.5px] font-medium leading-snug text-[#D70015] dark:text-[#FF453A]">Обязательно — препараты печатаются в акте</div>}
     </div>
   );
 }

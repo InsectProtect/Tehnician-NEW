@@ -171,6 +171,11 @@ export function actRoPdf({ visit, client = {}, company, products = [], rows = []
       if (bad.length) info.splice(6, 0, ['Deteriorate / lipsă', `nr. ${bad.map((r) => r.number).join(', ')}`]);
       info.push(['Produse utilizate', products.length ? products.join(', ') + (bait.length ? ` · momeală înlocuită în ${bait.length} stații` : '') : (bait.length ? `momeală înlocuită în ${bait.length} stații` : '—')]);
     }
+    // v97: короткий акт — препараты и площадь тоже печатаются
+    if (!st) {
+      if (visit.area) info.splice(3, 0, ['Suprafața', /\p{L}|²/u.test(String(visit.area)) ? String(visit.area).replace('м²', 'm²') : `${visit.area} m²`]);
+      info.push(['Produse utilizate', products.length ? products.join(', ') : '—']);
+    }
     const re = reentryOf(visit.reentry)?.ro;
     if (re && !st) info.push(['Nu se intră în încăpere', re]);
     if (visit.comment) info.push(['Mențiuni', visit.comment]);

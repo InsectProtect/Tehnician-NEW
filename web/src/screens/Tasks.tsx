@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Ban, Pencil, CalendarClock, Home, Car, RotateCcw, CalendarDays, Copy, MapPin, MessageSquare, Phone, PhoneCall, Play, Receipt, Send, User } from 'lucide-react';
 import { api, type ApiError } from '../api';
 import { plural, useConfig } from '../config';
-import { callPhone, copyText, haptic, intlPhone, openTgChat, prettyPhone } from '../telegram';
+import { callPhone, copyText, haptic, intlPhone, openTgChat, prettyPhone, quickLocation } from '../telegram';
 import type { Task } from '../types';
 import { Button, Chips, Field, Group, IconBadge, Input, Label, MultiChips, MultPill, Pill, Row, Segmented, Sheet, TextArea, cx, multLabel, useToast } from '../components/ui';
 import { AddressFields, joinAddress, splitAddress } from '../components/AddressFields';
@@ -289,7 +289,9 @@ export function TaskSheet({ task, onClose, onStarted, onCancelled }: {
   async function start() {
     setBusy(true);
     try {
-      const { id } = await api.startTask(task.id, { procedure, address: address.trim() });
+      // v97: координаты телефона сразу при старте — удалённость и баллы без трансляции боту
+      const geo = await quickLocation(7000);
+      const { id } = await api.startTask(task.id, { procedure, address: address.trim(), geo });
       haptic.success();
       onStarted(id);
     } catch (e) {

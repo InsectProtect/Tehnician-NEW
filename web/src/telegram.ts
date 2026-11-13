@@ -291,6 +291,11 @@ export function getLocation(): Promise<{ lat: number; lon: number } | null> {
   });
 }
 
+/** v97: координаты без долгого ожидания — нет ответа за ms (запрет, нет GPS) → null, работа не блокируется. */
+export function quickLocation(ms = 7000): Promise<{ lat: number; lon: number } | null> {
+  return Promise.race([getLocation().catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+}
+
 /** Telegram на компьютере (Desktop / macOS / Web) — там окно мини-приложения можно развернуть на весь экран. */
 export const isDesktopTg = () => ['tdesktop', 'macos', 'weba', 'webk', 'web', 'unigram'].includes(platform());
 export const canFullscreen = () => { const w = wa(); return Boolean(w?.requestFullscreen && w.isVersionAtLeast('8.0')); };

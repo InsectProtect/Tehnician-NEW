@@ -5,12 +5,13 @@ import { SignatureSheet } from '../components/SignaturePad';
 import { api } from '../api';
 import { RemarkTypePicker } from '../components/RemarkTypes';
 import { plural, useConfig } from '../config';
-import { canScanQr, haptic } from '../telegram';
+import { canScanQr, haptic, quickLocation } from '../telegram';
 import type { Observation, Reward, Trap, Visit, RemarkType } from '../types';
 import { QuestPath } from '../components/game';
 import { openPhotos } from '../components/PhotoViewer';
 import { compressImage } from '../image';
 import { LOC } from '../locale';
+import { ProductsPicker } from './ActData';
 import { PaymentPicker, defaultPayNote, defaultPayment, type PayState } from '../components/Payment';
 import { Button, Chips, Field, Input, Sheet, Stepper, TextArea, Toggle, cx, useToast } from '../components/ui';
 
@@ -387,9 +388,9 @@ export function ManualSheet({ onClose, onSubmit }: { onClose: () => void; onSubm
 
 /* ---------- Завершение выезда ---------- */
 
-export function FinishSheet({ visitId, traps, visit, observations, fromLead, onClose, onFinished }: {
+export function FinishSheet({ visitId, traps, visit, observations, fromLead, onClose, onFinished, onProducts }: {
   visitId: string; traps: Trap[]; visit: Visit; observations: Observation[]; fromLead: boolean;
-  onClose: () => void; onFinished: (reward?: Reward | null) => void;
+  onClose: () => void; onFinished: (reward?: Reward | null) => void; onProducts?: (products: string[]) => void;
 }) {
   const cfg = useConfig();
   const toast = useToast();
@@ -413,10 +414,10 @@ export function FinishSheet({ visitId, traps, visit, observations, fromLead, onC
   const softWarnings = (st
     ? [!visit.products.length && 'не указана приманка / препарат']
     : [
-      !visit.products.length && 'не указаны препараты',
       !visit.area && 'не указана площадь',
-      !visit.client_rep && 'не указан представитель заказчика',
     ]).filter(Boolean) as string[];
+  // v97: без препаратов акт не закрывается
+  const noProducts = !st && !visit.products.length;
   const needSkip = st && unchecked.length > 0 && skip.trim().length < 3;
 
   async function submit() {
@@ -428,9 +429,12 @@ export function FinishSheet({ visitId, traps, visit, observations, fromLead, onC
     if (pay.payment === 'cash' && !(Number(pay.amount.replace(',', '.').replace(/\s/g, '')) > 0)) { haptic.error(); toast('Укажите, сколько наличных получено', 'error'); return; }
     if (st && !checkedTraps.length) { haptic.error(); toast('Проверьте хотя бы одну станцию', 'error'); return; }
     if (needSkip) { haptic.error(); toast('Укажите, почему не проверены станции', 'error'); return; }
+    if (noProducts) { haptic.error(); toast('Укажите препараты — они печатаются в акте', 'error'); return; }
     setBusy(true);
     try {
-      const r = await api.finish(visitId, comment, { docs, signature: signature || undefined, payment: pay.payment, pay_amount: pay.amount, pay_note: pay.note.trim(), skip_reason: st ? skip.trim() : undefined });
+      // v97: геолокация на «Завершить», если при старте её не было
+      const geo = visit.geo ? null : await quickLocation(6000);
+      const r = await api.finish(visitId, comment, { docs, signature: signature || undefined, payment: pay.payment, pay_amount: pay.amount, pay_note: pay.note.trim(), skip_reason: st ? skip.trim() : undefined, geo });
       haptic.success();
       if (r.office_none) toast('Выезд завершён · документы в офис не отправлялись');
       else if (r.office_error) toast(r.office_error, 'error');
@@ -464,6 +468,12 @@ export function FinishSheet({ visitId, traps, visit, observations, fromLead, onC
           <div className="text-[22px] font-semibold">{photoCount}</div>
         </div>
       </div>
+      {noProducts && (
+        <div className="mb-5 rounded-2xl bg-[#D71921]/10 p-4">
+          <div className="mb-2.5 flex items-center gap-2 text-[15px] font-semibold"><AlertTriangle size={18} className="text-[#D70015] dark:text-[#FF453A]" />Отметьте препараты</div>
+          {onProducts ? <ProductsPicker visit={visit} onChange={onProducts} /> : <div className="text-[14px] text-muted">Заполните блок «Данные для акта».</div>}
+        </div>
+      )}
       {softWarnings.length > 0 && !missingAssessment && (
         <div className="mb-5 flex gap-3 rounded-2xl bg-[#FF9500]/12 p-4 text-[15px]">
           <AlertTriangle size={20} strokeWidth={1.75} className="mt-0.5 shrink-0 text-[#C93400] dark:text-[#FF9F0A]" />

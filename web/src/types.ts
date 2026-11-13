@@ -248,6 +248,8 @@ export type Visit = {
   quick?: boolean;
   object_id?: string; plans_count?: number; plan_spots?: number;
   stations_only?: boolean | null; suggest_stations?: boolean; prev_products?: string[];
+  /** v97: откуда подставлены препараты: object — прошлый выезд на объект, tech — свой набор, common — набор компании */
+  products_src?: '' | 'object' | 'tech' | 'common';
   premises: string[];
   reentry: string;
   reentry_custom: boolean;

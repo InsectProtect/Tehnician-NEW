@@ -24,6 +24,8 @@ export function defaultPayment(visit: Visit): Payment | '' {
   const m = /^(\d+)\s*\/\s*(\d+)$/.exec(visit.stage || '');
   if (m && Number(m[1]) < Number(m[2])) return 'multi';
   if (visit.is_company) return 'transfer';
+  // v97: физлицо с ценой в заявке — обычно наличные (сумма подставляется, сотрудник проверяет)
+  if (visit.price != null && Number(visit.price) > 0) return 'cash';
   return '';
 }
 export function defaultPayNote(visit: Visit, p: Payment | ''): string {

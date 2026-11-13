@@ -12,7 +12,8 @@ import {
   Button, Chips, ConfirmSheet, Empty, Field, Group, IconBadge, Input, LargeTitle, MultPill, MultiChips, Pill, Row, Screen, SectionTitle, Segmented, Sheet, Spinner, cx, statusTone, useToast,
 } from '../components/ui';
 import { PaymentBadge } from '../components/Payment';
-import { ActData, type ActPatch } from './ActData';
+import { ActData, ProductsPicker, type ActPatch } from './ActData';
+import { PAYMENT_UI, defaultPayment } from '../components/Payment';
 import { ShareSheet } from '../components/ShareSheet';
 import { MediaCard } from '../components/MediaUpload';
 import { FinishSheet, InspectSheet, ManualSheet, MessageSheet, ObservationSheet, RegisterSheet, RemarkSheet } from './VisitSheets';
@@ -379,12 +380,12 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
     }] : []),
     ...(assessOn ? [{
       id: 'assess', label: st ? 'Препарат' : 'Оценка',
-      done: st ? visit.products.length > 0 : pestOptions.length === 0 || visit.pests.length > 0,
-      optional: st, hint: st ? 'Чем заправляли станции' : 'Отметьте вредителей',
+      done: st ? visit.products.length > 0 : (pestOptions.length === 0 || visit.pests.length > 0) && (!q || visit.products.length > 0),
+      optional: st, hint: st ? 'Чем заправляли станции' : q && !visit.products.length ? 'Отметьте вредителей и препараты' : 'Отметьте вредителей',
     }] : []),
     { id: 'object', label: 'Баллы', done: Boolean(visit.point_cat), hint: 'Выберите категорию объекта' },
     { id: 'photos', label: 'Фото', done: observations.length > 0, optional: true, hint: 'Замечания с фото — по желанию' },
-    ...(!q ? [{ id: 'data', label: 'Данные акта', done: true, optional: true }] : []),
+    ...(!q ? [{ id: 'data', label: 'Данные акта', done: visit.products.length > 0, hint: 'Отметьте препараты' }] : []),
     { id: 'finish', label: 'Завершение', done: false },
   ] : [];
   const stepMode = isOpen && !stepsOff;
@@ -575,6 +576,12 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
         </div>
       )}
 
+      {isOpen && on('start') && !st && !visit.revision && (
+        <QuickActCard visit={visit} pestOptions={pestOptions} quick={q}
+          onPests={(v) => setAssessment('pests', v)} onProducts={(products) => patchAct({ products })} onCat={(v) => setPoints({ point_cat: v })}
+          onFinish={async () => { if (!q) await setMode('quick'); setSheet({ type: 'finish' }); }}
+          onSteps={() => goStep(steps[1]?.id || 'finish')} />
+      )}
       {isOpen && on('start') && (
         <div className="mb-4">
           <Segmented<'full' | 'quick' | 'stations'>
@@ -808,6 +815,12 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           ) : (
             <Group><Row title={visit.products.join(', ') || '—'} subtitle="Приманка / препарат" /></Group>
           )}
+        </>
+      )}
+      {q && !st && isOpen && on('assess') && (
+        <>
+          <SectionTitle>Препараты</SectionTitle>
+          <div className="rounded-2xl bg-card p-4"><ProductsPicker visit={visit} onChange={(products) => patchAct({ products })} /></div>
         </>
       )}
       {!st && on('assess') && (visit.needs_assessment || pestOptions.length > 0 || visit.procedure !== 'Дератизация') && (
@@ -1158,6 +1171,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           visit={visit}
           observations={observations}
           fromLead={Boolean(visit.lead_id)}
+          onProducts={(products) => patchAct({ products })}
           onClose={() => setSheet(null)}
           onFinished={(r) => {
             setSheet(null);
@@ -1490,5 +1504,61 @@ function InstallSheet({ visitId, trap, targetLabel, onClose, onInstalled }: {
         Установлена — записать осмотр
       </Button>
     </Sheet>
+  );
+}
+
+/** v97: «Акт за 30 секунд» — всё уже подставлено из заявки и прошлого выезда; проверить и завершить (короткий акт). */
+function QuickActCard({ visit, pestOptions, quick, onPests, onProducts, onCat, onFinish, onSteps }: {
+  visit: Visit; pestOptions: string[]; quick: boolean;
+  onPests: (v: string[]) => void; onProducts: (v: string[]) => void; onCat: (v: string) => void;
+  onFinish: () => Promise<void>; onSteps: () => void;
+}) {
+  const cfg = useConfig();
+  const [open, setOpen] = useState<'' | 'pests' | 'products' | 'cat'>('');
+  const [busy, setBusy] = useState(false);
+  const pay = defaultPayment(visit);
+  const catLabel = cfg.pointCats.find((c) => c.id === visit.point_cat)?.label || '';
+  const needPests = pestOptions.length > 0 && !visit.pests.length;
+  const rows: { id: '' | 'pests' | 'products' | 'cat'; label: string; value: string; missing: boolean }[] = [
+    ...(pestOptions.length ? [{ id: 'pests' as const, label: 'Вредители', value: visit.pests.join(', '), missing: needPests }] : []),
+    { id: 'products', label: 'Препараты', value: visit.products.join(', '), missing: !visit.products.length },
+    { id: 'cat', label: 'Объект (баллы)', value: catLabel, missing: !visit.point_cat },
+    { id: '', label: 'Площадь', value: visit.area ? (/\p{L}|²/u.test(String(visit.area)) ? String(visit.area) : `${visit.area} м²`) : '—', missing: false },
+    { id: '', label: 'Оплата', value: pay ? `${PAYMENT_UI[pay].short}${pay === 'cash' && visit.price ? ` · ${visit.price} лей` : ''}` : 'выберите при завершении', missing: false },
+  ];
+  const missing = rows.filter((r) => r.missing);
+  return (
+    <div data-panel className="mb-4 rounded-[22px] bg-card p-5">
+      <div className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+        <span className="h-1.5 w-1.5 rounded-full bg-[#34C759]" />⚡ Акт за 30 секунд
+      </div>
+      <div className="mt-1.5 text-[17px] font-semibold leading-snug">Всё подставлено — проверьте и завершайте</div>
+      <div className="mt-3 divide-y divide-line">
+        {rows.map((r) => (
+          <div key={r.label} className="py-2.5">
+            <button disabled={!r.id} onClick={() => { haptic.tap(); setOpen(open === r.id ? '' : r.id); }} className="flex w-full items-start gap-3 text-left">
+              <span className="w-[112px] shrink-0 text-[13.5px] text-muted">{r.label}</span>
+              <span className={cx('min-w-0 flex-1 text-[15px] font-medium', r.missing && 'text-[#D70015] dark:text-[#FF453A]')}>{r.missing ? 'выберите' : r.value || '—'}</span>
+              {r.id && <Pencil size={15} className="mt-0.5 shrink-0 text-muted" />}
+            </button>
+            {open === r.id && r.id === 'pests' && (
+              <div className="mt-2.5"><MultiChips options={pestOptions} value={visit.pests} onChange={onPests} columns={pestOptions.length > 4 ? 3 : 2} /></div>
+            )}
+            {open === r.id && r.id === 'products' && <div className="mt-2.5"><ProductsPicker visit={visit} onChange={onProducts} /></div>}
+            {open === r.id && r.id === 'cat' && (
+              <div className="mt-2.5"><Chips options={cfg.pointCats} value={visit.point_cat || ''} onChange={(v) => { onCat(v); setOpen(''); }} columns={3} /></div>
+            )}
+          </div>
+        ))}
+      </div>
+      <Button className="mt-4 h-[56px] text-[17px]" disabled={missing.length > 0} loading={busy}
+        onClick={async () => { haptic.tap(); setBusy(true); try { await onFinish(); } finally { setBusy(false); } }}>
+        {missing.length ? `Осталось: ${missing.map((m) => m.label.toLowerCase()).join(', ')}` : '⚡ Всё верно — завершить'}
+      </Button>
+      <div className="mt-2 px-1 text-[12.5px] leading-snug text-muted">
+        {quick ? 'Короткий акт на одну страницу: клиент, адрес, вредители, препараты, площадь, подписи.' : 'Клиент получит короткий акт на одну страницу. Сложный объект — заполните полный акт по шагам.'}
+      </div>
+      {!quick && <Button variant="plain" className="mt-1" onClick={onSteps}>Заполнить полный акт по шагам</Button>}
+    </div>
   );
 }
