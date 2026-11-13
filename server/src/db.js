@@ -501,6 +501,8 @@ const MIGRATIONS = [
   "ALTER TABLE tasks ADD COLUMN client_type TEXT NOT NULL DEFAULT ''",
   "ALTER TABLE tasks ADD COLUMN office_note TEXT NOT NULL DEFAULT ''",
   "CREATE TABLE IF NOT EXISTS bot_prompts (chat_id TEXT NOT NULL, msg_id TEXT NOT NULL, kind TEXT NOT NULL, task_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (chat_id, msg_id))",
+  // v98: заявка из группы похожа на уже созданную — ждёт решения «создать / обновить старую / отмена»
+  "CREATE TABLE IF NOT EXISTS task_holds (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, thread_id TEXT, message_id TEXT NOT NULL, tech TEXT NOT NULL, text TEXT NOT NULL, author TEXT NOT NULL DEFAULT '', author_id TEXT, dup_task_id TEXT NOT NULL, why TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'new', bot_msg_id TEXT, created_at TEXT NOT NULL, decided_by TEXT)",
   // v73: партии QR-этикеток (перепечатать те же коды) и замена QR на станции (старые коды — история)
   // v76: режим акта «Только станции» (NULL — ещё не спрашивали; 1 — обслуживание станций без обработки)
   'ALTER TABLE visits ADD COLUMN stations_only INTEGER',

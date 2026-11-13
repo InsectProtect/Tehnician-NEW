@@ -415,6 +415,8 @@ export type AdminTaskInput = {
   tech: string; company: string; address: string; phone: string; date: string; time: string; procedure: string; pests: string[];
   comment: string; rooms: string; stage: string; price: string; mult: string; point_cat: string; point_zone: string; team: string[]; sotki?: string;
   audience?: Audience; claim_bonus?: string;
+  /** v98: создать, даже если похоже на дубль */
+  force?: boolean;
 };
 
 export type Features = { team: boolean; job_reviewer: boolean; managers: boolean; contest: boolean; one_open: boolean; game?: boolean; geo_shift?: boolean; require_geo_start?: boolean };

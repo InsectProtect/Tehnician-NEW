@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarClock, Check, CheckCheck, ClipboardList, Hand, Paperclip, Plus, Target, Undo2 } from 'lucide-react';
-import { api, uploadJobFileAny } from '../api';
+import { ApiError, api, uploadJobFileAny } from '../api';
 import { useConfig } from '../config';
 import { haptic, openLink } from '../telegram';
 import { MULT_PRESETS } from './Tasks';
@@ -377,7 +377,9 @@ export function NewTaskSheet({ initialKind = 'task', onClose, onCreated }: { ini
   const reviewerOn = cfg.features?.job_reviewer !== false;
   const [job, setJob] = useState<JobInput>({ title: '', descr: '', due_at: null, due_time: '', points: '1', target: '' });
   const [t, setT] = useState<AdminTaskInput>({ tech: '', company: '', address: '', phone: '', date: '', time: '', procedure: '', pests: [], comment: '', rooms: '', stage: '', price: '', mult: '', point_cat: '', point_zone: 'city', team: [] });
-  const setTask = (p: Partial<AdminTaskInput>) => setT((x) => ({ ...x, ...p }));
+  // v98: «похоже на дубль» — сбрасывается при любой правке заявки
+  const [dup, setDup] = useState('');
+  const setTask = (p: Partial<AdminTaskInput>) => { setDup(''); setT((x) => ({ ...x, ...p })); };
 
   useEffect(() => { api.assignees().then((r) => setPeople(r.items)).catch(() => setPeople([])); }, []);
   // специалисты — первыми: поручения обычно им
@@ -414,14 +416,16 @@ export function NewTaskSheet({ initialKind = 'task', onClose, onCreated }: { ini
         toast(who.length > 1 ? `Поручение отправлено: ${who.length} сотрудникам` : 'Поручение отправлено');
       } else {
         const main = who.includes(lead) ? lead : who[0];
-        const r = await api.createAdminTask({ ...t, tech: main, team: who.filter((x) => x !== main) });
+        const r = await api.createAdminTask({ ...t, tech: main, team: who.filter((x) => x !== main), force: Boolean(dup) });
         toast(who.length > 1 ? `Заявка № ${r.task_no} · команда из ${who.length}` : `Заявка № ${r.task_no} отправлена`);
       }
       haptic.success();
       onCreated(kind);
     } catch (e) {
       haptic.error();
-      toast((e as Error).message, 'error');
+      // v98: похоже на дубль — показываем, кнопка становится «Всё равно создать»
+      if (e instanceof ApiError && e.code === 'duplicate') setDup(e.message);
+      else toast((e as Error).message, 'error');
       setBusy(false);
     }
   }
@@ -569,8 +573,11 @@ export function NewTaskSheet({ initialKind = 'task', onClose, onCreated }: { ini
         )}
       </div>
 
+      {dup && kind === 'task' && mode !== 'open' && (
+        <div data-panel className="mt-6 rounded-2xl bg-[#FF9500]/12 p-4 text-[14.5px] leading-snug">⚠️ {dup}</div>
+      )}
       <Button className="mt-6" loading={busy} icon={<Check size={19} strokeWidth={2} />} onClick={submit}>
-        {mode === 'open' ? `Отправить: ${AUDIENCE_LABEL[aud].toLowerCase()}` : kind === 'job' ? (who.length > 1 ? `Поставить ${who.length} сотрудникам` : 'Поставить поручение') : 'Отправить заявку'}
+        {dup && kind === 'task' && mode !== 'open' ? 'Всё равно создать' : mode === 'open' ? `Отправить: ${AUDIENCE_LABEL[aud].toLowerCase()}` : kind === 'job' ? (who.length > 1 ? `Поставить ${who.length} сотрудникам` : 'Поставить поручение') : 'Отправить заявку'}
       </Button>
     </Sheet>
   );

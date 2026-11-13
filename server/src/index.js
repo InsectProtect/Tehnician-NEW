@@ -20,7 +20,7 @@ import { initSales } from './sales.js';
 import { initCar } from './car.js';
 import { initCrm } from './crm.js';
 import { initCash } from './cash.js';
-import { initPlans } from './plans.js';
+import { initPlans, sameAddress } from './plans.js';
 import { initAttend } from './attend.js';
 import { PREMISES, REENTRY, reentryDefault } from './premises.js';
 import { reverseGeocode, forwardGeocode } from './geo.js';
@@ -5678,8 +5678,8 @@ async function handleUpdate(u) {
     } else log('обычная переписка — пропущено');
     return;
   }
-  const created = await createTask({ parsed, tech, chatId: String(c.id), threadId, messageId: String(m.message_id), author: [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' '), authorId: m.from?.id });
-  log(created ? `заявка № ${created.task_no} → ${created.tech_name}` : 'сотрудник темы не найден — привяжите заново (/tech)');
+  const created = await groupCreateTask({ parsed, text, tech, chatId: String(c.id), threadId, messageId: String(m.message_id), author: [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' '), authorId: m.from?.id });
+  log(created?.held ? `похоже на дубль № ${created.dup_no} — спросил` : created ? `заявка № ${created.task_no} → ${created.tech_name}` : 'сотрудник темы не найден — привяжите заново (/tech)');
 }
 
 // ---------- «кто заберёт»: задача/поручение для категории сотрудников ----------
@@ -6348,6 +6348,15 @@ route('POST', '/api/admin/tasks', async ({ body, user }) => {
     const t = await createOpenTask({ parsed, audience, bonus, author: user.name, authorId: user.id, chatId: office ? String(office.id) : null, threadId: office?.thread_id || null });
     return { ok: true, id: t.id, task_no: t.task_no, open: true };
   }
+  // v98: контроль дублей — та же дата + тот же телефон/адрес у активной заявки
+  if (!body.force) {
+    const dup = await findDupTask(parsed).catch(() => null);
+    if (dup) {
+      const e = new HttpError(409, `Похоже на дубль заявки № ${dup.task.task_no} (${dup.why}). Если это другая заявка — нажмите «Всё равно создать».`);
+      e.extra = { code: 'duplicate', task_no: Number(dup.task.task_no), task_id: dup.task.id };
+      throw e;
+    }
+  }
   const t = await createTask({ parsed, tech: u.tg_id, chatId, threadId, messageId: null, author: user.name, authorId: user.id });
   must(t, 400, 'Не удалось создать заявку');
   return { ok: true, id: t.id, task_no: t.task_no };
@@ -6399,6 +6408,82 @@ async function createOpenTask({ parsed, audience, bonus, author, authorId, chatI
   await broadcastClaim('tasks', t.id, users, html, 'tclaim');
   if (chatId) sendMessage(chatId, `${taskSummary(t)}\n\n🙋 Разослано: ${escHtml(AUDIENCE_LABEL[audience])} — ждём, кто заберёт.`, { threadId }).catch(() => {});
   return t;
+}
+
+// ---------- v98: контроль дублей заявок ----------
+const ACTIVE_TASK = ['new', 'pending', 'open', 'in_progress'];
+const last8 = (p) => String(p || '').replace(/\D/g, '').slice(-8);
+/** «Independentei 32/a» ≈ «str. Independentei 32a»: общее слово улицы и тот же первый номер (без «/» и пробелов). */
+function addrNear(a, b) {
+  const key = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const words = (x) => new Set((key(x).match(/\p{L}{3,}/gu) || []).filter((w) => !['str', 'strada', 'bul', 'bulevardul', 'mun', 'chisinau', 'scara', 'etaj'].includes(w)));
+  const num = (x) => (key(x).match(/\d+\s*[/-]?\s*[a-zа-я\d]?/u) || [''])[0].replace(/[\s/-]/g, '');
+  const wa = words(a); const wb = words(b);
+  return [...wa].some((w) => wb.has(w)) && num(a) !== '' && num(a) === num(b);
+}
+/** Активная заявка на тот же день с тем же телефоном и адресом (или тем же адресом и клиентом) — возможный дубль. */
+async function findDupTask(p, { excludeId = null } = {}) {
+  const day = p.planned_at ? dayOf(p.planned_at) : '';
+  const ph = last8(p.phone);
+  const since = new Date(Date.now() - 45 * 86400000).toISOString();
+  const rows = await db.query(`SELECT * FROM tasks WHERE status IN (${ACTIVE_TASK.map((_, i) => `$${i + 2}`).join(',')}) AND created_at > $1 ORDER BY created_at DESC LIMIT 400`, [since, ...ACTIVE_TASK]);
+  const co = (x) => String(x || '').toLowerCase().replace(/[^\p{L}\d]+/gu, '');
+  for (const t of rows) {
+    if (excludeId && t.id === excludeId) continue;
+    const tday = t.planned_at ? dayOf(t.planned_at) : '';
+    if (day !== tday) continue;
+    const samePhone = ph.length === 8 && last8(t.phone) === ph;
+    const sameAddr = sameAddress(p.address, t.address) || addrNear(p.address, t.address);
+    const sameCo = co(p.company) && co(p.company) === co(t.company_name);
+    const why = samePhone && sameAddr ? 'тот же телефон и адрес'
+      : samePhone && (!p.address || !t.address) ? 'тот же телефон'
+      : sameAddr && (sameCo || !ph || !last8(t.phone)) ? 'тот же адрес' : '';
+    if (why) return { task: t, why: `${why}, ${day ? `та же дата (${day.split('-').reverse().slice(0, 2).join('.')})` : 'обе без даты'}` };
+  }
+  return null;
+}
+/** Заявка из группы: похожа на активную — не создаём сразу, спрашиваем. */
+async function groupCreateTask({ parsed, text, tech, chatId, threadId, messageId, author, authorId }) {
+  const dup = await findDupTask(parsed).catch(() => null);
+  if (!dup) return createTask({ parsed, tech, chatId, threadId, messageId, author, authorId });
+  const id = uid();
+  const t = dup.task;
+  const [u] = await db.query('SELECT name FROM users WHERE tg_id = $1', [t.tech_tg_id || '']);
+  const html = `⚠️ <b>Похоже на дубль заявки № ${t.task_no}</b> (${escHtml(dup.why)}).\n` +
+    `№ ${t.task_no}: ${escHtml([t.company_name, t.address].filter(Boolean).join(' · '))}${u ? ` · ${escHtml(u.name)}` : ''}\n\n` +
+    'Что сделать с этим сообщением?';
+  const kb = { inline_keyboard: [
+    [{ text: `✏️ Обновить № ${t.task_no} этим текстом`, callback_data: `dupupd:${id}` }],
+    [{ text: '➕ Это другая заявка — создать', callback_data: `dupnew:${id}` }, { text: '✖️ Не нужно', callback_data: `dupno:${id}` }],
+  ] };
+  const sent = await sendMessage(chatId, html, { threadId, replyTo: Number(messageId), replyMarkup: kb }).catch(() => null);
+  if (!sent?.message_id) return createTask({ parsed, tech, chatId, threadId, messageId, author, authorId }); // бот не смог спросить — не теряем заявку
+  await db.query('INSERT INTO task_holds (id, chat_id, thread_id, message_id, tech, text, author, author_id, dup_task_id, why, bot_msg_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+    [id, String(chatId), threadId != null ? String(threadId) : null, String(messageId), String(tech), text, author || '', authorId != null ? String(authorId) : null, t.id, dup.why, String(sent.message_id), now()]);
+  await audit({ id: 'bot', name: author || 'группа' }, 'Возможный дубль заявки', `похоже на № ${t.task_no}`, dup.why);
+  return { held: true, dup_no: Number(t.task_no) };
+}
+async function decideHold(holdId, action, who) {
+  const [h] = await db.query('SELECT * FROM task_holds WHERE id = $1', [holdId]);
+  if (!h) return 'Не найдено';
+  if (h.status !== 'new') return 'Уже решено';
+  const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [h.dup_task_id]);
+  let note = '';
+  if (action === 'upd') {
+    if (!t || !ACTIVE_TASK.includes(t.status)) return 'Заявка уже закрыта — нажмите «создать»';
+    const r = await applyGroupEdit(t, h.text, who);
+    if (r.error) return r.error;
+    note = `✏️ Заявка № ${t.task_no} обновлена (${r.changed.join(', ')}) — ${who}`;
+  } else if (action === 'new') {
+    const parsed = parseTask(h.text, new Date(), await parseOpts());
+    if (!parsed) return 'Не удалось разобрать заявку';
+    const c = await createTask({ parsed, tech: h.tech, chatId: h.chat_id, threadId: h.thread_id ? Number(h.thread_id) : undefined, messageId: h.message_id, author: h.author, authorId: h.author_id });
+    note = c ? `➕ Создана отдельная заявка № ${c.task_no} — ${who}` : 'Сотрудник темы не найден';
+  } else note = `✖️ Дубль не создан — ${who}`;
+  await db.query("UPDATE task_holds SET status = $1, decided_by = $2 WHERE id = $3", [action, who, h.id]);
+  if (h.bot_msg_id) editMessage(h.chat_id, h.bot_msg_id, `⚠️ Похоже на дубль заявки № ${t?.task_no ?? '?'}.\n${escHtml(note)}`, { inline_keyboard: [] }).catch(() => {});
+  await audit({ id: 'bot', name: who }, 'Дубль заявки: решение', `№ ${t?.task_no ?? '?'}`, note);
+  return null;
 }
 
 async function createTask({ parsed, tech, chatId, threadId, messageId, author, authorId, trusted = false }) {
@@ -6602,8 +6687,10 @@ async function handleTaskEdit(m) {
     const threadId = m.is_topic_message ? m.message_thread_id : undefined;
     const tech = (await topicBindings())[topicKey(m.chat.id, threadId)];
     if (!parsed || !tech || m.from?.is_bot || m.chat.type === 'private' || (await isAdminTg(tech))) return;
-    const created = await createTask({ parsed, tech, chatId: String(m.chat.id), threadId, messageId: String(m.message_id), author: [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' '), authorId: m.from?.id });
-    logTg({ chat: chatTitle(m.chat), chat_id: String(m.chat.id), thread: threadId || null, from: m.from?.first_name || '', text: m.text || '', result: created ? `заявка № ${created.task_no} (после правки)` : 'сотрудник темы не найден' });
+    const [held] = await db.query("SELECT id FROM task_holds WHERE chat_id = $1 AND message_id = $2 AND status = 'new'", [String(m.chat.id), String(m.message_id)]);
+    if (held) { await db.query('UPDATE task_holds SET text = $1 WHERE id = $2', [String(m.text || m.caption || ''), held.id]); return; }
+    const created = await groupCreateTask({ parsed, text: String(m.text || m.caption || ''), tech, chatId: String(m.chat.id), threadId, messageId: String(m.message_id), author: [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' '), authorId: m.from?.id });
+    logTg({ chat: chatTitle(m.chat), chat_id: String(m.chat.id), thread: threadId || null, from: m.from?.first_name || '', text: m.text || '', result: created?.held ? `похоже на дубль № ${created.dup_no}` : created ? `заявка № ${created.task_no} (после правки)` : 'сотрудник темы не найден' });
     return;
   }
   if (!['new', 'pending'].includes(t.status) || !parsed) return;
@@ -7031,6 +7118,12 @@ async function handleCallback(q) {
     }
     if (t.tech_tg_id) notifyTech(t.tech_tg_id, `🏢 Заявка № ${t.task_no} — <b>юрлицо</b>: ${escHtml(t.company_name)}.`, { kind: 'task_update', task_id: t.id });
     return answerCallback(q.id, 'Отмечено: юрлицо');
+  }
+  if (/^dup(upd|new|no):/.test(data)) {
+    const [, act, hid] = data.match(/^dup(upd|new|no):(.+)$/);
+    const who = [q.from?.first_name, q.from?.last_name].filter(Boolean).join(' ') || 'офис';
+    const err = await decideHold(hid, act === 'upd' ? 'upd' : act === 'new' ? 'new' : 'no', who);
+    return answerCallback(q.id, err || 'Готово');
   }
   if (data.startsWith('tedit:')) {
     const [t] = await db.query('SELECT * FROM tasks WHERE id = $1', [data.slice(6)]);
