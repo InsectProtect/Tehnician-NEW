@@ -78,11 +78,11 @@ const DEFAULT_SETTINGS = {
   // v102: гарантированная премия при выполнении 100% плана — в холодный период и в сезон своя сумма (всем менеджерам)
   guarantee: { on: false, cold: 6000, season: 8000, months: [5, 6, 7, 8, 9, 10] },
 };
-/** v103: бонус за KPI — fixed: сумма при ≥100% плана; pct: сумма × % выполнения (с порога cutoff, не больше 100%). */
+/** v103/v104: бонус за KPI — fixed: сумма при ≥100% плана; pct: сумма × % выполнения плана (50% → половина, максимум — вся сумма, без порога). */
 export function kpiBonus(cfg, pct) {
   const B = cfg.bonus || {};
   if (!B.on || !(B.amount > 0)) return 0;
-  if (B.mode === 'pct') return pct >= cfg.cutoff ? Math.round((B.amount * Math.min(pct, 100)) / 100) : 0;
+  if (B.mode === 'pct') return Math.round((B.amount * Math.max(0, Math.min(pct, 100))) / 100);
   return pct >= 100 ? B.amount : 0;
 }
 /** Гарантия на месяц ГГГГ-ММ: { amount, season } или null. */

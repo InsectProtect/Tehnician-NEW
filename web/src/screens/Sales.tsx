@@ -1055,7 +1055,7 @@ function ConfigEditor({ tg, d, list, onSaved }: { tg: string; d: SalesDetail; li
               <Segmented options={[{ id: 'fixed', label: 'Вся сумма при 100%' }, { id: 'pct', label: '% от суммы' }]} value={c.bonus.mode} onChange={(v) => upd({ bonus: { ...c.bonus, mode: v as 'fixed' | 'pct' } })} />
               <div className="text-[13px] leading-snug text-muted">
                 {c.bonus.mode === 'pct'
-                  ? `Платится доля суммы по выполнению плана: 85% → ${lei(Math.round(c.bonus.amount * 0.85))}, 100% и выше → ${lei(c.bonus.amount)}. Ниже порога ${c.cutoff}% — 0.`
+                  ? `Платится доля суммы по выполнению плана: 50% → ${lei(Math.round(c.bonus.amount * 0.5))}, 85% → ${lei(Math.round(c.bonus.amount * 0.85))}, 100% и выше → ${lei(c.bonus.amount)} (это максимум).`
                   : `При выполнении плана на 100% и больше — +${lei(c.bonus.amount)} сверху премии. Ниже 100% — 0.`}
               </div>
             </>
