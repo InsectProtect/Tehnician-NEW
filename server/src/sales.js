@@ -55,6 +55,8 @@ const DEFAULT_CFG = {
   ladder: [[0, 0], [60, 0.5], [80, 0.75], [90, 0.9], [100, 1], [110, 1.2], [120, 1.3], [130, 1.5]],
   // v103: бонус за выполнение 100% плана (KPI): fixed — вся сумма при ≥100%, pct — доля суммы = % выполнения (от порога, до 100%)
   bonus: { on: false, amount: 5000, mode: 'fixed' },
+  // v105: бонус за перевыполнение — растёт от 100% до `to` % плана (110% из 130% → треть суммы), выше `to` — вся сумма
+  over: { on: false, amount: 3000, to: 130 },
   crit: { below: 60, cut: 40 },
   structure: [{ id: 'b2c', label: 'B2C разовые выезды', share: 23 }, { id: 'b2b_new', label: 'B2B новые договоры', share: 20 }, { id: 'b2b_port', label: 'B2B портфель абонентов', share: 57 }],
   supers: Object.fromEntries(Object.entries(SUPERS).map(([id, s]) => [id, { on: true, amount: s.amount, param: s.param }])),
@@ -79,6 +81,11 @@ const DEFAULT_SETTINGS = {
   guarantee: { on: false, cold: 6000, season: 8000, months: [5, 6, 7, 8, 9, 10] },
 };
 /** v103/v104: бонус за KPI — fixed: сумма при ≥100% плана; pct: сумма × % выполнения плана (50% → половина, максимум — вся сумма, без порога). */
+export function overBonus(cfg, pct) {
+  const O = cfg.over || {};
+  if (!O.on || !(O.amount > 0) || pct <= 100) return 0;
+  return Math.round(O.amount * Math.min(1, (pct - 100) / Math.max(1, (O.to || 130) - 100)));
+}
 export function kpiBonus(cfg, pct) {
   const B = cfg.bonus || {};
   if (!B.on || !(B.amount > 0)) return 0;
@@ -166,6 +173,7 @@ export function initSales(ctx) {
     }).filter((k) => k.id).slice(0, 15);
     out.ladder = (Array.isArray(c.ladder) ? c.ladder : d.ladder).map(([p, k]) => [clamp(num(p), 0, 1000), clamp(num(k), 0, 10)]).sort((a, b) => a[0] - b[0]).slice(0, 15);
     // старый «бонус от 130%» не переносится: без явного on бонус выключен
+    out.over = { on: Boolean(c.over?.on), amount: clamp(Math.round(num(c.over?.amount, d.over.amount)), 0, 1000000), to: clamp(Math.round(num(c.over?.to, d.over.to)), 101, 1000) };
     out.bonus = { on: c.bonus?.on !== undefined ? Boolean(c.bonus.on) : d.bonus.on, amount: clamp(Math.round(num(c.bonus?.amount, d.bonus.amount)), 0, 1000000), mode: c.bonus?.mode === 'pct' ? 'pct' : 'fixed' };
     out.crit = { below: num(c.crit?.below, d.crit.below), cut: clamp(num(c.crit?.cut, d.crit.cut), 0, 100) };
     out.structure = (Array.isArray(c.structure) ? c.structure : d.structure).map((s) => ({ id: String(s.id || '').slice(0, 30), label: String(s.label || '').slice(0, 60), share: clamp(num(s.share), 0, 100) })).slice(0, 8);
@@ -285,7 +293,8 @@ export function initSales(ctx) {
     let topup = 0;
     if (gr && pct >= 100 && premium < gr.amount) { topup = gr.amount - premium; premium = gr.amount; }
     const guarantee = gr ? { ...gr, topup: Math.round(topup), applied: pct >= 100 } : null;
-    const bonus = kpiBonus(cfg, pct);
+    const over = overBonus(cfg, pct);
+    const bonus = kpiBonus(cfg, pct) + over;
     // супербонусы
     const S = cfg.supers; const sup = [];
     const add = (id, count, note) => { if (S[id]?.on && count > 0) sup.push({ id, label: SUPERS[id].label, count, amount: S[id].amount, total: S[id].amount * count, note }); };
@@ -324,19 +333,19 @@ export function initSales(ctx) {
     const target = { salary: cfg.salary, premium: Math.round(tPremium), bonus: tBonus, k: k100, total: Math.round(cfg.salary + tPremium + tBonus) };
     return {
       month: ym, plan, revenue: Math.round(revenue), pct: r2(pct), kkpi: r2(kkpi), k: kLadder, below_cutoff: pct < cfg.cutoff, critical,
-      target, guarantee, kkpi_exact: kkpi, premium: Math.round(premium), bonus, supers: sup, supers_total: supers, fine: Math.round(fine), penalties, strikes, salary: cfg.salary, total: Math.round(total), kpis, structure,
+      target, guarantee, over, kkpi_exact: kkpi, premium: Math.round(premium), bonus, supers: sup, supers_total: supers, fine: Math.round(fine), penalties, strikes, salary: cfg.salary, total: Math.round(total), kpis, structure,
       auto: { revenue: Math.round(auto.revenue), revenue_b2c: Math.round(auto.revenue_b2c), revenue_b2b: Math.round(auto.revenue_b2b), done: auto.done, calls: auto.calls, reached: auto.reached, deals: auto.deals, subs: auto.subs, b2b_new: auto.b2b_new, tasks: auto.tasks, tasks_bad: auto.tasks_bad, pings: auto.pings },
     };
   }
 
   /** «Что если»: сколько получит при 100 / 110 / 120 / 130 % плана с текущим K_KPI. */
   function whatIf(cfg, c) {
-    const steps = [...new Set([100, ...cfg.ladder.map(([p]) => p).filter((p) => p >= 100)])].sort((a, b) => a - b).slice(0, 5);
+    const steps = [...new Set([100, ...cfg.ladder.map(([p]) => p).filter((p) => p >= 100), ...(cfg.over?.on ? [cfg.over.to] : [])])].sort((a, b) => a - b).slice(0, 5);
     return steps.map((p) => {
       const revenue = (c.plan * p) / 100;
       const k = cfg.ladder.reduce((acc, [lp2, kk]) => (p >= lp2 ? kk : acc), 0);
       const premium = Math.max(p < cfg.cutoff ? 0 : revenue * (cfg.rate / 100) * (c.kkpi_exact ?? c.kkpi) * k, p >= 100 ? c.guarantee?.amount || 0 : 0);
-      const bonus = kpiBonus(cfg, p);
+      const bonus = kpiBonus(cfg, p) + overBonus(cfg, p);
       const kpiPay = premium + bonus + c.supers_total;
       const strikeCut = Math.round((kpiPay * (c.strikes?.pct || 0)) / 100);
       return { pct: p, revenue: Math.round(revenue), need: Math.max(0, Math.round(revenue - c.revenue)), premium: Math.round(premium), bonus, total: Math.max(0, Math.round(cfg.salary + kpiPay - c.fine - strikeCut)), reached: c.pct >= p };
@@ -402,7 +411,7 @@ export function initSales(ctx) {
     }
     return tips;
   }
-  const nextStep = (cfg, pct) => [...cfg.ladder.map(([p]) => p), ...(cfg.bonus.on ? [100] : [])].filter((p) => p > pct).sort((a, b) => a - b)[0] ?? null;
+  const nextStep = (cfg, pct) => [...cfg.ladder.map(([p]) => p), ...(cfg.bonus.on ? [100] : []), ...(cfg.over?.on ? [cfg.over.to] : [])].filter((p) => p > pct).sort((a, b) => a - b)[0] ?? null;
   const fmtVal = (v, unit) => (unit === 'MDL' ? lei(v) : `${Math.round(v * 10) / 10}${unit === '%' ? '%' : ` ${unit}`}`);
 
   // ---------- незаполненные заявки ----------
@@ -668,7 +677,7 @@ export function initSales(ctx) {
       month: ym, month_label: `${MONTHS_FULL[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`, calc: c, what_if: whatIf(cfg, c), tips: coachTips(cfg, c, ym, gaps.length), gaps,
       strikes_list: await strikesList(tg, ym),
       manual: manual.data, manual_at: manual.updated_at, manual_by: manual.updated_by,
-      cfg: { preset: cfg.preset, base_plan: cfg.base_plan, rate: cfg.rate, salary: cfg.salary, cutoff: cfg.cutoff, ladder: cfg.ladder, bonus: cfg.bonus, crit: cfg.crit, gap_fine: cfg.gap_fine,
+      cfg: { preset: cfg.preset, base_plan: cfg.base_plan, rate: cfg.rate, salary: cfg.salary, cutoff: cfg.cutoff, ladder: cfg.ladder, bonus: cfg.bonus, over: cfg.over, crit: cfg.crit, gap_fine: cfg.gap_fine,
         supers: Object.entries(cfg.supers).filter(([, v]) => v.on).map(([id, v]) => ({ id, label: SUPERS[id].label, amount: v.amount, param: v.param, hint: SUPERS[id].hint })),
         penalties: Object.entries(cfg.penalties || {}).filter(([, v]) => v.on).map(([id, v]) => ({ id, label: PENALTIES[id]?.label || id, amount: v.amount, param: v.param, hint: PENALTIES[id]?.hint || '' })) },
     };

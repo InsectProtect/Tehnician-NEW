@@ -63,7 +63,9 @@ function PayoutCard({ d, title = 'К выплате за месяц' }: { d: Sal
     ['Оклад', c.salary],
     ['Премия', c.premium, c.below_cutoff ? `ниже порога ${d.cfg.cutoff}% плана — премии нет` : `${lei(c.revenue)} × ${dec(d.cfg.rate, 1)}% × K_KPI ${dec(c.kkpi)} × K ${dec(c.k)}${c.critical ? ` − ${d.cfg.crit.cut}% (критическое недовыполнение)` : ''}${c.guarantee?.topup ? ` · 🛡 гарантия ${lei(c.guarantee.amount)}: доплачено ${lei(c.guarantee.topup)}` : ''}`],
   ];
-  if (c.bonus) lines.push([d.cfg.bonus.mode === 'pct' ? 'Бонус за KPI' : 'Бонус за 100% KPI', c.bonus, d.cfg.bonus.mode === 'pct' ? `${lei(d.cfg.bonus.amount)} × ${pctS(Math.min(100, c.pct))} выполнения` : undefined]);
+  const kb = c.bonus - (c.over || 0);
+  if (kb) lines.push([d.cfg.bonus.mode === 'pct' ? 'Бонус за KPI' : 'Бонус за 100% KPI', kb, d.cfg.bonus.mode === 'pct' ? `${lei(d.cfg.bonus.amount)} × ${pctS(Math.min(100, c.pct))} выполнения` : undefined]);
+  if (c.over && d.cfg.over) lines.push(['🚀 За перевыполнение', c.over, `${pctS(c.pct)} плана · максимум ${lei(d.cfg.over.amount)} при ${d.cfg.over.to}%`]);
   for (const s of c.supers) lines.push([`🏆 ${s.label}${s.count > 1 ? ` × ${s.count}` : ''}`, s.total, s.note]);
   if (d.cfg.gap_fine > 0 && c.auto.tasks_bad > 0) lines.push(['Штраф: незаполненные заявки', -(d.cfg.gap_fine * c.auto.tasks_bad), `${c.auto.tasks_bad} шт.`]);
   for (const p of c.penalties) lines.push([`Штраф: ${p.label}`, -p.total, `${p.count} шт. × ${lei(p.amount)}`]);
@@ -1057,6 +1059,24 @@ function ConfigEditor({ tg, d, list, onSaved }: { tg: string; d: SalesDetail; li
                 {c.bonus.mode === 'pct'
                   ? `Платится доля суммы по выполнению плана: 50% → ${lei(Math.round(c.bonus.amount * 0.5))}, 85% → ${lei(Math.round(c.bonus.amount * 0.85))}, 100% и выше → ${lei(c.bonus.amount)} (это максимум).`
                   : `При выполнении плана на 100% и больше — +${lei(c.bonus.amount)} сверху премии. Ниже 100% — 0.`}
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <Eyebrow>🚀 Бонус за перевыполнение</Eyebrow>
+        <div className="flex flex-col gap-3">
+          <Toggle label="Платить сверху за план больше 100%" checked={Boolean(c.over?.on)} onChange={(v) => upd({ over: { amount: 3000, to: 130, ...(c.over || {}), on: v } })} />
+          {c.over?.on && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                {numF('Сумма сверху, лей', c.over.amount, (x) => upd({ over: { ...c.over!, amount: x } }))}
+                {numF('Вся сумма при, % плана', c.over.to, (x) => upd({ over: { ...c.over!, to: Math.max(101, x) } }))}
+              </div>
+              <div className="text-[13px] leading-snug text-muted">
+                {`Растёт от 100% до ${c.over.to}%: ${Math.round(100 + (c.over.to - 100) / 3)}% → ${lei(Math.round(c.over.amount / 3))}, ${Math.round(100 + ((c.over.to - 100) * 2) / 3)}% → ${lei(Math.round((c.over.amount * 2) / 3))}, ${c.over.to}% и выше → ${lei(c.over.amount)}.`}
               </div>
             </>
           )}
