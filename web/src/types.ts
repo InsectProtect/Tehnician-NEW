@@ -154,6 +154,8 @@ export type Trap = {
   plan_id?: string | null; plan_x?: number | null; plan_y?: number | null;
   /** своя подпись и цвет на плане (v86) */
   label?: string; color?: string;
+  /** v99: зона для анализа тенденций (exterior | interior | depozit, '' — авто) */
+  zone?: string;
   /** v93: последние осмотры на прошлых выездах (новые первыми) — для быстрого осмотра */
   history?: { at: string; status: string; count: number; pest: string; bait: string }[];
   inspection: Inspection | null;
@@ -168,7 +170,7 @@ export type PlanShape =
   | { t: 'spot'; id: string; x: number; y: number; target: string; kind: string; n: number; label?: string; color?: string }
   | { t: 'text'; x: number; y: number; s: string };
 export interface ObjectPlan { id: string; object_id: string; title: string; w: number; h: number; mscale?: number; image_url: string | null; drawing: PlanShape[]; updated_at: string }
-export interface PlanTrap { id: string; code: string; number: number; kind: string; target: string; location: string; prepared: boolean; plan_id: string | null; plan_x: number | null; plan_y: number | null; label?: string; color?: string }
+export interface PlanTrap { id: string; code: string; number: number; kind: string; target: string; location: string; prepared: boolean; plan_id: string | null; plan_x: number | null; plan_y: number | null; label?: string; color?: string; zone?: string }
 export interface PlansRes { object?: { id: string; company_name: string; address: string }; plans: ObjectPlan[]; traps: PlanTrap[]; plan?: ObjectPlan }
 
 /** Оплата при завершении: наличные / перечисление / без оплаты (гарантия) / несколько дней. */

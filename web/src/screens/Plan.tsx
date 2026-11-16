@@ -177,7 +177,12 @@ function AttachForm({ draft, onDone, onCancel }: { draft: string; onDone: (o: { 
 /** Цвета станций на выбор (пусто — по виду устройства). */
 const PALETTE = ['#7D3CFF', '#0A84FF', '#A2845E', '#1FA6BF', '#E0A100', '#FF3B30', '#FF9500', '#34C759', '#FF2D55', '#1D1D1F'];
 
-export type StationEditValue = { number: number; label: string; color: string; target: string; kind: string; location?: string };
+export type StationEditValue = { number: number; label: string; color: string; target: string; kind: string; location?: string; zone?: string };
+
+/** v99: зона станции для анализа тенденций; '' — определить автоматически (по месту и типу). */
+export const ZONE_OPTS: { id: string; label: string }[] = [
+  { id: '', label: 'Авто' }, { id: 'exterior', label: 'Снаружи' }, { id: 'interior', label: 'Внутри' }, { id: 'depozit', label: 'Склад' },
+];
 
 /** v86: правка станции — номер, подпись на плане, цвет, назначение и устройство (и место — у настоящей станции). */
 export function StationEditSheet({ value, spot, onSave, onDelete, onCancel }: {
@@ -264,6 +269,18 @@ export function StationEditSheet({ value, spot, onSave, onDelete, onCancel }: {
             <div>
               <div className="mb-1.5 px-1 text-[12.5px] font-medium text-muted">Где стоит</div>
               <Input placeholder="Например: кухня, под мойкой слева" value={v.location || ''} onChange={(e) => set({ location: e.target.value })} />
+            </div>
+          )}
+          {!spot && (
+            <div>
+              <div className="mb-1.5 px-1 text-[12.5px] font-medium text-muted">Зона (для анализа тенденций)</div>
+              <div className="flex flex-wrap gap-1.5">
+                {ZONE_OPTS.map((z) => (
+                  <button key={z.id || 'auto'} onClick={() => { haptic.tap(); set({ zone: z.id }); }}
+                    className={cx('rounded-full px-3.5 py-2 text-[13.5px] font-medium', (v.zone || '') === z.id ? 'bg-ink text-card' : 'bg-card ring-1 ring-inset ring-line')}>{z.label}</button>
+                ))}
+              </div>
+              {!v.zone && <div className="mt-1.5 px-1 text-[12px] text-muted">Авто: по месту установки, иначе станция с ядом — снаружи, остальные — внутри.</div>}
             </div>
           )}
         </div>
@@ -612,7 +629,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
 
   // ---------- v86: правка станций (номер, подпись, цвет, вид) ----------
   async function saveTrapEdit(id: string, v: StationEditValue) {
-    await api.patchTrap(id, { number: v.number, label: v.label, color: v.color, target: v.target, kind: v.kind, location: v.location });
+    await api.patchTrap(id, { number: v.number, label: v.label, color: v.color, target: v.target, kind: v.kind, location: v.location, zone: v.zone || '' });
     apply(await api.objectPlans(objectId), planId);
     setEdit(null); toast('Станция изменена'); onChanged?.();
   }
@@ -895,7 +912,7 @@ export function PlanSheet({ objectId, title, traps: visitTraps, focusId, placeId
       )}
 
       {editTrap && (
-        <StationEditSheet value={{ number: editTrap.number, label: editTrap.label || '', color: editTrap.color || '', target: editTrap.target, kind: editTrap.kind, location: editTrap.location }}
+        <StationEditSheet value={{ number: editTrap.number, label: editTrap.label || '', color: editTrap.color || '', target: editTrap.target, kind: editTrap.kind, location: editTrap.location, zone: editTrap.zone || '' }}
           onCancel={() => setEdit(null)} onSave={(v) => saveTrapEdit(editTrap.id, v)} />
       )}
       {editSpot?.t === 'spot' && edit && 'spot' in edit && (

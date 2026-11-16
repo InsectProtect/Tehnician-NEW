@@ -518,6 +518,8 @@ const MIGRATIONS = [
   "ALTER TABLE traps ADD COLUMN color TEXT NOT NULL DEFAULT ''",
   "CREATE TABLE IF NOT EXISTS qr_batches (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'new', codes TEXT NOT NULL, opts TEXT NOT NULL DEFAULT '{}', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)",
   "ALTER TABLE traps ADD COLUMN old_codes TEXT NOT NULL DEFAULT ''",
+  // v99: зона станции (exterior | interior | depozit, '' — авто) для анализа тенденций
+  "ALTER TABLE traps ADD COLUMN zone TEXT NOT NULL DEFAULT ''",
   // v92: время для надбавок, если акт начат намного позже заявки
   'ALTER TABLE visits ADD COLUMN time_ref TEXT',
   // v97: откуда подставлены препараты (object — прошлый выезд на объект, tech — свой набор, common — набор компании)

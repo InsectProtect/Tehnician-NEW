@@ -16,6 +16,7 @@ import {
   STATION_TARGETS, RODENTICIDE, CONDITIONS, BAIT_LEVELS, POINT_CATS, POINT_ZONES, DEFAULT_POINTS,
 } from './config.js';
 import { journalPdf } from './journal.js';
+import { trendData, trendPdf, monthsBetween, ZONES as TREND_ZONES } from './trend.js';
 import { initSales } from './sales.js';
 import { initCar } from './car.js';
 import { initCrm } from './crm.js';
@@ -233,7 +234,7 @@ async function loadObservations(visitId) {
  *  { all: true } — вместе с подготовленными заранее, но ещё не установленными (экран выезда, скан). */
 async function visitRows(visit, { all = false } = {}) {
   return db.query(
-    `SELECT t.id, t.code, t.number, t.kind, t.location, t.target, t.prepared, t.plan_id, t.plan_x, t.plan_y, t.label, t.color,
+    `SELECT t.id, t.code, t.number, t.kind, t.location, t.target, t.prepared, t.plan_id, t.plan_x, t.plan_y, t.label, t.color, t.zone,
             i.status, i.pest, i.count, i.bait_replaced, i.comment, i.created_at AS checked_at, i.condition, i.bait_eaten
        FROM traps t
        LEFT JOIN inspections i ON i.trap_id = t.id AND i.visit_id = $1
@@ -291,7 +292,7 @@ function shapeRow(r) {
   return {
     id: r.id, code: r.code, number: Number(r.number), kind: r.kind, location: r.location, target: r.target || '', prepared: Number(r.prepared) === 1,
     plan_id: r.plan_id || null, plan_x: r.plan_x == null ? null : Number(r.plan_x), plan_y: r.plan_y == null ? null : Number(r.plan_y),
-    label: r.label || '', color: r.color || '',
+    label: r.label || '', color: r.color || '', zone: r.zone || '',
     inspection: r.status
       ? {
         status: r.status, pest: r.pest, count: Number(r.count), bait_replaced: Boolean(Number(r.bait_replaced)), comment: r.comment, checked_at: r.checked_at,
@@ -4044,6 +4045,27 @@ route('POST', '/api/visits/:id/traps/:trapId/recode', async ({ params, body, use
   return { trap: shapeRow(row), old_code: tr.code };
 });
 
+// v99: анализ тенденций по станциям объекта за период (PDF по подписанной ссылке)
+const YM = /^\d{4}-(0[1-9]|1[0-2])$/;
+function trendPeriod(from, to) {
+  from = String(from || ''); to = String(to || '');
+  must(YM.test(from) && YM.test(to) && from <= to, 400, 'Укажите период: from/to в формате ГГГГ-ММ');
+  must(monthsBetween(from, to).length <= 24, 400, 'Период — не больше 24 месяцев');
+  return { from, to };
+}
+route('GET', '/api/objects/:id/trend', async ({ params, query, user }) => {
+  must(user.isAdmin, 403, 'Анализ тенденций доступен администратору');
+  const { from, to } = trendPeriod(query.get('from'), query.get('to'));
+  const D = await trendData(db, { objectId: params.id, from, to, cfg: await getSetting('trend_cfg') });
+  must(D, 404, 'Объект не найден');
+  const key = `trend:${params.id}:${from}:${to}`;
+  return {
+    url: `/r/trend/${params.id}.pdf?from=${from}&to=${to}&${signLink(key)}`,
+    stations: D.stations.length, visits: D.visits, zones_guessed: D.zonesGuessed,
+    year: D.year,
+  };
+});
+
 route('PATCH', '/api/traps/:id', async ({ params, body }) => {
   const [t] = await db.query('SELECT * FROM traps WHERE id = $1', [params.id]);
   must(t, 404, 'Ловушка не найдена');
@@ -4058,7 +4080,9 @@ route('PATCH', '/api/traps/:id', async ({ params, body }) => {
     must(!busy, 409, `Номер ${number} на этом объекте уже занят`);
   }
   const color = body.color !== undefined ? (/^#[0-9a-f]{6}$/i.test(String(body.color)) ? String(body.color) : '') : t.color || '';
-  await db.query('UPDATE traps SET number = $1, kind = $2, location = $3, active = $4, target = $5, label = $6, color = $7 WHERE id = $8', [
+  // v99: зона станции для анализа тенденций ('' — определить автоматически)
+  const zone = body.zone !== undefined ? (TREND_ZONES.includes(String(body.zone)) ? String(body.zone) : '') : t.zone || '';
+  await db.query('UPDATE traps SET number = $1, kind = $2, location = $3, active = $4, target = $5, label = $6, color = $7, zone = $9 WHERE id = $8', [
     number,
     kind,
     body.location !== undefined ? str(body.location, 200) : t.location,
@@ -4067,6 +4091,7 @@ route('PATCH', '/api/traps/:id', async ({ params, body }) => {
     body.label !== undefined ? str(body.label, 14) : t.label || '',
     color,
     t.id,
+    zone,
   ]);
   return { ok: true };
 });
@@ -7279,6 +7304,21 @@ async function handlePrintable(req, res, url) {
       'Content-Disposition': `inline; filename="act.pdf"; filename*=UTF-8''${encodeURIComponent(pdfName(v))}`,
     });
     res.end(pdf);
+    return true;
+  }
+  m = url.pathname.match(/^\/r\/trend\/([\w-]+)\.pdf$/);
+  if (m) {
+    const from = url.searchParams.get('from') || ''; const to = url.searchParams.get('to') || '';
+    if (!verifyLink(`trend:${m[1]}:${from}:${to}`, url.searchParams.get('exp'), url.searchParams.get('sig'))) return sendText(res, 403, 'Ссылка недействительна');
+    const D = await trendData(db, { objectId: m[1], from, to, cfg: await getSetting('trend_cfg') });
+    if (!D) return sendText(res, 404, 'Объект не найден');
+    const buf = trendPdf(D, { company: await companySettings(), reportNo: `AT-${from.replace('-', '')}-${to.replace('-', '')}` });
+    const name = `Analiza de tendinta ${D.object.company_name} ${from}_${to}.pdf`.replace(/[\\/:*?"<>|]/g, ' ');
+    res.writeHead(200, {
+      'Content-Type': 'application/pdf', 'Content-Length': buf.length, 'Cache-Control': 'no-store',
+      'Content-Disposition': `inline; filename="trend.pdf"; filename*=UTF-8''${encodeURIComponent(name)}`,
+    });
+    res.end(buf);
     return true;
   }
   m = url.pathname.match(/^\/r\/journal\/([\w-]+)\.pdf$/);

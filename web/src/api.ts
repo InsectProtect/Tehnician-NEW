@@ -192,11 +192,13 @@ export const api = {
   planDrafts: () => request<{ items: { id: string; plans: number; created_at: string; updated_at: string; created_by: string }[] }>('GET', '/api/plans/drafts'),
   attachPlan: (body: { draft: string; kind: 'company' | 'person'; company?: string; phone?: string; address: string }) =>
     request<{ object: { id: string; company_name: string; address: string } }>('POST', '/api/plans/attach', body),
+  /** v99: ссылка на PDF анализа тенденций по объекту за период ГГГГ-ММ…ГГГГ-ММ */
+  objectTrend: (objectId: string, from: string, to: string) => request<{ url: string; stations: number; visits: number; zones_guessed: boolean }>('GET', `/api/objects/${objectId}/trend?from=${from}&to=${to}`),
   objectPlans: (objectId: string) => request<PlansRes>('GET', `/api/objects/${objectId}/plans`),
   addPlan: (objectId: string, body: { title?: string; image?: string; orient?: 'land' | 'port' }) => request<PlansRes>('POST', `/api/objects/${objectId}/plans`, body),
   savePlan: (planId: string, body: { title?: string; drawing?: PlanShape[]; image?: string | null; mscale?: number }) => request<{ plan: ObjectPlan }>('PUT', `/api/plans/${planId}`, body),
   deletePlan: (planId: string) => request<PlansRes>('DELETE', `/api/plans/${planId}`),
-  patchTrap: (trapId: string, body: { number?: number; kind?: string; target?: string; location?: string; label?: string; color?: string }) => request<{ ok: true }>('PATCH', `/api/traps/${trapId}`, body),
+  patchTrap: (trapId: string, body: { number?: number; kind?: string; target?: string; location?: string; label?: string; color?: string; zone?: string }) => request<{ ok: true }>('PATCH', `/api/traps/${trapId}`, body),
   renumberPlan: (planId: string) => request<PlansRes>('POST', `/api/plans/${planId}/renumber`),
   placeTrap: (trapId: string, body: { plan_id: string | null; x?: number; y?: number; spot?: string }) => request<PlansRes>('PUT', `/api/traps/${trapId}/place`, body),
   labelsInfo: () => request<LabelsInfo>('GET', '/api/labels'),
