@@ -63,7 +63,7 @@ function PayoutCard({ d, title = 'К выплате за месяц' }: { d: Sal
     ['Оклад', c.salary],
     ['Премия', c.premium, c.below_cutoff ? `ниже порога ${d.cfg.cutoff}% плана — премии нет` : `${lei(c.revenue)} × ${dec(d.cfg.rate, 1)}% × K_KPI ${dec(c.kkpi)} × K ${dec(c.k)}${c.critical ? ` − ${d.cfg.crit.cut}% (критическое недовыполнение)` : ''}${c.guarantee?.topup ? ` · 🛡 гарантия ${lei(c.guarantee.amount)}: доплачено ${lei(c.guarantee.topup)}` : ''}`],
   ];
-  if (c.bonus) lines.push([`Бонус ≥${d.cfg.bonus.from}% плана`, c.bonus]);
+  if (c.bonus) lines.push([d.cfg.bonus.mode === 'pct' ? 'Бонус за KPI' : 'Бонус за 100% KPI', c.bonus, d.cfg.bonus.mode === 'pct' ? `${lei(d.cfg.bonus.amount)} × ${pctS(Math.min(100, c.pct))} выполнения` : undefined]);
   for (const s of c.supers) lines.push([`🏆 ${s.label}${s.count > 1 ? ` × ${s.count}` : ''}`, s.total, s.note]);
   if (d.cfg.gap_fine > 0 && c.auto.tasks_bad > 0) lines.push(['Штраф: незаполненные заявки', -(d.cfg.gap_fine * c.auto.tasks_bad), `${c.auto.tasks_bad} шт.`]);
   for (const p of c.penalties) lines.push([`Штраф: ${p.label}`, -p.total, `${p.count} шт. × ${lei(p.amount)}`]);
@@ -212,11 +212,13 @@ function SupersCard({ d }: { d: SalesFull }) {
     <Card>
       <Eyebrow>Супербонусы за крутые результаты</Eyebrow>
       <div className="flex flex-col gap-2">
-        <div className={cx('flex items-center gap-3 rounded-2xl px-3 py-2.5', d.calc.bonus ? 'bg-[#34C759]/12' : 'bg-fill')}>
-          <Trophy size={18} strokeWidth={1.75} className={d.calc.bonus ? green : 'text-muted'} />
-          <div className="min-w-0 flex-1"><div className="text-[14px] font-medium">План ≥{d.cfg.bonus.from}%</div><div className="text-[12px] text-muted">разовый бонус месяца</div></div>
-          <div className="text-[14px] font-semibold">+{lei(d.cfg.bonus.amount)}</div>
-        </div>
+        {d.cfg.bonus.on && (
+          <div className={cx('flex items-center gap-3 rounded-2xl px-3 py-2.5', d.calc.bonus ? 'bg-[#34C759]/12' : 'bg-fill')}>
+            <Trophy size={18} strokeWidth={1.75} className={d.calc.bonus ? green : 'text-muted'} />
+            <div className="min-w-0 flex-1"><div className="text-[14px] font-medium">KPI 100%</div><div className="text-[12px] text-muted">{d.cfg.bonus.mode === 'pct' ? 'доля суммы = % выполнения плана' : 'вся сумма при выполнении плана'}</div></div>
+            <div className="text-[14px] font-semibold">+{lei(d.calc.bonus || d.cfg.bonus.amount)}</div>
+          </div>
+        )}
         {d.cfg.supers.map((s) => {
           const g = got.get(s.id);
           return (
@@ -1038,10 +1040,26 @@ function ConfigEditor({ tg, d, list, onSaved }: { tg: string; d: SalesDetail; li
           <button onClick={() => upd({ ladder: [...c.ladder, [140, 1.7]] })} className="rounded-2xl bg-card p-2 text-[13px] ring-1 ring-inset ring-line">+ ступень</button>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3">
-          {numF('Разовый бонус от, % плана', c.bonus.from, (x) => upd({ bonus: { ...c.bonus, from: x } }))}
-          {numF('Сумма бонуса, MDL', c.bonus.amount, (x) => upd({ bonus: { ...c.bonus, amount: x } }))}
           {numF('Критическое недовыполнение: ниже, %', c.crit.below, (x) => upd({ crit: { ...c.crit, below: x } }))}
           {numF('…минус от премии, %', c.crit.cut, (x) => upd({ crit: { ...c.crit, cut: x } }))}
+        </div>
+      </Card>
+
+      <Card>
+        <Eyebrow>🏆 Бонус за 100% KPI</Eyebrow>
+        <div className="flex flex-col gap-3">
+          <Toggle label="Платить бонус за выполнение плана" checked={c.bonus.on} onChange={(v) => upd({ bonus: { ...c.bonus, on: v } })} />
+          {c.bonus.on && (
+            <>
+              {numF('Сумма бонуса, лей', c.bonus.amount, (x) => upd({ bonus: { ...c.bonus, amount: x } }))}
+              <Segmented options={[{ id: 'fixed', label: 'Вся сумма при 100%' }, { id: 'pct', label: '% от суммы' }]} value={c.bonus.mode} onChange={(v) => upd({ bonus: { ...c.bonus, mode: v as 'fixed' | 'pct' } })} />
+              <div className="text-[13px] leading-snug text-muted">
+                {c.bonus.mode === 'pct'
+                  ? `Платится доля суммы по выполнению плана: 85% → ${lei(Math.round(c.bonus.amount * 0.85))}, 100% и выше → ${lei(c.bonus.amount)}. Ниже порога ${c.cutoff}% — 0.`
+                  : `При выполнении плана на 100% и больше — +${lei(c.bonus.amount)} сверху премии. Ниже 100% — 0.`}
+              </div>
+            </>
+          )}
         </div>
       </Card>
 
