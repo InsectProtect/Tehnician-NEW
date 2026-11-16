@@ -491,6 +491,8 @@ export interface SalesStrikes { on: boolean; count: number; tier: number; pct: n
 export interface SalesCalc {
   /** v101: ориентир при 100% плана и всех KPI (K_KPI = 1) */
   target?: { salary: number; premium: number; bonus: number; k: number; total: number };
+  /** v102: гарантия месяца (null — выключена) */
+  guarantee?: { amount: number; season: boolean; topup: number; applied: boolean } | null;
   month: string; plan: number; revenue: number; pct: number; kkpi: number; k: number; below_cutoff: boolean; critical: boolean;
   premium: number; bonus: number; supers: SalesSuper[]; supers_total: number; fine: number; penalties: SalesPenaltyHit[]; strikes: SalesStrikes; salary: number; total: number; kpis: SalesKpi[];
   structure: { id: string; label: string; share: number; plan: number }[];
@@ -526,6 +528,8 @@ export interface SalesSettings {
   coach: { on: boolean; hour: number; weekdays: boolean };
   game: { calls_day: number; reached_day: number; deals_day: number };
   strikes: { on: boolean; pct: number[] };
+  /** v102: гарантия при 100% плана: холодный период / сезон (месяцы 1..12) */
+  guarantee: { on: boolean; cold: number; season: number; months: number[] };
 }
 export interface SalesListItem { tg_id: string; name: string; preset: string; plan: number; revenue: number; pct: number; kkpi: number; k: number; premium: number; bonus: number; supers: number; fine: number; total: number; gaps: number; calls: number; deals: number; weak: string; strikes: number; target: number }
 export interface SalesList {

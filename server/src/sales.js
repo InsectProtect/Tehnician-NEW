@@ -74,7 +74,17 @@ const DEFAULT_SETTINGS = {
   coach: { on: true, hour: 10, weekdays: true },
   game: { calls_day: 40, reached_day: 20, deals_day: 3 },
   strikes: { on: true, pct: [0, 25, 50, 75, 100] },
+  // v102: гарантированная премия при выполнении 100% плана — в холодный период и в сезон своя сумма (всем менеджерам)
+  guarantee: { on: false, cold: 6000, season: 8000, months: [5, 6, 7, 8, 9, 10] },
 };
+/** Гарантия на месяц ГГГГ-ММ: { amount, season } или null. */
+export function guaranteeFor(g, ym) {
+  if (!g?.on) return null;
+  const m = Number(String(ym).slice(5, 7));
+  const season = (g.months || []).includes(m);
+  const amount = Math.max(0, Number(season ? g.season : g.cold) || 0);
+  return amount > 0 ? { amount, season } : null;
+}
 
 /** Подписи ступеней лестницы предупреждений (пояснение к проценту списания с бонусной части KPI). */
 const STRIKE_LABELS = ['Предупреждение', 'Второе предупреждение', 'Третье предупреждение', 'Четвёртое предупреждение', 'Пятое предупреждение — лишение премии'];
@@ -112,6 +122,15 @@ export function initSales(ctx) {
 
   // ---------- настройки ----------
   async function store() { return (await getSetting('mgr_kpi')) || {}; }
+  function normGuarantee(g, cur) {
+    const x = g || {};
+    return {
+      on: x.on !== undefined ? Boolean(x.on) : cur.on,
+      cold: clamp(Math.round(num(x.cold, cur.cold)), 0, 1000000),
+      season: clamp(Math.round(num(x.season, cur.season)), 0, 1000000),
+      months: Array.isArray(x.months) ? [...new Set(x.months.map((m) => Math.round(num(m))).filter((m) => m >= 1 && m <= 12))].sort((a, b) => a - b) : cur.months,
+    };
+  }
   async function settings() {
     const s = await store();
     const st = s.strikes || {};
@@ -121,6 +140,7 @@ export function initSales(ctx) {
         on: st.on !== undefined ? Boolean(st.on) : DEFAULT_SETTINGS.strikes.on,
         pct: Array.isArray(st.pct) && st.pct.length === 5 ? st.pct.map((p) => clamp(Math.round(num(p)), 0, 100)) : DEFAULT_SETTINGS.strikes.pct,
       },
+      guarantee: normGuarantee(s.guarantee, DEFAULT_SETTINGS.guarantee),
     };
   }
   function normCfg(c = {}) {
@@ -251,6 +271,11 @@ export function initSales(ctx) {
     let premium = pct < cfg.cutoff ? 0 : revenue * (cfg.rate / 100) * kkpi * kLadder;
     const critical = pct < cfg.crit.below && premium > 0;
     if (critical) premium *= 1 - cfg.crit.cut / 100;
+    // v102: гарантия — при ≥100% плана премия не меньше суммы месяца (холодный период / сезон)
+    const gr = guaranteeFor(extra.guarantee, ym);
+    let topup = 0;
+    if (gr && pct >= 100 && premium < gr.amount) { topup = gr.amount - premium; premium = gr.amount; }
+    const guarantee = gr ? { ...gr, topup: Math.round(topup), applied: pct >= 100 } : null;
     const bonus = cfg.bonus.amount > 0 && pct >= cfg.bonus.from ? cfg.bonus.amount : 0;
     // супербонусы
     const S = cfg.supers; const sup = [];
@@ -285,12 +310,12 @@ export function initSales(ctx) {
     const structure = cfg.structure.map((s) => ({ ...s, plan: Math.round((plan * s.share) / 100) }));
     // v101: ориентир — сколько получит при 100% плана и всех KPI на цели (K_KPI = 1), без супербонусов и штрафов
     const k100 = cfg.ladder.reduce((acc, [p, k]) => (100 >= p ? k : acc), 0);
-    const tPremium = 100 < cfg.cutoff ? 0 : plan * (cfg.rate / 100) * 1 * k100;
+    const tPremium = Math.max(100 < cfg.cutoff ? 0 : plan * (cfg.rate / 100) * 1 * k100, gr?.amount || 0);
     const tBonus = cfg.bonus.amount > 0 && cfg.bonus.from <= 100 ? cfg.bonus.amount : 0;
     const target = { salary: cfg.salary, premium: Math.round(tPremium), bonus: tBonus, k: k100, total: Math.round(cfg.salary + tPremium + tBonus) };
     return {
       month: ym, plan, revenue: Math.round(revenue), pct: r2(pct), kkpi: r2(kkpi), k: kLadder, below_cutoff: pct < cfg.cutoff, critical,
-      target, kkpi_exact: kkpi, premium: Math.round(premium), bonus, supers: sup, supers_total: supers, fine: Math.round(fine), penalties, strikes, salary: cfg.salary, total: Math.round(total), kpis, structure,
+      target, guarantee, kkpi_exact: kkpi, premium: Math.round(premium), bonus, supers: sup, supers_total: supers, fine: Math.round(fine), penalties, strikes, salary: cfg.salary, total: Math.round(total), kpis, structure,
       auto: { revenue: Math.round(auto.revenue), revenue_b2c: Math.round(auto.revenue_b2c), revenue_b2b: Math.round(auto.revenue_b2b), done: auto.done, calls: auto.calls, reached: auto.reached, deals: auto.deals, subs: auto.subs, b2b_new: auto.b2b_new, tasks: auto.tasks, tasks_bad: auto.tasks_bad, pings: auto.pings },
     };
   }
@@ -301,7 +326,7 @@ export function initSales(ctx) {
     return steps.map((p) => {
       const revenue = (c.plan * p) / 100;
       const k = cfg.ladder.reduce((acc, [lp2, kk]) => (p >= lp2 ? kk : acc), 0);
-      const premium = p < cfg.cutoff ? 0 : revenue * (cfg.rate / 100) * (c.kkpi_exact ?? c.kkpi) * k;
+      const premium = Math.max(p < cfg.cutoff ? 0 : revenue * (cfg.rate / 100) * (c.kkpi_exact ?? c.kkpi) * k, p >= 100 ? c.guarantee?.amount || 0 : 0);
       const bonus = cfg.bonus.amount > 0 && p >= cfg.bonus.from ? cfg.bonus.amount : 0;
       const kpiPay = premium + bonus + c.supers_total;
       const strikeCut = Math.round((kpiPay * (c.strikes?.pct || 0)) / 100);
@@ -327,7 +352,7 @@ export function initSales(ctx) {
         record = best > 0 && cur > best;
       }
     }
-    const c = calc(cfg, ym, auto, man.data, { record, calls_day: s.game.calls_day, strikes: s.strikes });
+    const c = calc(cfg, ym, auto, man.data, { record, calls_day: s.game.calls_day, strikes: s.strikes, guarantee: s.guarantee });
     return { cfg, c, manual: man, auto };
   }
 
@@ -863,8 +888,9 @@ export function initSales(ctx) {
       on: st.on !== undefined ? Boolean(st.on) : cur.strikes.on,
       pct: Array.isArray(st.pct) && st.pct.length === 5 ? st.pct.map((p, i) => clamp(Math.round(num(p, cur.strikes.pct[i])), 0, 100)) : cur.strikes.pct,
     };
+    s.guarantee = normGuarantee(body.guarantee, cur.guarantee);
     await setSetting('mgr_kpi', s);
-    await audit(user, 'KPI менеджеров: общие настройки', '', `напоминания ${s.gaps.on ? `каждые ${s.gaps.every_min} мин` : 'выкл'} · коуч ${s.coach.on ? `${s.coach.hour}:00` : 'выкл'}`);
+    await audit(user, 'KPI менеджеров: общие настройки', '', `напоминания ${s.gaps.on ? `каждые ${s.gaps.every_min} мин` : 'выкл'} · коуч ${s.coach.on ? `${s.coach.hour}:00` : 'выкл'} · гарантия ${s.guarantee.on ? `${s.guarantee.cold}/${s.guarantee.season}` : 'выкл'}`);
     return { ok: true, settings: await settings() };
   });
 

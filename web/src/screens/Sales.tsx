@@ -61,7 +61,7 @@ function PayoutCard({ d, title = 'К выплате за месяц' }: { d: Sal
   const c = d.calc;
   const lines: [string, number, string?][] = [
     ['Оклад', c.salary],
-    ['Премия', c.premium, c.below_cutoff ? `ниже порога ${d.cfg.cutoff}% плана — премии нет` : `${lei(c.revenue)} × ${dec(d.cfg.rate, 1)}% × K_KPI ${dec(c.kkpi)} × K ${dec(c.k)}${c.critical ? ` − ${d.cfg.crit.cut}% (критическое недовыполнение)` : ''}`],
+    ['Премия', c.premium, c.below_cutoff ? `ниже порога ${d.cfg.cutoff}% плана — премии нет` : `${lei(c.revenue)} × ${dec(d.cfg.rate, 1)}% × K_KPI ${dec(c.kkpi)} × K ${dec(c.k)}${c.critical ? ` − ${d.cfg.crit.cut}% (критическое недовыполнение)` : ''}${c.guarantee?.topup ? ` · 🛡 гарантия ${lei(c.guarantee.amount)}: доплачено ${lei(c.guarantee.topup)}` : ''}`],
   ];
   if (c.bonus) lines.push([`Бонус ≥${d.cfg.bonus.from}% плана`, c.bonus]);
   for (const s of c.supers) lines.push([`🏆 ${s.label}${s.count > 1 ? ` × ${s.count}` : ''}`, s.total, s.note]);
@@ -80,7 +80,7 @@ function PayoutCard({ d, title = 'К выплате за месяц' }: { d: Sal
       <div className="mt-1 text-[13.5px] text-muted">
         бонусная часть <b className="text-ink dark:text-white">{lei(Math.max(0, c.premium + c.bonus + c.supers_total - c.fine - c.strikes.cut))}</b>
       </div>
-      {c.target && <TargetPay t={c.target} rate={d.cfg.rate} plan={c.plan} />}
+      {c.target && <TargetPay t={c.target} rate={d.cfg.rate} plan={c.plan} g={c.guarantee} />}
       <div className="mt-4 divide-y divide-dashed divide-line">
         {lines.map(([l, v, hint]) => (
           <div key={l} className="flex items-start justify-between gap-3 py-2.5">
@@ -97,7 +97,7 @@ function PayoutCard({ d, title = 'К выплате за месяц' }: { d: Sal
 }
 
 /** v101: сколько получит при 100% плана и всех KPI на цели. */
-function TargetPay({ t, rate, plan }: { t: NonNullable<SalesFull['calc']['target']>; rate: number; plan: number }) {
+function TargetPay({ t, rate, plan, g }: { t: NonNullable<SalesFull['calc']['target']>; rate: number; plan: number; g?: SalesFull['calc']['guarantee'] }) {
   return (
     <div data-panel className="mt-3 rounded-2xl bg-[#34C759]/12 px-4 py-3">
       <div className="flex items-baseline justify-between gap-3">
@@ -107,6 +107,11 @@ function TargetPay({ t, rate, plan }: { t: NonNullable<SalesFull['calc']['target
       <div className="mt-1 text-[12.5px] leading-snug text-muted">
         оклад {lei(t.salary)} + премия {lei(t.premium)}{t.bonus ? ` + бонус ${lei(t.bonus)}` : ''} · премия = план {lei(plan)} × {dec(rate, 1)}% × K_KPI 1{t.k !== 1 ? ` × K ${dec(t.k)}` : ''}. Супербонусы — сверху.
       </div>
+      {g && (
+        <div className="mt-1.5 text-[12.5px] font-semibold leading-snug">
+          🛡 Гарантировано при 100% плана: премия не меньше {lei(g.amount)} ({g.season ? 'сезон' : 'холодный период'})
+        </div>
+      )}
     </div>
   );
 }
@@ -718,6 +723,30 @@ function SalesSettingsCard({ list, onSaved }: { list: SalesList; onSaved: () => 
                 <div className="mt-0.5 text-[10px] text-muted">%</div>
               </div>
             ))}
+          </div>
+        </div>
+      </Collapse>
+      <Collapse id="sales-guarantee" title="🛡 Гарантия при выполнении 100% плана" hint={s.guarantee.on ? `${lei(s.guarantee.cold)} холодный период · ${lei(s.guarantee.season)} сезон` : 'выключена'}>
+        <div className="flex flex-col gap-3">
+          <Toggle label="Гарантировать премию при 100% плана" checked={s.guarantee.on} onChange={(v) => setS({ ...s, guarantee: { ...s.guarantee, on: v } })} />
+          <div className="text-[13px] text-muted">Если менеджер выполнил план на 100% и больше, премия будет не меньше этой суммы. Если по формуле выходит больше — платится больше. Для всех менеджеров.</div>
+          <div className="grid grid-cols-2 gap-2.5">
+            <Field label="❄️ Холодный период, лей">{numIn(s.guarantee.cold, (n) => setS({ ...s, guarantee: { ...s.guarantee, cold: n } }), 'w-full')}</Field>
+            <Field label="☀️ Сезон, лей">{numIn(s.guarantee.season, (n) => setS({ ...s, guarantee: { ...s.guarantee, season: n } }), 'w-full')}</Field>
+          </div>
+          <div>
+            <div className="mb-1.5 text-[13px] text-muted">Месяцы сезона (остальные — холодный период)</div>
+            <div className="grid grid-cols-6 gap-1.5">
+              {MONTHS.map((_, i) => {
+                const m = i + 1; const on = s.guarantee.months.includes(m);
+                return (
+                  <button key={m} data-chip onClick={() => { haptic.tap(); setS({ ...s, guarantee: { ...s.guarantee, months: on ? s.guarantee.months.filter((x) => x !== m) : [...s.guarantee.months, m].sort((a, b) => a - b) } }); }}
+                    className={cx('rounded-xl py-2 text-[12.5px] font-semibold', on ? 'bg-[#FF9F0A] text-black' : 'bg-fill text-muted')}>
+                    {MONTHS_S[i]}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </Collapse>
