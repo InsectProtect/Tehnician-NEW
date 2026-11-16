@@ -489,6 +489,8 @@ export interface SalesSuper { id: string; label: string; count: number; amount: 
 export interface SalesPenaltyHit { id: string; label: string; count: number; amount: number; total: number }
 export interface SalesStrikes { on: boolean; count: number; tier: number; pct: number; cut: number; label: string }
 export interface SalesCalc {
+  /** v101: ориентир при 100% плана и всех KPI (K_KPI = 1) */
+  target?: { salary: number; premium: number; bonus: number; k: number; total: number };
   month: string; plan: number; revenue: number; pct: number; kkpi: number; k: number; below_cutoff: boolean; critical: boolean;
   premium: number; bonus: number; supers: SalesSuper[]; supers_total: number; fine: number; penalties: SalesPenaltyHit[]; strikes: SalesStrikes; salary: number; total: number; kpis: SalesKpi[];
   structure: { id: string; label: string; share: number; plan: number }[];
@@ -525,7 +527,7 @@ export interface SalesSettings {
   game: { calls_day: number; reached_day: number; deals_day: number };
   strikes: { on: boolean; pct: number[] };
 }
-export interface SalesListItem { tg_id: string; name: string; preset: string; plan: number; revenue: number; pct: number; kkpi: number; k: number; premium: number; bonus: number; supers: number; fine: number; total: number; gaps: number; calls: number; deals: number; weak: string; strikes: number }
+export interface SalesListItem { tg_id: string; name: string; preset: string; plan: number; revenue: number; pct: number; kkpi: number; k: number; premium: number; bonus: number; supers: number; fine: number; total: number; gaps: number; calls: number; deals: number; weak: string; strikes: number; target: number }
 export interface SalesList {
   month: string; items: SalesListItem[]; settings: SalesSettings;
   catalog: Record<string, { label: string; unit: string; dir: 'up' | 'down'; target: number; src: 'auto' | 'manual' }>;

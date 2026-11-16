@@ -283,9 +283,14 @@ export function initSales(ctx) {
     const strikes = { on: strikesCfg.on, count: strikeCount, tier: strikeTier, pct: strikePct, cut: strikeCut, label: strikeTier > 0 ? STRIKE_LABELS[strikeTier - 1] : '' };
     const total = Math.max(0, cfg.salary + kpiPay - fine - strikeCut);
     const structure = cfg.structure.map((s) => ({ ...s, plan: Math.round((plan * s.share) / 100) }));
+    // v101: ориентир — сколько получит при 100% плана и всех KPI на цели (K_KPI = 1), без супербонусов и штрафов
+    const k100 = cfg.ladder.reduce((acc, [p, k]) => (100 >= p ? k : acc), 0);
+    const tPremium = 100 < cfg.cutoff ? 0 : plan * (cfg.rate / 100) * 1 * k100;
+    const tBonus = cfg.bonus.amount > 0 && cfg.bonus.from <= 100 ? cfg.bonus.amount : 0;
+    const target = { salary: cfg.salary, premium: Math.round(tPremium), bonus: tBonus, k: k100, total: Math.round(cfg.salary + tPremium + tBonus) };
     return {
       month: ym, plan, revenue: Math.round(revenue), pct: r2(pct), kkpi: r2(kkpi), k: kLadder, below_cutoff: pct < cfg.cutoff, critical,
-      kkpi_exact: kkpi, premium: Math.round(premium), bonus, supers: sup, supers_total: supers, fine: Math.round(fine), penalties, strikes, salary: cfg.salary, total: Math.round(total), kpis, structure,
+      target, kkpi_exact: kkpi, premium: Math.round(premium), bonus, supers: sup, supers_total: supers, fine: Math.round(fine), penalties, strikes, salary: cfg.salary, total: Math.round(total), kpis, structure,
       auto: { revenue: Math.round(auto.revenue), revenue_b2c: Math.round(auto.revenue_b2c), revenue_b2b: Math.round(auto.revenue_b2b), done: auto.done, calls: auto.calls, reached: auto.reached, deals: auto.deals, subs: auto.subs, b2b_new: auto.b2b_new, tasks: auto.tasks, tasks_bad: auto.tasks_bad, pings: auto.pings },
     };
   }
@@ -746,7 +751,7 @@ export function initSales(ctx) {
       const [gp] = await db.query('SELECT COUNT(*) AS n FROM task_gaps WHERE author_id = $1 AND fixed_at IS NULL', [m.tg_id]);
       const cfg = await cfgFor(m.tg_id);
       items.push({ tg_id: m.tg_id, name: m.name, preset: cfg.preset, plan: c.plan, revenue: c.revenue, pct: c.pct, kkpi: c.kkpi, k: c.k, premium: c.premium, bonus: c.bonus, supers: c.supers_total, fine: c.fine, total: c.total, gaps: Number(gp?.n) || 0,
-        calls: c.auto.calls, deals: c.auto.deals, weak: [...c.kpis].sort((a, b) => b.lost - a.lost)[0]?.label || '', strikes: c.strikes.count });
+        calls: c.auto.calls, deals: c.auto.deals, weak: [...c.kpis].sort((a, b) => b.lost - a.lost)[0]?.label || '', strikes: c.strikes.count, target: c.target?.total ?? 0 });
     }
     return { month: ym, items, settings: await settings(), catalog: KPI_CATALOG, presets: Object.fromEntries(Object.entries(PRESETS).map(([k, v]) => [k, v.label])), supers: SUPERS, penalties: PENALTIES, gap_fields: GAP_FIELDS };
   });

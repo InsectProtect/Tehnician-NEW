@@ -80,6 +80,7 @@ function PayoutCard({ d, title = 'К выплате за месяц' }: { d: Sal
       <div className="mt-1 text-[13.5px] text-muted">
         бонусная часть <b className="text-ink dark:text-white">{lei(Math.max(0, c.premium + c.bonus + c.supers_total - c.fine - c.strikes.cut))}</b>
       </div>
+      {c.target && <TargetPay t={c.target} rate={d.cfg.rate} plan={c.plan} />}
       <div className="mt-4 divide-y divide-dashed divide-line">
         {lines.map(([l, v, hint]) => (
           <div key={l} className="flex items-start justify-between gap-3 py-2.5">
@@ -92,6 +93,21 @@ function PayoutCard({ d, title = 'К выплате за месяц' }: { d: Sal
         ))}
       </div>
     </Card>
+  );
+}
+
+/** v101: сколько получит при 100% плана и всех KPI на цели. */
+function TargetPay({ t, rate, plan }: { t: NonNullable<SalesFull['calc']['target']>; rate: number; plan: number }) {
+  return (
+    <div data-panel className="mt-3 rounded-2xl bg-[#34C759]/12 px-4 py-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[14px] font-semibold">🎯 При 100% плана и KPI</span>
+        <span className="font-dot whitespace-nowrap text-[22px] leading-none text-[#248A3D] dark:text-[#30D158]">{lei(t.total)}</span>
+      </div>
+      <div className="mt-1 text-[12.5px] leading-snug text-muted">
+        оклад {lei(t.salary)} + премия {lei(t.premium)}{t.bonus ? ` + бонус ${lei(t.bonus)}` : ''} · премия = план {lei(plan)} × {dec(rate, 1)}% × K_KPI 1{t.k !== 1 ? ` × K ${dec(t.k)}` : ''}. Супербонусы — сверху.
+      </div>
+    </div>
   );
 }
 
@@ -561,6 +577,7 @@ export function MgrHero({ onOpen }: { onOpen: (focus?: string) => void }) {
           <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">Получу за {MONTHS[Number(d.month.slice(5)) - 1]}</div>
           <div className="font-dot mt-1 whitespace-nowrap text-[30px] leading-none">{lei(c.total)}</div>
           <div className="mt-1 text-[13px] text-muted">бонус {lei(Math.max(0, c.premium + c.bonus + c.supers_total - c.fine - c.strikes.cut))} · план <b className={pctTone(c.pct)}>{pctS(c.pct)}</b></div>
+          {c.target && <div className="mt-1 text-[13px] text-muted">🎯 при 100% плана и KPI — <b className="text-[#34C759]">{lei(c.target.total)}</b></div>}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           {d.gaps.length > 0 && <span className="whitespace-nowrap rounded-full bg-[#FF9F0A]/15 px-2.5 py-1 text-[12.5px] font-bold text-[#C93400] dark:text-[#FF9F0A]">🚨 {d.gaps.length}</span>}
@@ -630,6 +647,7 @@ function AdminSales() {
                   <div><div className="text-muted">K_KPI · K</div><b>{dec(m.kkpi)} · {dec(m.k)}</b></div>
                   <div><div className="text-muted">Итого</div><b>{lei(m.total)}</b></div>
                 </div>
+                {m.target > 0 && <div className="mt-2 text-[12.5px] text-muted">🎯 при 100% плана и KPI — <b className="text-[#34C759]">{lei(m.target)}</b></div>}
                 <div className="mt-2 text-[12.5px] text-muted">
                   звонков {m.calls} · сделок {m.deals}{m.supers ? ` · супербонусы ${lei(m.supers)}` : ''}{m.gaps ? <span className={orange}> · ⚠ незаполн. {m.gaps}</span> : ''}{m.strikes ? <span className={red}> · ⚠️ предупреждений {m.strikes}/5</span> : ''}{m.weak ? ` · слабое место: ${m.weak}` : ''}
                 </div>
