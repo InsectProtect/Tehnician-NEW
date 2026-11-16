@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, CheckCircle2, CloudOff, CloudUpload, MessageSquareWarning, Navigation, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Map as MapIcon, Pencil, Printer, RefreshCw, ScanLine, Send, Share2, Tag, Target, Trash2 } from 'lucide-react';
+import { Camera, CheckCircle2, CloudOff, CloudUpload, MessageSquareWarning, Navigation, Phone, ChevronDown, FileText, Keyboard, Lightbulb, MapPin, Map as MapIcon, Pencil, Printer, RefreshCw, ScanLine, Send, Share2, Tag, Target, Trash2, TrendingUp } from 'lucide-react';
 import { api } from '../api';
 import { fmtDate, plural, useConfig } from '../config';
 import { callPhone, canScanQr, getLocation, haptic, openLink, prettyPhone, scanQr, useBackButton } from '../telegram';
@@ -22,6 +22,7 @@ import { takePendingScan } from '../pendingScan';
 import { PlanSheet, StationEditSheet, deviceStyle } from './Plan';
 import { ActChecklist, ActStepBar, ActStepNav, type ActStep } from '../components/ActSteps';
 import { RouteSheet } from './Route';
+import { TrendSheet } from '../components/TrendSheet';
 import { dropOutboxItem, flushOutbox, isNetError, startOutbox, useOutbox, withPending } from '../offline';
 
 type SheetState =
@@ -53,6 +54,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
   const [remarkOpen, setRemarkOpen] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [trendOpen, setTrendOpen] = useState(false);
   const [pointsOpen, setPointsOpen] = useState(false);
   const [geoBusy, setGeoBusy] = useState(false);
   // «Я на объекте» подтверждён при первом скане станции — запоминаем на выезд, чтобы не спрашивать каждый раз
@@ -680,6 +682,9 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
           {visit.journal_url && (
             <Button variant="secondary" onClick={() => openLink(visit.journal_url!)} icon={<Target size={19} strokeWidth={1.75} />}>Журнал мониторинга (PDF)</Button>
           )}
+          {visit.journal_url && visit.object_id && (
+            <Button variant="secondary" onClick={() => { haptic.tap(); setTrendOpen(true); }} icon={<TrendingUp size={19} strokeWidth={1.75} />}>Анализ тенденций (PDF)</Button>
+          )}
           {visit.office_sent_at ? (
             <div className="flex items-center justify-between gap-3 rounded-2xl bg-[#34C759]/12 px-4 py-3 text-[15px]">
               <span className="flex items-center gap-2">
@@ -1193,6 +1198,7 @@ export function VisitScreen({ id, onBack }: { id: string; onBack: () => void }) 
       {phoneOpen && data.task && <PhoneSheet task={data.task} onClose={() => setPhoneOpen(false)} />}
       {remarkOpen && <RemarkSheet visitId={visit.id} techName={visit.tech_name} onClose={() => setRemarkOpen(false)} />}
       {shareOpen && <ShareSheet visitId={visit.id} onClose={() => setShareOpen(false)} />}
+      {trendOpen && visit.object_id && <TrendSheet objectId={visit.object_id} onClose={() => setTrendOpen(false)} />}
       {sheet?.type === 'message' && <MessageSheet title={sheet.title} text={sheet.text} onClose={() => setSheet(null)} />}
       {reward && <RewardSheet reward={reward} onClose={() => setReward(null)} />}
     </Screen>
@@ -1444,10 +1450,10 @@ function TrapQrSheet({ visitId, trap, onClose, onScan, onRecoded, onEdited }: {
         <Button variant="plain" onClick={() => setEditOpen(true)} icon={<Tag size={18} strokeWidth={1.75} />}>Номер, подпись и цвет станции</Button>
       </div>
       {editOpen && (
-        <StationEditSheet value={{ number: trap.number, label: trap.label || '', color: trap.color || '', target: trap.target || '', kind: trap.kind, location: trap.location }}
+        <StationEditSheet value={{ number: trap.number, label: trap.label || '', color: trap.color || '', target: trap.target || '', kind: trap.kind, location: trap.location, zone: trap.zone || '' }}
           onCancel={() => setEditOpen(false)}
           onSave={async (v) => {
-            await api.patchTrap(trap.id, { number: v.number, label: v.label, color: v.color, target: v.target, kind: v.kind, location: v.location });
+            await api.patchTrap(trap.id, { number: v.number, label: v.label, color: v.color, target: v.target, kind: v.kind, location: v.location, zone: v.zone || '' });
             toast('Станция изменена');
             setEditOpen(false);
             onEdited();

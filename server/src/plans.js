@@ -121,13 +121,13 @@ export function initPlans(ctx) {
     let plans = await db.query('SELECT * FROM object_plans WHERE object_id = $1 ORDER BY sort, created_at', [objectId]);
     if (!plans.length) { await adoptPlans(objectId); plans = await db.query('SELECT * FROM object_plans WHERE object_id = $1 ORDER BY sort, created_at', [objectId]); }
     const traps = await db.query(
-      'SELECT id, code, number, kind, target, location, prepared, plan_id, plan_x, plan_y, label, color FROM traps WHERE object_id = $1 AND active = 1 ORDER BY number, created_at', [objectId],
+      'SELECT id, code, number, kind, target, location, prepared, plan_id, plan_x, plan_y, label, color, zone FROM traps WHERE object_id = $1 AND active = 1 ORDER BY number, created_at', [objectId],
     );
     return {
       plans: plans.map(shape),
       traps: traps.map((t) => ({
         id: t.id, code: t.code, number: Number(t.number), kind: t.kind, target: t.target || '', location: t.location || '', prepared: Number(t.prepared) === 1,
-        label: t.label || '', color: t.color || '',
+        label: t.label || '', color: t.color || '', zone: t.zone || '',
         plan_id: t.plan_id || null, plan_x: t.plan_x == null ? null : Number(t.plan_x), plan_y: t.plan_y == null ? null : Number(t.plan_y),
       })),
     };
