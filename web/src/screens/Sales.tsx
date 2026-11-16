@@ -61,10 +61,11 @@ function PayoutCard({ d, title = 'К выплате за месяц' }: { d: Sal
   const c = d.calc;
   const lines: [string, number, string?][] = [
     ['Оклад', c.salary],
-    ['Премия', c.premium, c.below_cutoff ? `ниже порога ${d.cfg.cutoff}% плана — премии нет` : `${lei(c.revenue)} × ${dec(d.cfg.rate, 1)}% × K_KPI ${dec(c.kkpi)} × K ${dec(c.k)}${c.critical ? ` − ${d.cfg.crit.cut}% (критическое недовыполнение)` : ''}${c.guarantee?.topup ? ` · 🛡 гарантия ${lei(c.guarantee.amount)}: доплачено ${lei(c.guarantee.topup)}` : ''}`],
+    ...(d.cfg.scheme === 'fixed' ? [] : [['Премия', c.premium, c.below_cutoff ? `ниже порога ${d.cfg.cutoff}% плана — премии нет` : `${lei(c.revenue)} × ${dec(d.cfg.rate, 1)}% × K_KPI ${dec(c.kkpi)} × K ${dec(c.k)}${c.critical ? ` − ${d.cfg.crit.cut}% (критическое недовыполнение)` : ''}${c.guarantee?.topup ? ` · 🛡 гарантия ${lei(c.guarantee.amount)}: доплачено ${lei(c.guarantee.topup)}` : ''}`]] as [string, number, string?][]),
   ];
   const kb = c.bonus - (c.over || 0);
-  if (kb) lines.push([d.cfg.bonus.mode === 'pct' ? 'Бонус за KPI' : 'Бонус за 100% KPI', kb, d.cfg.bonus.mode === 'pct' ? `${lei(d.cfg.bonus.amount)} × ${pctS(Math.min(100, c.pct))} выполнения` : undefined]);
+  const fixedScheme = d.cfg.scheme === 'fixed';
+  if (kb) lines.push([fixedScheme ? 'KPI (фикс)' : d.cfg.bonus.mode === 'pct' ? 'Бонус за KPI' : 'Бонус за 100% KPI', kb, fixedScheme ? `максимум ${lei(d.cfg.bonus.amount)} при 100% плана${d.cfg.bonus.min ? ` · рост от ${lei(d.cfg.bonus.min)}` : ''}` : d.cfg.bonus.mode === 'pct' ? `${lei(d.cfg.bonus.amount)} × ${pctS(Math.min(100, c.pct))} выполнения` : undefined]);
   if (c.over && d.cfg.over) lines.push(['🚀 За перевыполнение', c.over, `${pctS(c.pct)} плана · максимум ${lei(d.cfg.over.amount)} при ${d.cfg.over.to}%`]);
   for (const s of c.supers) lines.push([`🏆 ${s.label}${s.count > 1 ? ` × ${s.count}` : ''}`, s.total, s.note]);
   if (d.cfg.gap_fine > 0 && c.auto.tasks_bad > 0) lines.push(['Штраф: незаполненные заявки', -(d.cfg.gap_fine * c.auto.tasks_bad), `${c.auto.tasks_bad} шт.`]);
@@ -82,7 +83,7 @@ function PayoutCard({ d, title = 'К выплате за месяц' }: { d: Sal
       <div className="mt-1 text-[13.5px] text-muted">
         бонусная часть <b className="text-ink dark:text-white">{lei(Math.max(0, c.premium + c.bonus + c.supers_total - c.fine - c.strikes.cut))}</b>
       </div>
-      {c.target && <TargetPay t={c.target} rate={d.cfg.rate} plan={c.plan} g={c.guarantee} />}
+      {c.target && <TargetPay t={c.target} rate={d.cfg.rate} plan={c.plan} g={c.guarantee} fixed={d.cfg.scheme === 'fixed'} />}
       <div className="mt-4 divide-y divide-dashed divide-line">
         {lines.map(([l, v, hint]) => (
           <div key={l} className="flex items-start justify-between gap-3 py-2.5">
@@ -99,7 +100,7 @@ function PayoutCard({ d, title = 'К выплате за месяц' }: { d: Sal
 }
 
 /** v101: сколько получит при 100% плана и всех KPI на цели. */
-function TargetPay({ t, rate, plan, g }: { t: NonNullable<SalesFull['calc']['target']>; rate: number; plan: number; g?: SalesFull['calc']['guarantee'] }) {
+function TargetPay({ t, rate, plan, g, fixed }: { t: NonNullable<SalesFull['calc']['target']>; rate: number; plan: number; g?: SalesFull['calc']['guarantee']; fixed?: boolean }) {
   return (
     <div data-panel className="mt-3 rounded-2xl bg-[#34C759]/12 px-4 py-3">
       <div className="flex items-baseline justify-between gap-3">
@@ -107,7 +108,8 @@ function TargetPay({ t, rate, plan, g }: { t: NonNullable<SalesFull['calc']['tar
         <span className="font-dot whitespace-nowrap text-[22px] leading-none text-[#248A3D] dark:text-[#30D158]">{lei(t.total)}</span>
       </div>
       <div className="mt-1 text-[12.5px] leading-snug text-muted">
-        оклад {lei(t.salary)} + премия {lei(t.premium)}{t.bonus ? ` + бонус ${lei(t.bonus)}` : ''} · премия = план {lei(plan)} × {dec(rate, 1)}% × K_KPI 1{t.k !== 1 ? ` × K ${dec(t.k)}` : ''}. Супербонусы — сверху.
+        {fixed ? <>оклад {lei(t.salary)} + KPI {lei(t.bonus)} (фикс при плане {lei(plan)}). Перевыполнение и супербонусы — сверху.</>
+          : <>оклад {lei(t.salary)} + премия {lei(t.premium)}{t.bonus ? ` + бонус ${lei(t.bonus)}` : ''} · премия = план {lei(plan)} × {dec(rate, 1)}% × K_KPI 1{t.k !== 1 ? ` × K ${dec(t.k)}` : ''}. Супербонусы — сверху.</>}
       </div>
       {g && (
         <div className="mt-1.5 text-[12.5px] font-semibold leading-snug">
@@ -926,6 +928,27 @@ function FactsForm({ d, month, onSaved }: { d: SalesDetail; month: string; onSav
   );
 }
 
+/** v106: таблица «выручка → сколько получит» для системы «Фикс за KPI». */
+function FixedPreview({ plan, salary, amount, min, over }: { plan: number; salary: number; amount: number; min: number; over?: { on: boolean; amount: number; to: number } }) {
+  if (!(plan > 0)) return <div className="text-[13px] text-muted">Задайте план — тогда покажу, сколько выйдет.</div>;
+  const m = min > 0 && min < plan ? min : 0;
+  const kpi = (rev: number) => Math.round(amount * Math.max(0, Math.min(1, (rev - m) / (plan - m))));
+  const ov = (rev: number) => (over?.on && rev > plan ? Math.round(over.amount * Math.min(1, ((rev / plan) * 100 - 100) / Math.max(1, over.to - 100))) : 0);
+  const revs = [...new Set([m || Math.round(plan * 0.5), Math.round((m + plan) / 2), plan, Math.round(plan * 1.1), ...(over?.on ? [Math.round((plan * over.to) / 100)] : [])])];
+  return (
+    <div className="overflow-hidden rounded-2xl bg-fill">
+      <div className="grid grid-cols-[1.2fr_1fr_1fr] gap-2 px-3 py-2 font-mono text-[10.5px] uppercase tracking-[0.08em] text-muted"><span>Выручка</span><span className="text-right">KPI</span><span className="text-right">Итого с окладом</span></div>
+      {revs.map((r) => (
+        <div key={r} className="grid grid-cols-[1.2fr_1fr_1fr] gap-2 border-t border-line px-3 py-2 text-[13.5px]">
+          <span>{lei(r)} <span className="text-muted">· {Math.round((r / plan) * 100)}%</span></span>
+          <span className="text-right font-semibold">{lei(kpi(r))}{ov(r) ? <span className="text-[#34C759]"> +{lei(ov(r))}</span> : ''}</span>
+          <span className="text-right">{lei(salary + kpi(r) + ov(r))}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ConfigEditor({ tg, d, list, onSaved }: { tg: string; d: SalesDetail; list: SalesList; onSaved: () => void }) {
   const toast = useToast();
   const [c, setC] = useState<SalesCfg>(d.raw_cfg);
@@ -959,6 +982,23 @@ function ConfigEditor({ tg, d, list, onSaved }: { tg: string; d: SalesDetail; li
           ))}
         </div>
         <div className="mt-2 text-[12.5px] text-muted">Схема сразу применяется, потом её можно донастроить ниже. «Стандарт» — ровно ваша таблица.</div>
+      </Card>
+
+      <Card>
+        <Eyebrow>Система оплаты</Eyebrow>
+        <Segmented options={[{ id: 'percent', label: '% от выручки (как было)' }, { id: 'fixed', label: 'Фикс за KPI (новая)' }]} value={c.scheme || 'percent'} onChange={(v) => upd({ scheme: v as 'percent' | 'fixed' })} />
+        {(c.scheme || 'percent') === 'fixed' ? (
+          <div className="mt-3 flex flex-col gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              {numF('KPI максимум, лей', c.bonus.amount, (x) => upd({ bonus: { ...c.bonus, amount: x } }))}
+              {numF('Рост начинается от, лей выручки', c.bonus.min || 0, (x) => upd({ bonus: { ...c.bonus, min: x } }))}
+            </div>
+            <FixedPreview plan={d.calc.plan} salary={c.salary} amount={c.bonus.amount} min={c.bonus.min || 0} over={c.over} />
+            <div className="text-[12.5px] leading-snug text-muted">Ставка %, лестница K и «Бонус за 100% KPI» в этой системе не используются. Бонус за перевыполнение и супербонусы — работают.</div>
+          </div>
+        ) : (
+          <div className="mt-2 text-[12.5px] text-muted">Премия = выручка × ставка × K_KPI × K. Переключитесь на «Фикс за KPI», чтобы платить твёрдую сумму.</div>
+        )}
       </Card>
 
       <Card>
@@ -1047,7 +1087,7 @@ function ConfigEditor({ tg, d, list, onSaved }: { tg: string; d: SalesDetail; li
         </div>
       </Card>
 
-      <Card>
+      {(c.scheme || 'percent') !== 'fixed' && <Card>
         <Eyebrow>🏆 Бонус за 100% KPI</Eyebrow>
         <div className="flex flex-col gap-3">
           <Toggle label="Платить бонус за выполнение плана" checked={c.bonus.on} onChange={(v) => upd({ bonus: { ...c.bonus, on: v } })} />
@@ -1063,7 +1103,7 @@ function ConfigEditor({ tg, d, list, onSaved }: { tg: string; d: SalesDetail; li
             </>
           )}
         </div>
-      </Card>
+      </Card>}
 
       <Card>
         <Eyebrow>🚀 Бонус за перевыполнение</Eyebrow>

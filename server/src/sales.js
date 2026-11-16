@@ -54,7 +54,9 @@ const DEFAULT_CFG = {
   kpis: SHEET_KPIS,
   ladder: [[0, 0], [60, 0.5], [80, 0.75], [90, 0.9], [100, 1], [110, 1.2], [120, 1.3], [130, 1.5]],
   // v103: бонус за выполнение 100% плана (KPI): fixed — вся сумма при ≥100%, pct — доля суммы = % выполнения (от порога, до 100%)
-  bonus: { on: false, amount: 5000, mode: 'fixed' },
+  bonus: { on: false, amount: 5000, mode: 'fixed', min: 0 },
+  // v106: система оплаты — percent: премия % от выручки (как было) | fixed: фикс за KPI (amount при 100% плана, рост от выручки bonus.min)
+  scheme: 'percent',
   // v105: бонус за перевыполнение — растёт от 100% до `to` % плана (110% из 130% → треть суммы), выше `to` — вся сумма
   over: { on: false, amount: 3000, to: 130 },
   crit: { below: 60, cut: 40 },
@@ -86,8 +88,16 @@ export function overBonus(cfg, pct) {
   if (!O.on || !(O.amount > 0) || pct <= 100) return 0;
   return Math.round(O.amount * Math.min(1, (pct - 100) / Math.max(1, (O.to || 130) - 100)));
 }
-export function kpiBonus(cfg, pct) {
+export function kpiBonus(cfg, pct, revenue = null, plan = null) {
   const B = cfg.bonus || {};
+  // v106: новая система «фикс за KPI»: 0 до выручки min, дальше растёт до amount при 100% плана
+  if (cfg.scheme === 'fixed') {
+    if (!(B.amount > 0)) return 0;
+    const rev = revenue ?? (plan || 0) * pct / 100;
+    const min = B.min > 0 && plan > B.min ? B.min : 0;
+    const share = plan > 0 ? (rev - min) / (plan - min) : pct / 100;
+    return Math.round(B.amount * Math.max(0, Math.min(1, share)));
+  }
   if (!B.on || !(B.amount > 0)) return 0;
   if (B.mode === 'pct') return Math.round((B.amount * Math.max(0, Math.min(pct, 100))) / 100);
   return pct >= 100 ? B.amount : 0;
@@ -174,7 +184,8 @@ export function initSales(ctx) {
     out.ladder = (Array.isArray(c.ladder) ? c.ladder : d.ladder).map(([p, k]) => [clamp(num(p), 0, 1000), clamp(num(k), 0, 10)]).sort((a, b) => a[0] - b[0]).slice(0, 15);
     // старый «бонус от 130%» не переносится: без явного on бонус выключен
     out.over = { on: Boolean(c.over?.on), amount: clamp(Math.round(num(c.over?.amount, d.over.amount)), 0, 1000000), to: clamp(Math.round(num(c.over?.to, d.over.to)), 101, 1000) };
-    out.bonus = { on: c.bonus?.on !== undefined ? Boolean(c.bonus.on) : d.bonus.on, amount: clamp(Math.round(num(c.bonus?.amount, d.bonus.amount)), 0, 1000000), mode: c.bonus?.mode === 'pct' ? 'pct' : 'fixed' };
+    out.bonus = { on: c.bonus?.on !== undefined ? Boolean(c.bonus.on) : d.bonus.on, amount: clamp(Math.round(num(c.bonus?.amount, d.bonus.amount)), 0, 1000000), mode: c.bonus?.mode === 'pct' ? 'pct' : 'fixed', min: clamp(Math.round(num(c.bonus?.min, 0)), 0, 100000000) };
+    out.scheme = c.scheme === 'fixed' ? 'fixed' : 'percent';
     out.crit = { below: num(c.crit?.below, d.crit.below), cut: clamp(num(c.crit?.cut, d.crit.cut), 0, 100) };
     out.structure = (Array.isArray(c.structure) ? c.structure : d.structure).map((s) => ({ id: String(s.id || '').slice(0, 30), label: String(s.label || '').slice(0, 60), share: clamp(num(s.share), 0, 100) })).slice(0, 8);
     out.supers = Object.fromEntries(Object.entries(SUPERS).map(([id, s]) => {
@@ -285,16 +296,16 @@ export function initSales(ctx) {
     const kkpi = kpis.reduce((s, k) => s + k.raw, 0);
     for (const k of kpis) delete k.raw;
     const kLadder = cfg.ladder.reduce((acc, [p, k]) => (pct >= p ? k : acc), 0);
-    let premium = pct < cfg.cutoff ? 0 : revenue * (cfg.rate / 100) * kkpi * kLadder;
+    let premium = cfg.scheme === 'fixed' || pct < cfg.cutoff ? 0 : revenue * (cfg.rate / 100) * kkpi * kLadder;
     const critical = pct < cfg.crit.below && premium > 0;
     if (critical) premium *= 1 - cfg.crit.cut / 100;
     // v102: гарантия — при ≥100% плана премия не меньше суммы месяца (холодный период / сезон)
     const gr = guaranteeFor(extra.guarantee, ym);
     let topup = 0;
-    if (gr && pct >= 100 && premium < gr.amount) { topup = gr.amount - premium; premium = gr.amount; }
+    if (gr && cfg.scheme !== 'fixed' && pct >= 100 && premium < gr.amount) { topup = gr.amount - premium; premium = gr.amount; }
     const guarantee = gr ? { ...gr, topup: Math.round(topup), applied: pct >= 100 } : null;
     const over = overBonus(cfg, pct);
-    const bonus = kpiBonus(cfg, pct) + over;
+    const bonus = kpiBonus(cfg, pct, revenue, plan) + over;
     // супербонусы
     const S = cfg.supers; const sup = [];
     const add = (id, count, note) => { if (S[id]?.on && count > 0) sup.push({ id, label: SUPERS[id].label, count, amount: S[id].amount, total: S[id].amount * count, note }); };
@@ -328,8 +339,8 @@ export function initSales(ctx) {
     const structure = cfg.structure.map((s) => ({ ...s, plan: Math.round((plan * s.share) / 100) }));
     // v101: ориентир — сколько получит при 100% плана и всех KPI на цели (K_KPI = 1), без супербонусов и штрафов
     const k100 = cfg.ladder.reduce((acc, [p, k]) => (100 >= p ? k : acc), 0);
-    const tPremium = Math.max(100 < cfg.cutoff ? 0 : plan * (cfg.rate / 100) * 1 * k100, gr?.amount || 0);
-    const tBonus = kpiBonus(cfg, 100);
+    const tPremium = cfg.scheme === 'fixed' ? 0 : Math.max(100 < cfg.cutoff ? 0 : plan * (cfg.rate / 100) * 1 * k100, gr?.amount || 0);
+    const tBonus = kpiBonus(cfg, 100, plan, plan);
     const target = { salary: cfg.salary, premium: Math.round(tPremium), bonus: tBonus, k: k100, total: Math.round(cfg.salary + tPremium + tBonus) };
     return {
       month: ym, plan, revenue: Math.round(revenue), pct: r2(pct), kkpi: r2(kkpi), k: kLadder, below_cutoff: pct < cfg.cutoff, critical,
@@ -344,8 +355,8 @@ export function initSales(ctx) {
     return steps.map((p) => {
       const revenue = (c.plan * p) / 100;
       const k = cfg.ladder.reduce((acc, [lp2, kk]) => (p >= lp2 ? kk : acc), 0);
-      const premium = Math.max(p < cfg.cutoff ? 0 : revenue * (cfg.rate / 100) * (c.kkpi_exact ?? c.kkpi) * k, p >= 100 ? c.guarantee?.amount || 0 : 0);
-      const bonus = kpiBonus(cfg, p) + overBonus(cfg, p);
+      const premium = cfg.scheme === 'fixed' ? 0 : Math.max(p < cfg.cutoff ? 0 : revenue * (cfg.rate / 100) * (c.kkpi_exact ?? c.kkpi) * k, p >= 100 ? c.guarantee?.amount || 0 : 0);
+      const bonus = kpiBonus(cfg, p, revenue, c.plan) + overBonus(cfg, p);
       const kpiPay = premium + bonus + c.supers_total;
       const strikeCut = Math.round((kpiPay * (c.strikes?.pct || 0)) / 100);
       return { pct: p, revenue: Math.round(revenue), need: Math.max(0, Math.round(revenue - c.revenue)), premium: Math.round(premium), bonus, total: Math.max(0, Math.round(cfg.salary + kpiPay - c.fine - strikeCut)), reached: c.pct >= p };
@@ -677,7 +688,7 @@ export function initSales(ctx) {
       month: ym, month_label: `${MONTHS_FULL[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`, calc: c, what_if: whatIf(cfg, c), tips: coachTips(cfg, c, ym, gaps.length), gaps,
       strikes_list: await strikesList(tg, ym),
       manual: manual.data, manual_at: manual.updated_at, manual_by: manual.updated_by,
-      cfg: { preset: cfg.preset, base_plan: cfg.base_plan, rate: cfg.rate, salary: cfg.salary, cutoff: cfg.cutoff, ladder: cfg.ladder, bonus: cfg.bonus, over: cfg.over, crit: cfg.crit, gap_fine: cfg.gap_fine,
+      cfg: { preset: cfg.preset, base_plan: cfg.base_plan, rate: cfg.rate, salary: cfg.salary, cutoff: cfg.cutoff, ladder: cfg.ladder, bonus: cfg.bonus, over: cfg.over, scheme: cfg.scheme, crit: cfg.crit, gap_fine: cfg.gap_fine,
         supers: Object.entries(cfg.supers).filter(([, v]) => v.on).map(([id, v]) => ({ id, label: SUPERS[id].label, amount: v.amount, param: v.param, hint: SUPERS[id].hint })),
         penalties: Object.entries(cfg.penalties || {}).filter(([, v]) => v.on).map(([id, v]) => ({ id, label: PENALTIES[id]?.label || id, amount: v.amount, param: v.param, hint: PENALTIES[id]?.hint || '' })) },
     };

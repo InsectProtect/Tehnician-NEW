@@ -504,7 +504,7 @@ export interface SalesStrikeEntry { id: string; note: string; created_at: string
 export interface SalesWhatIf { pct: number; revenue: number; need: number; premium: number; bonus: number; total: number; reached: boolean }
 export interface SalesTip { kpi: string; title: string; text: string }
 export interface SalesGap { task_id: string; task_no: number; fields: string[]; first_at: string; pings: number; company: string; address: string; phone: string; planned_at: string | null; has_time: boolean; price: number | null; procedure: string; point_cat: string }
-export interface SalesCfgShort { preset: string; base_plan: number; rate: number; salary: number; cutoff: number; ladder: [number, number][]; bonus: { on: boolean; amount: number; mode: 'fixed' | 'pct' }; over?: { on: boolean; amount: number; to: number }; crit: { below: number; cut: number }; gap_fine: number; supers: { id: string; label: string; amount: number; param: number | null; hint: string }[]; penalties: { id: string; label: string; amount: number; param: number | null; hint: string }[] }
+export interface SalesCfgShort { preset: string; base_plan: number; rate: number; salary: number; cutoff: number; ladder: [number, number][]; scheme?: 'percent' | 'fixed'; bonus: { on: boolean; amount: number; mode: 'fixed' | 'pct'; min?: number }; over?: { on: boolean; amount: number; to: number }; crit: { below: number; cut: number }; gap_fine: number; supers: { id: string; label: string; amount: number; param: number | null; hint: string }[]; penalties: { id: string; label: string; amount: number; param: number | null; hint: string }[] }
 export interface SalesFull {
   month: string; month_label: string; calc: SalesCalc; what_if: SalesWhatIf[]; tips: SalesTip[]; gaps: SalesGap[]; strikes_list: SalesStrikeEntry[];
   manual: Record<string, number | string>; manual_at: string | null; manual_by: string; cfg: SalesCfgShort;
@@ -521,7 +521,7 @@ export interface MgrMe extends SalesFull { game: MgrGame; league: { name: string
 export interface SalesCfgKpi { id: string; weight: number; target: number; label: string; unit: string; dir: 'up' | 'down'; src: 'auto' | 'manual'; custom: boolean }
 export interface SalesCfg {
   preset: string; base_plan: number; rate: number; salary: number; cutoff: number; cap: number; season: number[]; plan_override: Record<string, number>;
-  kpis: SalesCfgKpi[]; ladder: [number, number][]; bonus: { on: boolean; amount: number; mode: 'fixed' | 'pct' }; over?: { on: boolean; amount: number; to: number }; crit: { below: number; cut: number };
+  kpis: SalesCfgKpi[]; ladder: [number, number][]; scheme?: 'percent' | 'fixed'; bonus: { on: boolean; amount: number; mode: 'fixed' | 'pct'; min?: number }; over?: { on: boolean; amount: number; to: number }; crit: { below: number; cut: number };
   structure: { id: string; label: string; share: number }[]; supers: Record<string, { on: boolean; amount: number; param: number | null }>; gap_fine: number;
   penalties: Record<string, { on: boolean; amount: number; param: number | null }>;
 }
