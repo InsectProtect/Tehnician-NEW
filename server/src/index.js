@@ -2772,7 +2772,6 @@ route('POST', '/api/tasks/:id/assign', async ({ params, body, user }) => {
   await db.query('UPDATE tasks SET tech_tg_id = $1, ack_at = NULL, alert_msg_id = NULL, alert_count = 0, updated_at = $2 WHERE id = $3', [u.tg_id, now(), t.id]);
   const [nt] = await db.query('SELECT * FROM tasks WHERE id = $1', [t.id]);
   await audit(user, 'Заявка переназначена', `№ ${t.task_no}`, `→ ${u.name}`);
-  if (messageId) { const [ct] = await db.query('SELECT * FROM tasks WHERE id = $1', [t.id]); askPrice(ct).catch(() => {}); }
   addNotification(u.tg_id, 'task_new', `Заявка № ${t.task_no} · ${t.company_name || 'Физлицо'} · ${t.address}`, { task_id: t.id }).catch(() => {});
   await sendTaskAlert(nt);
   await boostCongrats(nt);
@@ -6549,6 +6548,8 @@ async function createTask({ parsed, tech, chatId, threadId, messageId, author, a
       { threadId, replyTo: messageId, replyMarkup: taskKb(t) });
     if (sent?.message_id) await db.query('UPDATE tasks SET confirm_id = $1 WHERE id = $2', [String(sent.message_id), t.id]);
   } catch (e) { console.error('task confirm:', e.message); }
+  // v96/v100: цены нет — бот спрашивает ответом в группе
+  if (messageId) { const [ct] = await db.query('SELECT * FROM tasks WHERE id = $1', [t.id]); askPrice(ct).catch((e) => console.error('ask price:', e.message)); }
   addNotification(u.tg_id, 'task_new', `Заявка № ${t.task_no} · ${t.company_name || 'Физлицо'} · ${t.address}`, { task_id: t.id }).catch(() => {});
   await sendTaskAlert(t);
   await boostCongrats(t);
