@@ -250,6 +250,7 @@ export const api = {
   freeTime: () => request<FreeTimeRes>('GET', '/api/free-time'),
   freeSettings: () => request<{ settings: FreeCfg; defaults: FreeCfg }>('GET', '/api/admin/free-settings'),
   saveFreeSettings: (s: Partial<FreeCfg>) => request<{ settings: FreeCfg }>('PUT', '/api/admin/free-settings', s),
+  parseTaskText: (text: string) => request<{ company: string; address: string; phone: string; comment: string; procedure: string; pests: string[]; area: string; rooms: number | null; stage: string; price: number | null; sotki: number | null; date: string; time: string }>('POST', '/api/tasks/parse', { text }),
   createAdminTask: (data: AdminTaskInput) => request<{ ok: true; id: string; task_no: number; open?: boolean }>('POST', '/api/admin/tasks', data),
   // KPI менеджеров, «Звонилка»
   mgrMe: (month?: string) => request<MgrMe>('GET', `/api/mgr/me${month ? `?month=${month}` : ''}`),

@@ -6319,6 +6319,21 @@ route('POST', '/api/tasks/:id/claim', async ({ params, user }) => {
 });
 
 // ---------- обработка из админ-панели (без сообщения в чате) ----------
+// v108: менеджер вставляет текст из переписки с клиентом — разбираем тем же парсером, что и заявки из группы
+route('POST', '/api/tasks/parse', async ({ body }) => {
+  const text = str(body.text, 3000);
+  must(text.trim().length >= 3, 400, 'Вставьте текст заявки');
+  const p = parseTask(text, new Date(), await parseOpts());
+  must(p, 400, 'Не похоже на заявку — нужен хотя бы адрес');
+  const hm = p.planned_at && p.has_time ? new Date(p.planned_at).toLocaleTimeString('en-GB', { timeZone: TZN, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '';
+  return {
+    company: p.company || '', address: p.address || '', phone: p.phone || '', comment: p.comment || '',
+    procedure: p.procedure || '', pests: p.pests || [], area: p.area || '',
+    rooms: p.rooms ?? null, stage: p.stage || '', price: p.price ?? null, sotki: p.sotki ?? null,
+    date: p.planned_at ? dayOf(p.planned_at) : '', time: hm,
+  };
+}, { access: 'admin' });
+
 route('POST', '/api/admin/tasks', async ({ body, user }) => {
   const tech = str(body.tech, 40);
   const audience = ['all', 'tech', 'specialist'].includes(body.audience) ? body.audience : '';

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, Check, CheckCheck, ClipboardList, Hand, Paperclip, Plus, Target, Undo2 } from 'lucide-react';
+import { CalendarClock, Check, ClipboardPaste, CheckCheck, ClipboardList, Hand, Paperclip, Plus, Target, Undo2 } from 'lucide-react';
 import { ApiError, api, uploadJobFileAny } from '../api';
 import { useConfig } from '../config';
 import { haptic, openLink } from '../telegram';
@@ -363,7 +363,7 @@ export function NewTaskSheet({ initialKind = 'task', onClose, onCreated, preset 
   const perm = (p: string) => Boolean(cfg.user.isOwner) || (cfg.user.perms || []).includes(p);
   const canTask = perm('tasks');
   const canJob = perm('jobs') || perm('tasks');
-  const [kind, setKind] = useState<Kind>(!canTask ? 'job' : initialKind);
+  const [kind, setKind] = useState<Kind>(preset ? 'task' : !canTask ? 'job' : initialKind);
   const [people, setPeople] = useState<Assignee[] | null>(null);
   // v107: из «Свободного времени» — техник, дата и время уже подставлены
   const [who, setWho] = useState<string[]>(preset ? [preset.tech] : []);
@@ -381,6 +381,34 @@ export function NewTaskSheet({ initialKind = 'task', onClose, onCreated, preset 
   // v98: «похоже на дубль» — сбрасывается при любой правке заявки
   const [dup, setDup] = useState('');
   const setTask = (p: Partial<AdminTaskInput>) => { setDup(''); setT((x) => ({ ...x, ...p })); };
+  // v108: из «Свободного времени» — короткая форма: кто/когда уже выбраны (можно поменять), сверху — данные заявки
+  const [repick, setRepick] = useState(false);
+  const quick = Boolean(preset) && !repick;
+  const [paste, setPaste] = useState<string | null>(null);
+  const [parsing, setParsing] = useState(false);
+  async function fromText() {
+    if (!paste?.trim()) return;
+    setParsing(true);
+    try {
+      const r = await api.parseTaskText(paste);
+      const pr = cfg.procedures || [];
+      setTask({
+        ...(r.company && { company: r.company }), ...(r.address && { address: r.address }), ...(r.phone && { phone: r.phone }),
+        ...(r.procedure && pr.includes(r.procedure) && { procedure: r.procedure, pests: r.pests || [] }),
+        ...(r.rooms != null && { rooms: String(r.rooms) }), ...(r.stage && { stage: r.stage }), ...(r.price != null && { price: String(r.price) }),
+        ...(r.sotki != null && { sotki: String(r.sotki) }),
+        ...(r.comment && { comment: [t.comment, r.comment].filter(Boolean).join('\n') }),
+        // дату/время из текста берём, только если окно не выбрано в «Свободном времени»
+        ...(!preset && r.date && { date: r.date }), ...(!preset && r.time && { time: r.time }),
+      });
+      haptic.success(); setPaste(null); toast('Заполнено из текста — проверьте', 'ok');
+    } catch (e) { haptic.error(); toast((e as Error).message, 'error'); } finally { setParsing(false); }
+  }
+  const whenText = (() => {
+    if (!t.date) return 'без даты';
+    const d = new Date(`${t.date}T12:00:00`);
+    return `${d.toLocaleDateString(LOC, { weekday: 'short', day: 'numeric', month: 'long' })}${t.time ? `, ${t.time}` : ''}`;
+  })();
 
   useEffect(() => { api.assignees().then((r) => setPeople(r.items)).catch(() => setPeople([])); }, []);
   // специалисты — первыми: поручения обычно им
@@ -432,8 +460,18 @@ export function NewTaskSheet({ initialKind = 'task', onClose, onCreated, preset 
   }
 
   return (
-    <Sheet open onClose={onClose} title="Новая задача">
-      <div className="-mt-2 mb-5">
+    <Sheet open onClose={onClose} title={preset ? 'Новая заявка' : 'Новая задача'}>
+      {quick && (
+        <div data-panel className="-mt-2 mb-5 flex items-center gap-3 rounded-2xl bg-[#34C759]/12 px-4 py-3">
+          <CalendarClock size={20} className="shrink-0 text-[#34C759]" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[15.5px] font-semibold">{people?.find((p) => p.id === lead)?.name || '…'}</div>
+            <div className="text-[13.5px] text-muted">{whenText}</div>
+          </div>
+          <button onClick={() => { haptic.tap(); setRepick(true); }} className="shrink-0 text-[14px] font-semibold text-accent-ink">Изменить</button>
+        </div>
+      )}
+      {!quick && <div className="-mt-2 mb-5">
         {canTask && canJob && (
           <Segmented<Kind> options={[{ id: 'task', label: 'Обработка' }, { id: 'job', label: 'Поручение' }]} value={kind}
             onChange={(k) => {
@@ -451,7 +489,7 @@ export function NewTaskSheet({ initialKind = 'task', onClose, onCreated, preset 
             ? 'Выезд на объект — как заявка из чата офиса: придёт сотруднику с напоминаниями, копия — в его тему или чат офиса.'
             : 'Любая другая работа (видео, реклама, доставка…) со стоимостью в бонусных баллах. Можно выбрать нескольких — каждому своё.'}
         </div>
-      </div>
+      </div>}
 
       {mode === 'open' && (
         <div className="rounded-2xl bg-[#FF9500]/[0.1] p-3.5">
@@ -478,7 +516,7 @@ export function NewTaskSheet({ initialKind = 'task', onClose, onCreated, preset 
         </div>
       )}
 
-      {mode === 'pick' && <Field label={kind === 'job' ? 'Кому (можно несколько)' : teamOn ? 'Кто едет (можно несколько — команда)' : 'Кому'}>
+      {mode === 'pick' && !quick && <Field label={kind === 'job' ? 'Кому (можно несколько)' : teamOn ? 'Кто едет (можно несколько — команда)' : 'Кому'}>
         {!people ? <Spinner /> : sorted.length === 0 ? (
           <div className="rounded-2xl bg-card p-3.5 text-[14px] text-muted">Нет активных сотрудников</div>
         ) : (
@@ -538,15 +576,29 @@ export function NewTaskSheet({ initialKind = 'task', onClose, onCreated, preset 
       <div className="mt-5">
         {kind === 'job' ? <JobFields v={job} set={(p) => setJob((x) => ({ ...x, ...p }))} /> : (
           <div className="space-y-4">
+            {paste == null ? (
+              <button onClick={() => { haptic.tap(); setPaste(''); }} className="flex w-full items-center gap-3 rounded-2xl bg-fill px-4 py-3 text-left active:opacity-70">
+                <ClipboardPaste size={19} className="shrink-0 text-accent" />
+                <span className="min-w-0 flex-1"><span className="block text-[15px] font-semibold">Вставить из сообщения</span><span className="block text-[12.5px] text-muted">Адрес, телефон, вредитель, цена — разберу сам</span></span>
+              </button>
+            ) : (
+              <div className="rounded-2xl bg-fill p-3">
+                <TextArea rows={4} autoFocus placeholder={'Скопируйте переписку с клиентом, например:\nstr. Dacia 47 ap 12, 069123456, тараканы, 2 комн, 800 лей'} value={paste} onChange={(e) => setPaste(e.target.value)} />
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <Button variant="secondary" onClick={() => setPaste(null)}>Отмена</Button>
+                  <Button loading={parsing} onClick={fromText}>Заполнить</Button>
+                </div>
+              </div>
+            )}
             <Field label="Адрес"><Input placeholder="Город, улица, дом, кв." value={t.address} onChange={(e) => setTask({ address: e.target.value })} /></Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Клиент / компания"><Input placeholder="Физлицо" value={t.company} onChange={(e) => setTask({ company: e.target.value })} /></Field>
               <Field label="Телефон"><Input inputMode="tel" placeholder="060…" value={t.phone} onChange={(e) => setTask({ phone: e.target.value })} /></Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            {!quick && <div className="grid grid-cols-2 gap-3">
               <Field label="Дата"><Input type="date" value={t.date} onChange={(e) => setTask({ date: e.target.value })} /></Field>
               <Field label="Время"><Input type="time" value={t.time} onChange={(e) => setTask({ time: e.target.value })} /></Field>
-            </div>
+            </div>}
             <PointCatPicker t={t} setTask={setTask} people={who.length} />
             <Field label="Обработка">
               <Chips options={(cfg.procedures || []).map((p) => ({ id: p, label: p }))} value={t.procedure} onChange={(p) => setTask({ procedure: p === t.procedure ? '' : p, pests: [] })} />

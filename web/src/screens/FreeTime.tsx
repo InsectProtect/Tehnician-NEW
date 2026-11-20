@@ -1,114 +1,242 @@
-import { useCallback, useEffect, useState } from 'react';
-import { CalendarClock, ChevronRight, Zap } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { CalendarClock, ChevronDown, ChevronRight, RefreshCw, Zap } from 'lucide-react';
 import { api } from '../api';
 import { haptic } from '../telegram';
 import { Button, Field, Input, Spinner, cx, useToast } from '../components/ui';
-import type { FreeCfg, FreeSlot, FreeTech, FreeTimeRes } from '../types';
+import type { FreeCfg, FreeDay, FreeTech, FreeTimeRes } from '../types';
 import { NewTaskSheet } from './Jobs';
 
 /* ================================================================================================
- * v107: «Свободное время» — менеджер в дороге видит окна техников на сегодня и неделю вперёд
- * и ставит заявку тапом по окну (техник, дата, время подставлены в форму новой заявки).
+ * v107: «Свободное время» — менеджер в дороге видит окна техников на сегодня и неделю вперёд.
+ * v108: вместо графика-полосок — «Во сколько удобно клиенту?»: день → часть дня → часы, в каждом
+ * часе зелёные кнопки свободных техников. Тап — заявка с техником, датой и временем. Ниже — расписание
+ * каждого техника списком (занято / свободно).
  * ================================================================================================ */
 
 const toMin = (s: string) => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
+const fmt = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 const dur = (min: number) => (min >= 60 ? `${String(Math.round(min / 6) / 10).replace('.', ',')} ч` : `${min} мин`);
+const first = (n: string) => n.split(' ')[0];
+const visits = (n: number) => `${n} ${n === 1 ? 'выезд' : n < 5 ? 'выезда' : 'выездов'}`;
+
+const PARTS = [
+  { id: 'morning', label: 'Утро', from: 0, to: 12 * 60 },
+  { id: 'day', label: 'День', from: 12 * 60, to: 16 * 60 },
+  { id: 'evening', label: 'Вечер', from: 16 * 60, to: 24 * 60 },
+];
+
+type Opt = { tech: FreeTech; at: number; until: number };
+type Pick = Opt & { day: FreeDay };
+
+/** Когда в этот час техник может начать выезд (окно вмещает выезд целиком). */
+function startIn(t: FreeTech, h: number, need: number): Opt | null {
+  for (const f of t.free) {
+    const a = toMin(f.from); const b = toMin(f.to);
+    const at = Math.max(a, h);
+    if (at < h + 60 && at + need <= b) return { tech: t, at, until: b };
+  }
+  return null;
+}
+
+/** Часы дня со свободными техниками. */
+function hoursOf(day: FreeDay, cfg: FreeCfg) {
+  const out: { h: number; opts: Opt[] }[] = [];
+  for (let h = Math.floor(toMin(cfg.from) / 60) * 60; h + cfg.dur <= toMin(cfg.to); h += 60) {
+    const opts = day.techs.map((t) => startIn(t, h, cfg.dur)).filter(Boolean) as Opt[];
+    out.push({ h, opts });
+  }
+  return out;
+}
 
 export function FreeTimeCard() {
   const toast = useToast();
   const [d, setD] = useState<FreeTimeRes | null>(null);
   const [di, setDi] = useState(0);
-  const [pick, setPick] = useState<{ tech: FreeTech; slot: FreeSlot; day: string; dayLabel: string } | null>(null);
+  const [opened, setOpened] = useState<Record<string, boolean>>({});
+  const [showSched, setShowSched] = useState(false);
+  const [openTech, setOpenTech] = useState<string | null>(null);
+  const [pick, setPick] = useState<Pick | null>(null);
   const [create, setCreate] = useState<{ tech: string; date: string; time: string } | null>(null);
-  const load = useCallback(() => api.freeTime().then(setD).catch((e: Error) => toast(e.message, 'error')), [toast]);
+  const [loading, setLoading] = useState(false);
+  const load = useCallback(() => { setLoading(true); return api.freeTime().then(setD).catch((e: Error) => toast(e.message, 'error')).finally(() => setLoading(false)); }, [toast]);
   useEffect(() => { load(); const t = setInterval(load, 120000); return () => clearInterval(t); }, [load]);
 
+  const perDay = useMemo(() => (d ? d.days.map((x) => (x.off ? [] : hoursOf(x, d.cfg))) : []), [d]);
   if (!d) return <div data-panel className="mt-4 flex justify-center rounded-[22px] bg-card p-6"><Spinner /></div>;
   const day = d.days[di];
-  const start = toMin(d.cfg.from); const end = toMin(d.cfg.to); const span = Math.max(1, end - start);
-  const pos = (s: string) => `${Math.max(0, Math.min(100, ((toMin(s) - start) / span) * 100))}%`;
-  const width = (a: string, b: string) => `${Math.max(1.5, ((Math.min(end, toMin(b)) - Math.max(start, toMin(a))) / span) * 100)}%`;
-  const ticks: number[] = [];
-  for (let h = Math.ceil(start / 60); h <= Math.floor(end / 60); h += 2) ticks.push(h);
-  const nowIn = di === 0 && toMin(d.now) > start && toMin(d.now) < end;
+  const nowMin = toMin(d.now);
+  const groups = PARTS.map((P) => {
+    const hours = (perDay[di] || []).filter((x) => x.h >= P.from && x.h < P.to && (di > 0 || x.h + 60 > nowMin));
+    const free = [...new Set(hours.flatMap((x) => x.opts.map((o) => first(o.tech.name))))];
+    return { ...P, hours, free };
+  }).filter((g) => g.hours.length);
+  const autoOpen = groups.find((g) => g.free.length)?.id;
+  const isOpen = (id: string) => opened[`${di}:${id}`] ?? id === autoOpen;
+  const toggle = (id: string) => setOpened((o) => ({ ...o, [`${di}:${id}`]: !isOpen(id) }));
+  const freeHours = (i: number) => (perDay[i] || []).filter((x) => x.opts.length).length;
+  const choose = (o: Opt, D: FreeDay = day) => { haptic.tap(); setPick({ ...o, day: D }); };
+  const best = d.best[0];
+  const bestDay = best ? d.days.findIndex((x) => x.day === best.day) : -1;
 
   return (
     <div data-panel className="mt-4 rounded-[22px] bg-card p-5">
       <div className="flex items-center gap-2.5">
-        <CalendarClock size={20} className="text-accent" />
-        <div className="min-w-0">
+        <CalendarClock size={20} className="shrink-0 text-accent" />
+        <div className="min-w-0 flex-1">
           <div className="text-[18px] font-semibold leading-tight">Свободное время</div>
-          <div className="text-[13px] text-muted">Куда поставить заявку, пока клиент на линии</div>
+          <div className="text-[13px] text-muted">Во сколько удобно клиенту?</div>
         </div>
+        <button aria-label="Обновить" onClick={() => { haptic.tap(); load(); }} className="grid h-9 w-9 place-items-center rounded-full bg-fill text-muted active:opacity-60">
+          <RefreshCw size={16} className={cx(loading && 'animate-spin')} />
+        </button>
       </div>
 
-      <div className="-mx-1 mt-3.5 flex gap-1.5 overflow-x-auto px-1 pb-1">
-        {d.days.map((x, i) => (
-          <button key={x.day} data-chip onClick={() => { haptic.tap(); setDi(i); }}
-            className={cx('flex-none rounded-xl px-3 py-2 text-center text-[13px] font-semibold', i === di ? 'bg-accent text-black' : 'bg-fill text-muted', x.off && i !== di && 'opacity-50')}>
-            {x.label}<span className="block text-[11px] font-medium opacity-70">{x.date}</span>
-          </button>
-        ))}
-      </div>
-
-      {di === 0 && d.best.length > 0 && (
-        <div className="mt-3 flex items-start gap-2.5 rounded-2xl bg-[#34C759]/12 px-3.5 py-3 text-[14px]">
-          <Zap size={17} className="mt-0.5 shrink-0 text-[#34C759]" />
-          <div className="min-w-0">
-            <b>Ближайшее окно:</b> {d.best[0].name.split(' ')[0]} — {d.best[0].label.toLowerCase()} {d.best[0].from}–{d.best[0].to}
-            {d.best.slice(1, 3).map((b) => <div key={b.tg} className="text-[12.5px] text-muted">{b.name.split(' ')[0]} — {b.label.toLowerCase()} {b.from}–{b.to}</div>)}
+      {best && (
+        <button onClick={() => { const t = d.days[bestDay]?.techs.find((x) => x.tg === best.tg); if (t) choose({ tech: t, at: toMin(best.from), until: toMin(best.to) }, d.days[bestDay]); }}
+          className="mt-3.5 flex w-full items-center gap-2.5 rounded-2xl bg-[#34C759]/12 px-3.5 py-3 text-left active:opacity-70">
+          <Zap size={18} className="shrink-0 text-[#34C759]" />
+          <div className="min-w-0 flex-1 text-[14px] leading-snug">
+            <div className="text-[12px] font-medium text-muted">Ближайшее окно</div>
+            <b>{best.label}{bestDay > 1 ? ` ${best.date}` : ''}, {best.from}</b> · {first(best.name)}
           </div>
-        </div>
+          <ChevronRight size={18} className="shrink-0 text-muted" />
+        </button>
       )}
+
+      <div className="no-scrollbar -mx-5 mt-3.5 flex gap-1.5 overflow-x-auto px-5 pb-1">
+        {d.days.map((x, i) => {
+          const n = freeHours(i);
+          return (
+            <button key={x.day} data-chip onClick={() => { haptic.tap(); setDi(i); }}
+              className={cx('flex-none rounded-2xl px-3 py-2 text-center', i === di ? 'bg-accent text-black' : 'bg-fill')}>
+              <span className="block text-[14px] font-semibold">{x.label}</span>
+              <span className={cx('block text-[11px] font-medium', i === di ? 'opacity-70' : 'text-muted')}>{x.date}</span>
+              <span className={cx('mt-1 block text-[11px] font-semibold', i === di ? 'opacity-80' : x.off ? 'text-muted' : n ? 'text-[#248A3D] dark:text-[#5FE08A]' : 'text-[#FF9500]')}>
+                {x.off ? 'выходной' : n ? `${n} ч свободно` : 'занято'}
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
       {day.off ? (
-        <div className="mt-4 rounded-2xl bg-fill p-4 text-center text-[14px] text-muted">Выходной день — заявки не ставим</div>
-      ) : day.techs.map((t) => (
-        <div key={t.tg} className="mt-4">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="truncate text-[15px] font-semibold">{t.name}</span>
-            <span className="shrink-0 text-[12.5px] text-muted">{t.count ? `${t.count} ${t.count === 1 ? 'выезд' : t.count < 5 ? 'выезда' : 'выездов'}${t.busy_min ? ` · ~${dur(t.busy_min)}` : ''}` : 'свободен весь день'}</span>
+        <div className="mt-3 rounded-2xl bg-fill p-4 text-center text-[14px] text-muted">Выходной день — заявки не ставим</div>
+      ) : (
+        <>
+          <div className="mt-3 flex flex-col gap-2">
+            {groups.length === 0 && <div className="rounded-2xl bg-fill p-4 text-center text-[14px] text-muted">{di === 0 ? 'Рабочий день уже закончился' : 'Нет рабочих часов'}</div>}
+            {groups.length > 0 && !groups.some((g) => g.free.length) && (
+              <div className="rounded-2xl bg-[#FF9500]/12 p-3.5 text-center text-[14px] text-[#C26A00] dark:text-[#FFB340]">В этот день все заняты — посмотрите другой день</div>
+            )}
+            {groups.map((g) => {
+              const open = isOpen(g.id);
+              return (
+                <div key={g.id} className="rounded-2xl bg-fill">
+                  <button onClick={() => { haptic.tap(); toggle(g.id); }} className="flex w-full items-center gap-3 px-3.5 py-3 text-left">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[16px] font-semibold">{g.label} <span className="text-[13px] font-medium text-muted">{fmt(g.hours[0].h).slice(0, 2)}–{fmt(g.hours[g.hours.length - 1].h + 60).slice(0, 2)} ч</span></div>
+                      <div className={cx('truncate text-[13px] font-medium', g.free.length ? 'text-[#1F7A35] dark:text-[#5FE08A]' : 'text-muted')}>
+                        {g.free.length ? `свободны: ${g.free.join(', ')}` : 'все заняты'}
+                      </div>
+                    </div>
+                    <ChevronDown size={18} className={cx('shrink-0 text-muted transition-transform', open && 'rotate-180')} />
+                  </button>
+                  {open && (
+                    <div className="flex flex-col gap-1 border-t border-line px-2 py-2">
+                      {g.hours.map(({ h, opts }) => (
+                        <div key={h} className={cx('flex items-start gap-3 rounded-xl px-1.5 py-1', !opts.length && 'opacity-45')}>
+                          <div className="w-[52px] shrink-0 pt-[7px] text-[17px] font-semibold tabular-nums">{fmt(h)}</div>
+                          <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+                            {opts.length ? opts.map((o) => (
+                              <button key={o.tech.tg} data-chip onClick={() => choose(o)}
+                                className="rounded-xl bg-[#34C759]/15 px-3 py-[7px] text-[14.5px] font-semibold text-[#1F7A35] active:opacity-60 dark:text-[#5FE08A]">
+                                {first(o.tech.name)}{o.at !== h && <span className="ml-1 text-[12px] font-medium opacity-75">с {fmt(o.at)}</span>}
+                              </button>
+                            )) : <span className="pt-[7px] text-[13.5px] text-muted">все заняты</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-          <div className="relative mt-2 h-[30px] overflow-hidden rounded-lg bg-black/5 dark:bg-black/30">
-            {t.busy.map((b) => (
-              <div key={`${b.task_no}${b.from}`} className="absolute bottom-[3px] top-[3px] overflow-hidden whitespace-nowrap rounded-[5px] bg-black/15 px-1 text-[10px] leading-[24px] text-ink dark:bg-white/20 dark:text-white"
-                style={{ left: pos(b.from), width: width(b.from, b.to) }}>{b.from.replace(':00', '')} {b.label}</div>
-            ))}
-            {nowIn && <div className="absolute bottom-0 top-0 w-[2px] bg-[#FF453A]" style={{ left: pos(d.now) }} />}
-          </div>
-          <div className="mt-0.5 flex justify-between px-px text-[10px] text-muted">{ticks.map((h) => <span key={h}>{h}</span>)}</div>
-          {t.free.length ? (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {t.free.map((f) => (
-                <button key={f.from} data-chip onClick={() => { haptic.tap(); setPick({ tech: t, slot: f, day: day.day, dayLabel: `${day.label}, ${day.date}` }); }}
-                  className="rounded-[10px] bg-[#34C759]/15 px-2.5 py-1.5 text-[13.5px] font-semibold text-[#248A3D] active:opacity-70 dark:text-[#5FE08A]">
-                  {t.busy.length === 0 && t.free.length === 1 ? `с ${f.from} до ${f.to}` : `${f.from}–${f.to}`}
-                  <span className="ml-1 text-[11.5px] font-medium opacity-75">{dur(f.min)}</span>
-                </button>
-              ))}
-            </div>
-          ) : <div className="mt-2 text-[13px] text-[#FF9500]">Окон нет{di === 0 ? ' до конца дня' : ''}</div>}
-          {t.no_time > 0 && <div className="mt-1 text-[12px] text-muted">+ {t.no_time} без времени — уточните у техника</div>}
-        </div>
-      ))}
-      <div className="mt-4 text-[12px] leading-snug text-muted">
-        Серым — заявки (выезд ~{dur(d.cfg.dur)}, большой объект +{dur(d.cfg.big_add)}), между ними дорога {d.cfg.road} мин{nowIn ? ', красная линия — сейчас' : ''}. Тап по зелёному окну — новая заявка.
-      </div>
 
-      {pick && !create && (
-        <div className="fixed inset-0 z-50 flex items-end bg-black/40" onClick={() => setPick(null)}>
-          <div data-sheet className="w-full rounded-t-[22px] bg-card px-4 pb-[calc(20px+env(safe-area-inset-bottom))] pt-5" onClick={(e) => e.stopPropagation()}>
-            <div className="text-[17px] font-semibold">Новая заявка · {pick.tech.name}</div>
-            <div className="mt-2 divide-y divide-line text-[14.5px]">
-              <div className="flex justify-between py-2.5"><span className="text-muted">Дата и время</span><b>{pick.dayLabel} · {pick.slot.from}</b></div>
-              <div className="flex justify-between py-2.5"><span className="text-muted">Свободно до</span><b>{pick.slot.to} ({dur(pick.slot.min)})</b></div>
-              {pick.slot.prev && <div className="flex justify-between gap-3 py-2.5"><span className="shrink-0 text-muted">Перед этим</span><b className="truncate">{pick.slot.prev}</b></div>}
-            </div>
-            <div className="mt-2 text-[12.5px] text-muted">Дальше — обычная форма: адрес, телефон, вредитель, цена. Время можно поменять.</div>
-            <Button className="mt-4" icon={<ChevronRight size={18} />} onClick={() => { haptic.tap(); setCreate({ tech: pick.tech.tg, date: pick.day, time: pick.slot.from }); }}>Продолжить</Button>
+          <button onClick={() => { haptic.tap(); setShowSched(!showSched); }} className="mt-5 flex w-full items-center gap-2 text-left">
+            <span className="flex-1 text-[13px] font-semibold uppercase tracking-wide text-muted">Расписание техников · {day.label.toLowerCase()}{di > 0 ? ` ${day.date}` : ''}</span>
+            <ChevronDown size={18} className={cx('shrink-0 text-muted transition-transform', showSched && 'rotate-180')} />
+          </button>
+          {showSched && <div className="mt-2 flex flex-col gap-2">
+            {day.techs.map((t) => {
+              const open = openTech === t.tg;
+              const rows = [
+                ...t.busy.map((b) => ({ at: toMin(b.from), busy: true as const, b })),
+                ...t.free.map((f) => ({ at: toMin(f.from), busy: false as const, f })),
+              ].sort((a, b) => a.at - b.at);
+              return (
+                <div key={t.tg} className="rounded-2xl bg-fill">
+                  <button onClick={() => { haptic.tap(); setOpenTech(open ? null : t.tg); }} className="flex w-full items-center gap-3 px-3.5 py-3 text-left">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent/15 text-[14px] font-semibold text-accent">{t.name.slice(0, 1)}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[15px] font-semibold">{t.name}</div>
+                      <div className="truncate text-[12.5px] text-muted">
+                        {t.count ? visits(t.count) : 'нет заявок'}
+                        {t.free.length ? ` · свободен ${t.free.map((f) => (toMin(f.to) >= toMin(d.cfg.to) ? `с ${f.from}` : `${f.from}–${f.to}`)).join(', ')}` : ' · окон нет'}
+                      </div>
+                    </div>
+                    <ChevronDown size={18} className={cx('shrink-0 text-muted transition-transform', open && 'rotate-180')} />
+                  </button>
+                  {open && (
+                    <div className="border-t border-line px-3.5 pb-3 pt-1">
+                      {rows.length === 0 && <div className="py-2 text-[13.5px] text-muted">Окон нет{di === 0 ? ' до конца дня' : ''}</div>}
+                      {rows.map((r) => r.busy ? (
+                        <div key={`b${r.b.task_no}${r.b.from}`} className="flex items-center gap-3 py-2 text-[14px]">
+                          <span className="w-[104px] shrink-0 tabular-nums text-muted">{r.b.from}–{r.b.to}</span>
+                          <span className="min-w-0 flex-1 truncate">{r.b.label || 'заявка'}</span>
+                          <span className="shrink-0 text-[12px] text-muted">№{r.b.task_no}</span>
+                        </div>
+                      ) : (
+                        <button key={`f${r.f.from}`} onClick={() => choose({ tech: t, at: toMin(r.f.from), until: toMin(r.f.to) })}
+                          className="my-1 flex w-full items-center gap-3 rounded-xl bg-[#34C759]/15 px-2.5 py-2 text-left text-[14px] active:opacity-60">
+                          <span className="w-[104px] shrink-0 font-semibold tabular-nums text-[#1F7A35] dark:text-[#5FE08A]">{r.f.from}–{r.f.to}</span>
+                          <span className="min-w-0 flex-1 truncate text-[#1F7A35] dark:text-[#5FE08A]">{dur(r.f.min)}</span>
+                          <span className="shrink-0 text-[13px] font-semibold text-[#1F7A35] dark:text-[#5FE08A]">Поставить</span>
+                        </button>
+                      ))}
+                      {t.no_time > 0 && <div className="pt-1 text-[12.5px] text-[#C26A00] dark:text-[#FFB340]">+ {t.no_time} без времени — уточните у техника</div>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>}
+          <div className="mt-3 text-[12px] leading-snug text-muted">
+            Выезд ~{dur(d.cfg.dur)} (большой объект +{dur(d.cfg.big_add)}), дорога между заявками {d.cfg.road} мин — уже учтены.
           </div>
-        </div>
+        </>
       )}
+
+      {pick && !create && (() => {
+        const prev = pick.tech.busy.filter((b) => toMin(b.to) <= pick.at).pop();
+        const next = pick.tech.busy.find((b) => toMin(b.from) >= pick.at);
+        return (
+          <div className="fixed inset-0 z-50 flex items-end bg-black/40" onClick={() => setPick(null)}>
+            <div data-sheet className="w-full rounded-t-[22px] bg-card px-4 pb-[calc(20px+env(safe-area-inset-bottom))] pt-5" onClick={(e) => e.stopPropagation()}>
+              <div className="text-[13px] font-medium text-muted">Новая заявка</div>
+              <div className="mt-0.5 text-[22px] font-semibold leading-tight">{pick.day.label}{d.days.indexOf(pick.day) > 1 ? ` ${pick.day.date}` : ''}, {fmt(pick.at)}</div>
+              <div className="mt-0.5 text-[15px]">{pick.tech.name}</div>
+              <div className="mt-3 divide-y divide-line text-[14.5px]">
+                <div className="flex justify-between gap-3 py-2.5"><span className="text-muted">Свободен до</span><b>{fmt(pick.until)}</b></div>
+                {prev && <div className="flex justify-between gap-3 py-2.5"><span className="shrink-0 text-muted">Перед этим</span><b className="truncate">{prev.from} {prev.label}</b></div>}
+                {next && <div className="flex justify-between gap-3 py-2.5"><span className="shrink-0 text-muted">После</span><b className="truncate">{next.from} {next.label}</b></div>}
+              </div>
+              <div className="mt-2 text-[12.5px] text-muted">Дальше — обычная форма: адрес, телефон, вредитель, цена. Время можно поменять.</div>
+              <Button className="mt-4" icon={<ChevronRight size={18} />} onClick={() => { haptic.tap(); setCreate({ tech: pick.tech.tg, date: pick.day.day, time: fmt(pick.at) }); }}>Поставить заявку</Button>
+            </div>
+          </div>
+        );
+      })()}
       {create && (
         <NewTaskSheet preset={create} onClose={() => { setCreate(null); setPick(null); }}
           onCreated={() => { setCreate(null); setPick(null); toast('Заявка создана', 'ok'); load(); }} />
