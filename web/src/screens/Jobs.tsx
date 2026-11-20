@@ -356,7 +356,7 @@ function JobEditSheet({ job, onClose, onSaved }: { job: Job; onClose: () => void
 type Kind = 'task' | 'job';
 const ROLE_SHORT: Record<string, string> = { tech: 'дезинсектор', specialist: 'специалист', manager: 'менеджер' };
 
-export function NewTaskSheet({ initialKind = 'task', onClose, onCreated }: { initialKind?: Kind; onClose: () => void; onCreated: (kind: Kind) => void }) {
+export function NewTaskSheet({ initialKind = 'task', onClose, onCreated, preset }: { initialKind?: Kind; onClose: () => void; onCreated: (kind: Kind) => void; preset?: { tech: string; date: string; time: string } }) {
   const cfg = useConfig();
   const toast = useToast();
   // менеджеру доступны только разрешённые виды задач
@@ -365,8 +365,9 @@ export function NewTaskSheet({ initialKind = 'task', onClose, onCreated }: { ini
   const canJob = perm('jobs') || perm('tasks');
   const [kind, setKind] = useState<Kind>(!canTask ? 'job' : initialKind);
   const [people, setPeople] = useState<Assignee[] | null>(null);
-  const [who, setWho] = useState<string[]>([]);
-  const [lead, setLead] = useState('');
+  // v107: из «Свободного времени» — техник, дата и время уже подставлены
+  const [who, setWho] = useState<string[]>(preset ? [preset.tech] : []);
+  const [lead, setLead] = useState(preset?.tech || '');
   const [reviewer, setReviewer] = useState('');
   const [busy, setBusy] = useState(false);
   // «Конкретным» — выбрать людей; «Кто заберёт» — отправить категории, первый нажавший «Забрать» становится исполнителем
@@ -376,7 +377,7 @@ export function NewTaskSheet({ initialKind = 'task', onClose, onCreated }: { ini
   const teamOn = cfg.features?.team !== false;
   const reviewerOn = cfg.features?.job_reviewer !== false;
   const [job, setJob] = useState<JobInput>({ title: '', descr: '', due_at: null, due_time: '', points: '1', target: '' });
-  const [t, setT] = useState<AdminTaskInput>({ tech: '', company: '', address: '', phone: '', date: '', time: '', procedure: '', pests: [], comment: '', rooms: '', stage: '', price: '', mult: '', point_cat: '', point_zone: 'city', team: [] });
+  const [t, setT] = useState<AdminTaskInput>({ tech: preset?.tech || '', company: '', address: '', phone: '', date: preset?.date || '', time: preset?.time || '', procedure: '', pests: [], comment: '', rooms: '', stage: '', price: '', mult: '', point_cat: '', point_zone: 'city', team: [] });
   // v98: «похоже на дубль» — сбрасывается при любой правке заявки
   const [dup, setDup] = useState('');
   const setTask = (p: Partial<AdminTaskInput>) => { setDup(''); setT((x) => ({ ...x, ...p })); };

@@ -22,6 +22,7 @@ import { initCar } from './car.js';
 import { initCrm } from './crm.js';
 import { initCash } from './cash.js';
 import { initPlans, sameAddress } from './plans.js';
+import { initFree } from './freetime.js';
 import { initAttend } from './attend.js';
 import { PREMISES, REENTRY, reentryDefault } from './premises.js';
 import { reverseGeocode, forwardGeocode } from './geo.js';
@@ -5025,6 +5026,7 @@ function distM(a, b) {
   return Math.round(2 * R * Math.asin(Math.sqrt(x)));
 }
 // v89: пунктуальность менеджеров (отметка прихода по геопозиции офиса)
+initFree({ db, route, must, getSetting, setSetting, audit, TZN });
 const attend = initAttend({ db, route, must, str, uid, now, getSetting, setSetting, audit, awardXp, notifyTech, publicBase, TZN, questsCfg, distM });
 /** «Утренний кофе в офисе»: точка рядом с офисом в утреннем окне → квест засчитан (один раз в день). */
 async function checkCoffee(tgId, lat, lon, { notify = false } = {}) {

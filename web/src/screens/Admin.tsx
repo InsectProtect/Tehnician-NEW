@@ -19,6 +19,7 @@ import { AnnouncementBanners, OpenWork } from './Announce';
 import { GuardSettingsPanel, GuardWidget } from './Guard';
 import { LiveWidget } from './Play';
 import { QuestsSettingsPanel } from './QuestsSettings';
+import { FreeSettingsPanel, FreeTimeCard } from './FreeTime';
 import { PointsEditor } from '../components/PointsEditor';
 import { MediaGallery, MediaReviewWidget } from '../components/MediaUpload';
 import {
@@ -135,6 +136,7 @@ function Overview({ period, setPeriod, onOpen, onActs, onSettings, onTab }: { pe
       <RoomsDisputesWidget />
       {cfg.user.role === 'manager' && <AttendCard />}
       {cfg.user.role === 'manager' && <MgrHero onOpen={(f) => { setSalesFocus(f || ''); onTab('sales'); }} />}
+      {can(cfg, 'tasks') && <FreeTimeCard />}
       {cfg.user.role === 'manager' && <AnnouncementBanners />}
       {cfg.user.role === 'manager' && <OpenWork />}
       {cfg.user.role === 'manager' && <MyJobs />}
@@ -357,6 +359,11 @@ function Settings({ onConfigChanged }: { onConfigChanged: () => void }) {
       {f?.contest !== false && can(cfg, 'kpi') && (
         <Collapse id="contest" title="👑 Соревнование" hint="Рейтинг по баллам, корона и бонус победителю месяца">
           <ContestSettingsPanel />
+        </Collapse>
+      )}
+      {cfg.user.isOwner && (
+        <Collapse id="free-time" title="🗓 Свободное время" hint="Рабочие часы, длительность выезда, дорога — для окон под заявки">
+          <FreeSettingsPanel />
         </Collapse>
       )}
       {f?.game !== false && can(cfg, 'settings') && (

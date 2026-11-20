@@ -3,7 +3,7 @@ import type {
   LabelBatch, LabelsInfo, LabelsInput, ObjectPlan, PlanShape, PlansRes,
   PrepState, PrepTask, PrepTrap, CrmProvider, QuestsSettings,
   AdminStats, AdminVisit, BotStatus, KpiRes, MonthSummary, NotificationsRes, RemarksRes, TasksStats, PestsStats, AuditItem, Bootstrap, CompanySettings, Task, BootstrapPartial, Company, ImportStats, Invite, Lead, Observation, OfficeChat,
-  RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup, AttendAdmin, AttendMe, AttendRow } from './types';
+  RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup, AttendAdmin, AttendMe, AttendRow, FreeCfg, FreeTimeRes } from './types';
 
 // Сессия после ввода PIN хранится только в памяти: закрыли приложение — PIN спросят снова.
 let session = '';
@@ -247,6 +247,9 @@ export const api = {
   contest: () => request<ContestRes>('GET', '/api/contest'),
   saveContest: (c: Partial<ContestSettings>) => request<{ ok: true; settings: ContestSettings }>('PUT', '/api/admin/contest', c),
   editTask: (id: string, body: Record<string, unknown>) => request<{ ok: true; changed: string[] }>('PUT', `/api/tasks/${id}/edit`, body),
+  freeTime: () => request<FreeTimeRes>('GET', '/api/free-time'),
+  freeSettings: () => request<{ settings: FreeCfg; defaults: FreeCfg }>('GET', '/api/admin/free-settings'),
+  saveFreeSettings: (s: Partial<FreeCfg>) => request<{ settings: FreeCfg }>('PUT', '/api/admin/free-settings', s),
   createAdminTask: (data: AdminTaskInput) => request<{ ok: true; id: string; task_no: number; open?: boolean }>('POST', '/api/admin/tasks', data),
   // KPI менеджеров, «Звонилка»
   mgrMe: (month?: string) => request<MgrMe>('GET', `/api/mgr/me${month ? `?month=${month}` : ''}`),
