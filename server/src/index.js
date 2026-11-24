@@ -324,11 +324,19 @@ async function prevProducts(v) {
 async function defaultProducts(v) {
   const prev = v.object_id ? await prevProducts(v) : [];
   if (prev.length) return { list: prev, src: 'object' };
-  const q = "SELECT products FROM visits WHERE procedure = $1 AND status = 'done' AND products IS NOT NULL AND products <> '[]' AND id <> $2";
-  const [own] = await db.query(`${q} AND tech_tg_id = $3 ORDER BY finished_at DESC LIMIT 1`, [v.procedure, v.id, v.tech_tg_id]);
-  if (own && visitProducts(own).length) return { list: visitProducts(own), src: 'tech' };
-  const [any] = await db.query(`${q} ORDER BY finished_at DESC LIMIT 1`, [v.procedure, v.id]);
-  if (any && visitProducts(any).length) return { list: visitProducts(any), src: 'common' };
+  // v109: новый объект — обычный набор для этой обработки (чаще всего за последние 100 актов всех сотрудников),
+  // а не последний акт сотрудника: разовая замена (например, гель) не должна переезжать на следующие объекты
+  const rows = await db.query("SELECT products FROM visits WHERE procedure = $1 AND status = 'done' AND products IS NOT NULL AND products <> '[]' AND id <> $2 ORDER BY finished_at DESC LIMIT 100", [v.procedure, v.id]);
+  const freq = new Map();
+  for (const r of rows) {
+    const list = visitProducts(r);
+    if (!list.length) continue;
+    const k = JSON.stringify([...list].sort());
+    const f = freq.get(k) || { n: 0, list };
+    f.n++; freq.set(k, f);
+  }
+  const top = [...freq.values()].sort((a, b) => b.n - a.n)[0];
+  if (top) return { list: top.list, src: 'common' };
   return { list: [], src: '' };
 }
 /** v97: координаты телефона на «Начать» / «Завершить» — удалённость и баллы без трансляции боту. */

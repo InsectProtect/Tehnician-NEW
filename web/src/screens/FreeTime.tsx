@@ -53,7 +53,6 @@ export function FreeTimeCard() {
   const [d, setD] = useState<FreeTimeRes | null>(null);
   const [di, setDi] = useState(0);
   const [opened, setOpened] = useState<Record<string, boolean>>({});
-  const [showSched, setShowSched] = useState(false);
   const [openTech, setOpenTech] = useState<string | null>(null);
   const [pick, setPick] = useState<Pick | null>(null);
   const [create, setCreate] = useState<{ tech: string; date: string; time: string } | null>(null);
@@ -123,7 +122,57 @@ export function FreeTimeCard() {
         <div className="mt-3 rounded-2xl bg-fill p-4 text-center text-[14px] text-muted">Выходной день — заявки не ставим</div>
       ) : (
         <>
-          <div className="mt-3 flex flex-col gap-2">
+          <div className="mt-4 flex items-baseline justify-between">
+            <span className="text-[13px] font-semibold uppercase tracking-wide text-muted">Заявки у техников</span>
+            <span className="text-[13px] font-semibold text-muted">всего {day.techs.reduce((s, t) => s + t.count, 0)}</span>
+          </div>
+          <div className="mt-2 flex flex-col gap-2">
+            {day.techs.map((t) => {
+              const open = openTech === t.tg;
+              const rows = [
+                ...t.busy.map((b) => ({ at: toMin(b.from), busy: true as const, b })),
+                ...t.free.map((f) => ({ at: toMin(f.from), busy: false as const, f })),
+              ].sort((a, b) => a.at - b.at);
+              return (
+                <div key={t.tg} className="rounded-2xl bg-fill">
+                  <button onClick={() => { haptic.tap(); setOpenTech(open ? null : t.tg); }} className="flex w-full items-center gap-3 px-3.5 py-3 text-left">
+                    <div className={cx('grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-[20px] font-bold tabular-nums', t.count === 0 ? 'bg-[#34C759]/15 text-[#1F7A35] dark:text-[#5FE08A]' : t.count >= 4 ? 'bg-[#FF9500]/15 text-[#C26A00] dark:text-[#FFB340]' : 'bg-accent/15 text-accent')}>{t.count}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[15px] font-semibold">{t.name}</div>
+                      <div className="text-[12.5px] leading-snug text-muted">
+                        {t.no_time ? `${t.no_time} без времени · ` : ''}
+                        {t.free.length ? `свободен ${t.free.map((f) => (toMin(f.to) >= toMin(d.cfg.to) ? `с ${f.from}` : `${f.from}–${f.to}`)).join(', ')}` : 'окон нет'}
+                      </div>
+                    </div>
+                    <ChevronDown size={18} className={cx('shrink-0 text-muted transition-transform', open && 'rotate-180')} />
+                  </button>
+                  {open && (
+                    <div className="border-t border-line px-3.5 pb-3 pt-1">
+                      {rows.length === 0 && <div className="py-2 text-[13.5px] text-muted">Окон нет{di === 0 ? ' до конца дня' : ''}</div>}
+                      {rows.map((r) => r.busy ? (
+                        <div key={`b${r.b.task_no}${r.b.from}`} className="flex items-center gap-3 py-2 text-[14px]">
+                          <span className="w-[104px] shrink-0 tabular-nums text-muted">{r.b.from}–{r.b.to}</span>
+                          <span className="min-w-0 flex-1 truncate">{r.b.label || 'заявка'}</span>
+                          <span className="shrink-0 text-[12px] text-muted">№{r.b.task_no}</span>
+                        </div>
+                      ) : (
+                        <button key={`f${r.f.from}`} onClick={() => choose({ tech: t, at: toMin(r.f.from), until: toMin(r.f.to) })}
+                          className="my-1 flex w-full items-center gap-3 rounded-xl bg-[#34C759]/15 px-2.5 py-2 text-left text-[14px] active:opacity-60">
+                          <span className="w-[104px] shrink-0 font-semibold tabular-nums text-[#1F7A35] dark:text-[#5FE08A]">{r.f.from}–{r.f.to}</span>
+                          <span className="min-w-0 flex-1 truncate text-[#1F7A35] dark:text-[#5FE08A]">{dur(r.f.min)}</span>
+                          <span className="shrink-0 text-[13px] font-semibold text-[#1F7A35] dark:text-[#5FE08A]">Поставить</span>
+                        </button>
+                      ))}
+                      {t.no_time > 0 && <div className="pt-1 text-[12.5px] text-[#C26A00] dark:text-[#FFB340]">+ {t.no_time} без времени — уточните у техника</div>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-5 text-[13px] font-semibold uppercase tracking-wide text-muted">Когда свободны</div>
+          <div className="mt-2 flex flex-col gap-2">
             {groups.length === 0 && <div className="rounded-2xl bg-fill p-4 text-center text-[14px] text-muted">{di === 0 ? 'Рабочий день уже закончился' : 'Нет рабочих часов'}</div>}
             {groups.length > 0 && !groups.some((g) => g.free.length) && (
               <div className="rounded-2xl bg-[#FF9500]/12 p-3.5 text-center text-[14px] text-[#C26A00] dark:text-[#FFB340]">В этот день все заняты — посмотрите другой день</div>
@@ -162,55 +211,6 @@ export function FreeTimeCard() {
               );
             })}
           </div>
-
-          <button onClick={() => { haptic.tap(); setShowSched(!showSched); }} className="mt-5 flex w-full items-center gap-2 text-left">
-            <span className="flex-1 text-[13px] font-semibold uppercase tracking-wide text-muted">Расписание техников · {day.label.toLowerCase()}{di > 0 ? ` ${day.date}` : ''}</span>
-            <ChevronDown size={18} className={cx('shrink-0 text-muted transition-transform', showSched && 'rotate-180')} />
-          </button>
-          {showSched && <div className="mt-2 flex flex-col gap-2">
-            {day.techs.map((t) => {
-              const open = openTech === t.tg;
-              const rows = [
-                ...t.busy.map((b) => ({ at: toMin(b.from), busy: true as const, b })),
-                ...t.free.map((f) => ({ at: toMin(f.from), busy: false as const, f })),
-              ].sort((a, b) => a.at - b.at);
-              return (
-                <div key={t.tg} className="rounded-2xl bg-fill">
-                  <button onClick={() => { haptic.tap(); setOpenTech(open ? null : t.tg); }} className="flex w-full items-center gap-3 px-3.5 py-3 text-left">
-                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent/15 text-[14px] font-semibold text-accent">{t.name.slice(0, 1)}</div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[15px] font-semibold">{t.name}</div>
-                      <div className="truncate text-[12.5px] text-muted">
-                        {t.count ? visits(t.count) : 'нет заявок'}
-                        {t.free.length ? ` · свободен ${t.free.map((f) => (toMin(f.to) >= toMin(d.cfg.to) ? `с ${f.from}` : `${f.from}–${f.to}`)).join(', ')}` : ' · окон нет'}
-                      </div>
-                    </div>
-                    <ChevronDown size={18} className={cx('shrink-0 text-muted transition-transform', open && 'rotate-180')} />
-                  </button>
-                  {open && (
-                    <div className="border-t border-line px-3.5 pb-3 pt-1">
-                      {rows.length === 0 && <div className="py-2 text-[13.5px] text-muted">Окон нет{di === 0 ? ' до конца дня' : ''}</div>}
-                      {rows.map((r) => r.busy ? (
-                        <div key={`b${r.b.task_no}${r.b.from}`} className="flex items-center gap-3 py-2 text-[14px]">
-                          <span className="w-[104px] shrink-0 tabular-nums text-muted">{r.b.from}–{r.b.to}</span>
-                          <span className="min-w-0 flex-1 truncate">{r.b.label || 'заявка'}</span>
-                          <span className="shrink-0 text-[12px] text-muted">№{r.b.task_no}</span>
-                        </div>
-                      ) : (
-                        <button key={`f${r.f.from}`} onClick={() => choose({ tech: t, at: toMin(r.f.from), until: toMin(r.f.to) })}
-                          className="my-1 flex w-full items-center gap-3 rounded-xl bg-[#34C759]/15 px-2.5 py-2 text-left text-[14px] active:opacity-60">
-                          <span className="w-[104px] shrink-0 font-semibold tabular-nums text-[#1F7A35] dark:text-[#5FE08A]">{r.f.from}–{r.f.to}</span>
-                          <span className="min-w-0 flex-1 truncate text-[#1F7A35] dark:text-[#5FE08A]">{dur(r.f.min)}</span>
-                          <span className="shrink-0 text-[13px] font-semibold text-[#1F7A35] dark:text-[#5FE08A]">Поставить</span>
-                        </button>
-                      ))}
-                      {t.no_time > 0 && <div className="pt-1 text-[12.5px] text-[#C26A00] dark:text-[#FFB340]">+ {t.no_time} без времени — уточните у техника</div>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>}
           <div className="mt-3 text-[12px] leading-snug text-muted">
             Выезд ~{dur(d.cfg.dur)} (большой объект +{dur(d.cfg.big_add)}), дорога между заявками {d.cfg.road} мин — уже учтены.
           </div>
