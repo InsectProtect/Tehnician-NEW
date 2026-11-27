@@ -233,7 +233,7 @@ function cutShortTemplate(text, staff) {
 export function extractDeal(text) {
   let t = String(text || '');
   const out = { rooms: null, stage: '', price: null, mult: null, sotki: null };
-  const m = t.match(/(^|[\s,;])(?:(\d{1,2})\s+)?([1-9])\s*\/\s*([1-9])\s+(\d{3,6})(?:\s*(?:lei|лей|mdl|л))?(?=[\s,;.]|$)/i);
+  const m = t.match(/(^|[\s,;])(?:(\d{1,2})\s+)?([1-9])\s*\/\s*([1-9])\s+(\d{3,6})(?:\s*(?:lei|лей|mdl|л))?(?=[\s,;.(]|$)/i);
   if (m && Number(m[3]) <= Number(m[4])) {
     if (m[2] && Number(m[2]) >= 1 && Number(m[2]) <= 20) out.rooms = Number(m[2]);
     out.stage = `${m[3]}/${m[4]}`;
@@ -255,7 +255,7 @@ export function extractDeal(text) {
     }
   }
   if (out.price == null) {
-    const pr2 = t.match(/(^|§|\n)[\s,]*(\d{3,6})(?:\s*(?:lei|лей|mdl|л))?(?=[\s,.;]|$)/);
+    const pr2 = t.match(/(^|§|\n)[\s,]*(\d{3,6})(?:\s*(?:lei|лей|mdl|л))?(?=[\s,.;(]|$)/);
     if (pr2 && Number(pr2[2]) >= 100) { out.price = Number(pr2[2]); t = t.replace(pr2[0], `${pr2[1]} `); }
   }
   // участок: «10 соток», «6 сот.»
@@ -271,8 +271,53 @@ export function extractDeal(text) {
   return out;
 }
 
+// v111: адрес ≠ комментарий. Слова-пометки («suna…», «(3x dispozitive…)», «+deratizare…»), всё после «ap. 63»
+// и скобки с текстом уходят из адреса/клиента в комментарий.
+const NOTE_WORD = /(^|[\s,(+])(sun[aăi]\S*|telefon\S*|preventiv|interfon|domofon|cod(ul)?|c[aâ]in[ei]?|dispozitiv\S*|ultrasunet|cea[țt]a|deratiz\S*|dezinsec\S*|dezinf\S*|abtipild\S*|chei[ae]?|звон\S*|позвон\S*|домофон\S*|код|предупред\S*|ключ\S*|собак\S*|ждать|ожида\S*)(?=[\s,.:;)!]|$)/iu;
+const ADDR_PAREN = /^\s*(bl|sc|et|ap|apt|bloc|corp|кв|под|эт|корп)\.?\s*\d/iu;
+export function splitNote(s0) {
+  let s = String(s0 || '');
+  const notes = [];
+  // скобки с текстом (в т.ч. незакрытая до конца строки): «(suna in apartamentul 64)», «( 3x dispozitive cu ultrasunet)»
+  s = s.replace(/\(([^()]*)\)|\(([^()]*)$/g, (all, a, b) => {
+    const inner = (a ?? b ?? '').trim();
+    if (!inner || !/\p{L}{3,}/u.test(inner) || ADDR_PAREN.test(inner) || !NOTE_WORD.test(` ${inner}`)) return all;
+    notes.push(inner.replace(/[:\s]+$/, ''));
+    return ' ';
+  });
+  // «… +deratizare interior», «… suna cum termini» — от пометки до конца
+  const plus = s.match(/\s*\+\s*(?=\p{L})/u);
+  if (plus && plus.index > 0) { notes.push(s.slice(plus.index).replace(/^\s*\+\s*/, '')); s = s.slice(0, plus.index); }
+  const kw = s.match(NOTE_WORD);
+  if (kw && kw.index > 0 && /\d/.test(s.slice(0, kw.index))) { notes.push(s.slice(kw.index).replace(/^[\s,]+/, '')); s = s.slice(0, kw.index); }
+  // после квартиры («ap. 63», «кв. 5») — только город/район, остальное — пометка
+  const ap = s.match(/(^|[\s,])(ap|apt|кв)\.?\s*\d+\p{L}?/iu);
+  if (ap) {
+    const end = ap.index + ap[0].length;
+    const after = s.slice(end).replace(/^[\s,;.]+/, '').trim();
+    if (after && /\p{L}{3,}/u.test(after) && !CITY_RE.test(after.replace(/[,;.\s]+$/, '')) && !REGION_LINE.test(after)) { notes.push(after); s = s.slice(0, end); }
+  }
+  s = s.replace(/\s{2,}/g, ' ').replace(/^[,\s]+|[,\s;:]+$/g, '').trim();
+  return { text: s, notes: notes.map((n) => n.replace(/^[,\s;:]+|[,\s;:]+$/g, '').trim()).filter(Boolean) };
+}
+/** «str. Saharov\n6 (ceata rece) …» — номер дома на следующей строке приклеиваем к улице. */
+function joinHouseNumber(text) {
+  const L = text.split('\n');
+  for (let i = 0; i < L.length - 1; i++) {
+    if (!ADDRESS_MARK.test(` ${L[i]}`) || /\d/.test(L[i].replace(/\b\d{1,2}[.:]\d{2}(\.\d{2,4})?\b/g, ''))) continue;
+    const m = L[i + 1].match(/^\s*(\d{1,4}\p{L}?(?:\s*\/\s*\d{1,4}\p{L}?)?)(?=[\s,;]|$)/u);
+    if (!m) continue;
+    const st = m[1].match(/^(\d)\s*\/\s*(\d)$/);
+    if (st && Number(st[1]) <= Number(st[2])) continue; // «1/2» — этап, не дом
+    if (/^\d{1,2}[.:]\d{2}/.test(L[i + 1].trim())) continue; // время/дата
+    L[i] = `${L[i].replace(/[,\s]+$/, '')} ${m[1].replace(/\s+/g, '')}`;
+    L[i + 1] = L[i + 1].slice(m[0].length).replace(/^[\s,]+/, '');
+  }
+  return L.filter((l, i) => l.trim() || i === 0).join('\n');
+}
+
 export function parseTask(text, now = new Date(), opts = {}) {
-  const cut = cutShortTemplate(String(text || '').trim(), opts.staff || []);
+  const cut = cutShortTemplate(joinHouseNumber(String(text || '').trim()), opts.staff || []);
   const deal = extractDeal(cut.text);
   const raw = deal.text.trim();
   if (!raw || raw.startsWith('/')) return null;
@@ -401,11 +446,12 @@ export function parseTask(text, now = new Date(), opts = {}) {
     const bare = clean.replace(/[,;.\s]+$/, '').trim();
     if (bare && APT_LINE.test(bare)) { aptParts.push(bare); continue; }
     if (bare && CITY_RE.test(bare)) { cities.push(bare); continue; }
-    if (!out.address && ADDRESS_MARK.test(` ${line}`) && out.phone && line.includes(out.phone)) {
+    const phAt = out.phone ? line.search(new RegExp(`(?<!\\d)${out.phone.replace(/[+]/g, '\\+')}(?!\\d)`)) : -1;
+    if (!out.address && ADDRESS_MARK.test(` ${line}`) && out.phone && phAt >= 0) {
       // «str. Lupu 24 Radu 79672212 roscat 1 2/2 1000»: адрес — до имени и телефона, остальное — в комментарий
-      let before = line.slice(0, line.indexOf(out.phone))
+      let before = line.slice(0, phAt)
         .replace(/(^|[\s,])\d{1,2}\.\d{1,2}(\.\d{2,4})?(?=[\s,]|$)|\b\d{1,2}:\d{2}\b/g, ' ').replace(/\s{2,}/g, ' ').trim();
-      const after = stripPests(line.slice(line.indexOf(out.phone) + out.phone.length).trim());
+      const after = stripPests(line.slice(phAt + out.phone.length).trim());
       const nm = before.match(/[\s,]+(\p{Lu}\p{Ll}{2,})$/u);
       if (nm && !ADDRESS_MARK.test(` ${nm[1]} `)) before = before.slice(0, nm.index).trim();
       out.address = stripPests(before).replace(/[,\s]+$/, '') || before;
@@ -460,6 +506,9 @@ export function parseTask(text, now = new Date(), opts = {}) {
   if (aptParts.length) out.address = [out.address, ...aptParts].filter(Boolean).join(', ');
   for (const c of cities) if (!norm(out.address).includes(norm(c).replace(/^(or|mun|г|s|sat|com)\.?\s*/, ''))) out.address = [out.address, c].filter(Boolean).join(', ');
   out.address = out.address.replace(/\s+(r-?l\.?|raionul|р-н)\s/giu, ', $1 ').replace(/,\s*,/g, ',');
+  { const a = splitNote(out.address); out.address = a.text; const c = splitNote(out.company); out.company = c.text;
+    if (out.company && CITY_RE.test(out.company.replace(/[,;.\s]+$/, ''))) { if (!norm(out.address).includes(norm(out.company).replace(/^(or|mun|г|s|sat|com)\.?\s*/, ''))) out.address = [out.address, out.company].filter(Boolean).join(', '); out.company = ''; }
+    tail.push(...a.notes, ...c.notes); }
   const methodLine = cut.methods.length ? `Метод: ${[...new Set(cut.methods)].join(' ')}` : '';
   if (rest.length || tail.length || methodLine) out.comment = [methodLine, out.comment, ...rest, ...tail].filter(Boolean).join('\n');
   out.comment = out.comment.replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
