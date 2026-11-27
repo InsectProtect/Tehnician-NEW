@@ -35,6 +35,7 @@ import { BotStatusSheet } from './BotStatus';
 import { KpiPanel } from './Kpi';
 import { MgrHero, SalesPanel, setSalesFocus } from './Sales';
 import { AttendCard } from './Attend';
+import { IssuesCard } from './Issues';
 import { RoomsDisputesWidget } from './Rooms';
 import { CarsPanel } from './Car';
 import { CashPanel } from './Cash';
@@ -134,6 +135,7 @@ function Overview({ period, setPeriod, onOpen, onActs, onSettings, onTab }: { pe
   return (
     <>
       <RoomsDisputesWidget />
+      <IssuesCard />
       {cfg.user.role === 'manager' && <AttendCard />}
       {cfg.user.role === 'manager' && <MgrHero onOpen={(f) => { setSalesFocus(f || ''); onTab('sales'); }} />}
       {can(cfg, 'tasks') && <FreeTimeCard />}

@@ -19,6 +19,7 @@ import { playSound } from '../sounds';
 import { CashWidget } from './Cash';
 import { ScanButton } from './ScanStart';
 import { PlanButton, PrepButton } from './Prep';
+import { IssueButton } from './Issues';
 import { PestMask } from '../components/PestMask';
 import { LevelsSheet } from '../components/LevelsSheet';
 import { LOC } from '../locale';
@@ -348,6 +349,7 @@ export function GameTop({ onOpenVisit }: { onOpenVisit: (id: string) => void }) 
       <ScanButton onOpenVisit={onOpenVisit} />
       <PrepButton />
       <PlanButton />
+      <IssueButton />
       <PlanBoss />
       <MoreWorkButton />
       {sheets}

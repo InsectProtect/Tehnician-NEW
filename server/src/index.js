@@ -24,6 +24,7 @@ import { initCash } from './cash.js';
 import { initPlans, sameAddress } from './plans.js';
 import { initFree } from './freetime.js';
 import { initAttend } from './attend.js';
+import { initIssues } from './issues.js';
 import { PREMISES, REENTRY, reentryDefault } from './premises.js';
 import { reverseGeocode, forwardGeocode } from './geo.js';
 import { qrSvg } from './qr.js';
@@ -677,6 +678,7 @@ function permFor(method, path) {
   if (/^\/api\/admin\/(cars|car-checks|car-request)(\/|$)/.test(path)) return null;
   for (const [perm, re] of PERM_RULES) if (re.test(path)) return perm;
   if (/^\/api\/admin\/(office\/chats|bot-status)$/.test(path) && method === 'GET') return null;
+  if (/^\/api\/admin\/issues(\/|$)/.test(path)) return null; // v117: сообщения об ошибках видят все менеджеры
   if (/^\/api\/admin\//.test(path)) return 'settings';
   return null;
 }
@@ -5035,6 +5037,7 @@ function distM(a, b) {
 }
 // v89: пунктуальность менеджеров (отметка прихода по геопозиции офиса)
 initFree({ db, route, must, getSetting, setSetting, audit, TZN });
+const issues = initIssues({ db, route, must, str, uid, now, audit, notifyTech, addNotification, botEnabled, sendMessage, editMessage, deleteMessage, escHtml, publicBase, TZN });
 const attend = initAttend({ db, route, must, str, uid, now, getSetting, setSetting, audit, awardXp, notifyTech, publicBase, TZN, questsCfg, distM });
 /** «Утренний кофе в офисе»: точка рядом с офисом в утреннем окне → квест засчитан (один раз в день). */
 async function checkCoffee(tgId, lat, lon, { notify = false } = {}) {
@@ -7040,6 +7043,13 @@ async function handleCallback(q) {
   if (data.startsWith('tclaim:')) {
     const r = await claimTask(data.slice(7), q.from?.id);
     return answerCallback(q.id, r.error || 'Заявка ваша!');
+  }
+  if (data.startsWith('isack:')) {
+    const [actor] = await db.query("SELECT * FROM users WHERE tg_id = $1 AND status = 'active'", [String(q.from?.id)]);
+    if (!actor || !['admin', 'manager'].includes(actor.role)) return answerCallback(q.id, 'Только менеджер или администратор');
+    let r;
+    try { r = await issues.onCallback(data, { ...actor, id: actor.tg_id }); } catch (e) { return answerCallback(q.id, e.message); }
+    return answerCallback(q.id, r?.already ? `Уже уведомлен: ${r.ack_name}` : 'Спасибо, дезинсектор получит ответ');
   }
   if (data.startsWith('attok:')) {
     const [actor] = await db.query("SELECT * FROM users WHERE tg_id = $1 AND status = 'active'", [String(q.from?.id)]);

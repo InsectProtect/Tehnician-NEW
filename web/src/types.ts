@@ -648,3 +648,7 @@ export type FreeSlot = { from: string; to: string; min: number; prev: string };
 export type FreeTech = { tg: string; name: string; count: number; no_time: number; busy_min: number; busy: { from: string; to: string; label: string; task_no: number }[]; free: FreeSlot[] };
 export type FreeDay = { day: string; wd: number; label: string; date: string; off: boolean; techs: FreeTech[] };
 export type FreeTimeRes = { cfg: FreeCfg; now: string; today: string; days: FreeDay[]; best: (FreeSlot & { tg: string; name: string; day: string; label: string; date: string })[] };
+
+/** v117: сообщение дезинсектора об ошибке менеджеру. */
+export type IssueTask = { id: string; task_no: number; title: string; when: string };
+export type TechIssue = { id: string; text: string; status: 'new' | 'ack'; created_at: string; ack_at: string | null; ack_name: string; pings: number; tech: string; tech_tg: string; task: IssueTask | null };

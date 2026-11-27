@@ -3,7 +3,7 @@ import type {
   LabelBatch, LabelsInfo, LabelsInput, ObjectPlan, PlanShape, PlansRes,
   PrepState, PrepTask, PrepTrap, CrmProvider, QuestsSettings,
   AdminStats, AdminVisit, BotStatus, KpiRes, MonthSummary, NotificationsRes, RemarksRes, TasksStats, PestsStats, AuditItem, Bootstrap, CompanySettings, Task, BootstrapPartial, Company, ImportStats, Invite, Lead, Observation, OfficeChat,
-  RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup, AttendAdmin, AttendMe, AttendRow, FreeCfg, FreeTimeRes } from './types';
+  RecBlock, StaffUser, AnnulRequest, PointsConfig, KpiPlanRes, KpiSettings, MyPlan, Specialist, SpecialistDetail, KpiPlanRow, TimelinessRow, OfficeCall, AdjRule, KpiAdjust, RemarkType, CoachMsg, MediaSettings, MyMedia, MediaPost, MediaStats, Job, Assignee, JobInput, AdminTaskInput, Features, ContestRes, ContestSettings, RecalcRes, Payment, GameState, ShiftState, InboxRes, RouteInfo, LiveItem, Reward, GeoSettings, GuardRes, GuardSettings, Announcement, AnnouncementAdmin, MgrMe, MgrGame, RoomsDispute, CarRes, CarFleet, CarDetail, CarSettings, CrmSettings, CallOutcome, SalesList, SalesDetail, SalesCfg, SalesSettings, AnnouncementInput, Audience, InspectionInput, ScanResult, SiteObject, Trap, Visit, VisitSummary, CashMe, CashOverview, ScanLookup, AttendAdmin, AttendMe, AttendRow, FreeCfg, FreeTimeRes, IssueTask, TechIssue } from './types';
 
 // Сессия после ввода PIN хранится только в памяти: закрыли приложение — PIN спросят снова.
 let session = '';
@@ -248,6 +248,10 @@ export const api = {
   saveContest: (c: Partial<ContestSettings>) => request<{ ok: true; settings: ContestSettings }>('PUT', '/api/admin/contest', c),
   editTask: (id: string, body: Record<string, unknown>) => request<{ ok: true; changed: string[] }>('PUT', `/api/tasks/${id}/edit`, body),
   freeTime: () => request<FreeTimeRes>('GET', '/api/free-time'),
+  issueForm: () => request<{ tasks: IssueTask[]; mine: TechIssue[] }>('GET', '/api/issues/form'),
+  sendIssue: (data: { text: string; task_id?: string }) => request<{ ok: boolean; sent_to: number }>('POST', '/api/issues', data),
+  adminIssues: () => request<{ items: TechIssue[] }>('GET', '/api/admin/issues'),
+  ackIssue: (id: string) => request<{ ok?: boolean; already?: boolean; ack_name?: string }>('POST', `/api/admin/issues/${id}/ack`),
   freeSettings: () => request<{ settings: FreeCfg; defaults: FreeCfg }>('GET', '/api/admin/free-settings'),
   saveFreeSettings: (s: Partial<FreeCfg>) => request<{ settings: FreeCfg }>('PUT', '/api/admin/free-settings', s),
   parseTaskText: (text: string) => request<{ company: string; address: string; phone: string; comment: string; procedure: string; pests: string[]; area: string; rooms: number | null; stage: string; price: number | null; sotki: number | null; date: string; time: string }>('POST', '/api/tasks/parse', { text }),
