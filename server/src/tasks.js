@@ -519,6 +519,18 @@ export function parseTask(text, now = new Date(), opts = {}) {
   // заявка = адрес, либо имя/название плюс вредитель или тип обработки
   const details = out.pests.length || out.procedure;
   if (!out.address && !(out.company && details)) return null;
+  // v112: этап «1/2» без цены остался в клиенте/комментарии («Tractornii 1/2») — это этап, не текст
+  if (!deal.stage) {
+    for (const k of ['company', 'comment']) {
+      const m = out[k].match(/(^|[\s,;])(?:(\d{1,2})\s+)?([1-9])\s*\/\s*([1-9])(?=[\s,;.]|$)/);
+      if (m && Number(m[3]) <= Number(m[4]) && Number(m[4]) <= 6) {
+        deal.stage = `${m[3]}/${m[4]}`;
+        if (m[2] && deal.rooms == null && Number(m[2]) >= 1 && Number(m[2]) <= 20) deal.rooms = Number(m[2]);
+        out[k] = out[k].replace(m[0], m[1]).replace(/[ \t]{2,}/g, ' ').split('\n').map((l) => l.trim()).filter(Boolean).join('\n').trim();
+        break;
+      }
+    }
+  }
   out.rooms = deal.rooms;
   out.stage = deal.stage;
   out.price = deal.price;
