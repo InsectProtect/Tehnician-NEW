@@ -277,6 +277,12 @@ const NOTE_WORD = /(^|[\s,(+])(sun[aăi]\S*|telefon\S*|preventiv|interfon|domofo
 // v113: «Контакт:» — только если слово похоже на имя; иначе это просто комментарий («Macon», «Tractornii»)
 const FIRST_NAMES = new Set('ion ivan ioan vasile victor vitalie vlad vladimir valeriu valentina valentin alexandru alexandr alexei aleksei andrei artiom artur anatol anatolie alina ana anna angela adriana aurelia boris constantin cristina cristian corina diana dmitri dumitru denis doina elena eugen eugenia evgheni gheorghe grigore igor irina iurie iulia inna ina lilia liliana ludmila lucia maria marina mihai mihail maxim nadejda natalia nicolae nina oleg olga octavian pavel petru radu roman ruslan sergiu serghei sergei silvia stela svetlana sorin tatiana tudor vera veronica viorica vadim valeria zinaida ольга ирина наталья наталия елена мария анна татьяна светлана людмила галина нина вера надежда марина юлия алина виктория иван сергей андрей александр алексей дмитрий виктор владимир николай михаил игорь олег юрий павел максим роман денис вадим'.split(' '));
 const contactLine = (w) => (FIRST_NAMES.has(norm(w)) ? `Контакт: ${w}` : w);
+/** v115: пометки в скобках («(suna la 12:00)») не трогаем, когда вырезаем дату/время заявки. */
+function keepParens(str, fn) {
+  const saved = [];
+  const t = String(str).replace(/\([^()]*\p{L}{2,}[^()]*\)/gu, (m) => { saved.push(m); return `\u0001${saved.length - 1}\u0001`; });
+  return fn(t).replace(/\u0001(\d+)\u0001/g, (m, i) => saved[Number(i)]);
+}
 const STREET_MARK = /(^|[\s,(])(ул\.?|улица|пр-т|просп\.?|проспект|бул\.?|бульвар|пер\.?|переулок|str\.?|strada|stradela|bd\.?|bul\.?|bulevardul|bd-ul|pia[țţt]a|[șşs]os\.?|[șşs]oseaua|aleea|calea)(?=[\s.]|\p{Lu})/iu;
 const APT_PART = /(?:ap|apt|sc|et|bl|bloc|etaj|scara|corp|кв|под|подъезд|эт|этаж|корп)\.?\s*\d+\p{L}?/giu;
 const ADDR_PAREN = /^\s*(bl|sc|et|ap|apt|bloc|corp|кв|под|эт|корп)\.?\s*\d/iu;
@@ -407,11 +413,13 @@ export function parseTask(text, now = new Date(), opts = {}) {
   if (!out.phone) {
     for (const line of free) {
       for (const seg of line.split(/[,;]/)) {
-        const mm = seg.match(/(\+?\(?\d[\d\s()-]{6,}\d)/);
+        const mm = seg.match(/(?<![\d:.])(\+?\(?\d[\d\s()-]{6,}\d)/);
         if (!mm) continue;
         // отрезаем ведущие короткие группы («кв 45 069…»)
         let cand = mm[1].trim();
         const groups = cand.split(/\s+/);
+        // «…12:00) 69981109» — обрывок с «)» без «(» — не часть номера
+        while (groups.length > 1 && /\)/.test(groups[0]) && !/\(/.test(groups[0])) { groups.shift(); cand = groups.join(' '); }
         while (groups.length > 1 && cand.replace(/\D/g, '').length > 13) { groups.shift(); cand = groups.join(' '); }
         while (groups.length > 1 && !groups[0].startsWith('+') && !groups[0].startsWith('0') && groups[0].length <= 3 && groups.slice(1).join('').replace(/\D/g, '').length >= 8) {
           groups.shift(); cand = groups.join(' ');
@@ -470,9 +478,9 @@ export function parseTask(text, now = new Date(), opts = {}) {
   const aptParts = []; // «sc.1», «et.3», «ap.6» отдельными строками — к адресу
   const cities = []; // «Orhei», «Tiraspol» отдельной частью — город к адресу
   for (const line of parts) {
-    const clean0 = (out.phone ? line.replace(out.phone, '') : line)
+    const clean0 = keepParens(out.phone ? line.replace(out.phone, '') : line, (x) => x
       .replace(/(^|[\s,])\d{1,2}\.\d{1,2}(\.\d{2,4})?(?=[\s,]|$)|\b\d{1,2}:\d{2}\b|(^|[\s,])(в|la)\s*$/g, ' ')
-      .replace(DATE_WORDS, ' ')
+      .replace(DATE_WORDS, ' '))
 
       .replace(/\s{2,}/g, ' ').replace(/[,\s]+$/, '').replace(/^[,\s]+/, '').trim();
     const withDate = clean0;
@@ -483,11 +491,11 @@ export function parseTask(text, now = new Date(), opts = {}) {
     const bare = clean.replace(/[,;.\s]+$/, '').trim();
     if (bare && APT_LINE.test(bare)) { aptParts.push(bare); continue; }
     if (bare && CITY_RE.test(bare)) { cities.push(bare); continue; }
-    const phAt = out.phone ? line.search(new RegExp(`(?<!\\d)${out.phone.replace(/[+]/g, '\\+')}(?!\\d)`)) : -1;
+    const phAt = out.phone ? line.search(new RegExp(`(?<!\\d)${out.phone.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\d)`)) : -1;
     if (!out.address && ADDRESS_MARK.test(` ${line}`) && out.phone && phAt >= 0) {
       // «str. Lupu 24 Radu 79672212 roscat 1 2/2 1000»: адрес — до имени и телефона, остальное — в комментарий
-      let before = line.slice(0, phAt)
-        .replace(/(^|[\s,])\d{1,2}\.\d{1,2}(\.\d{2,4})?(?=[\s,]|$)|\b\d{1,2}:\d{2}\b/g, ' ').replace(/\s{2,}/g, ' ').trim();
+      let before = keepParens(line.slice(0, phAt), (x) => x
+        .replace(/(^|[\s,])\d{1,2}\.\d{1,2}(\.\d{2,4})?(?=[\s,]|$)|\b\d{1,2}:\d{2}\b/g, ' ')).replace(/\s{2,}/g, ' ').trim();
       const after = stripPests(line.slice(phAt + out.phone.length).trim());
       const nm = before.match(/(?<=\d\p{L}?)[\s,]+(\p{Lu}\p{Ll}{2,})$/u);
       if (nm && !ADDRESS_MARK.test(` ${nm[1]} `)) before = before.slice(0, nm.index).trim();

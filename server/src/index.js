@@ -7578,8 +7578,19 @@ server.listen(PORT, async () => {
   }
   startKeepAlive(base);
   fixTasksOnce().catch((e) => console.error('fixTasksOnce:', e.message));
+  fixTask402().catch((e) => console.error('fixTask402:', e.message));
 });
 
+/** v115: №402 — пометка «(suna la 12:00)» потеряла время при разборе. */
+async function fixTask402() {
+  if (await getSetting('fix_tasks_v115', null)) return;
+  await setSetting('fix_tasks_v115', now());
+  const [t] = await db.query("SELECT * FROM tasks WHERE task_no = 402 AND comment = 'Macon (suna :' AND status IN ('new', 'pending', 'open', 'in_progress')");
+  if (!t) return;
+  await db.query('UPDATE tasks SET comment = $1, updated_at = $2 WHERE id = $3', ['Macon (suna la 12:00)', now(), t.id]);
+  await audit(null, 'Заявка: комментарий восстановлен (v115)', '№402', 'Macon (suna : → Macon (suna la 12:00)');
+  await refreshTaskMsg(t.id).catch(() => {});
+}
 /** v114: разовая правка активных заявок, где пометки попали в адрес (по просьбе владельца). Меняет, только если поле
  *  ещё такое, как было (никто не исправил вручную). Флаг — setting `fix_tasks_v114`. */
 async function fixTasksOnce() {
