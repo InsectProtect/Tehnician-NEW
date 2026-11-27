@@ -7577,7 +7577,38 @@ server.listen(PORT, async () => {
     }
   }
   startKeepAlive(base);
+  fixTasksOnce().catch((e) => console.error('fixTasksOnce:', e.message));
 });
+
+/** v114: разовая правка активных заявок, где пометки попали в адрес (по просьбе владельца). Меняет, только если поле
+ *  ещё такое, как было (никто не исправил вручную). Флаг — setting `fix_tasks_v114`. */
+async function fixTasksOnce() {
+  if (await getSetting('fix_tasks_v114', null)) return;
+  await setSetting('fix_tasks_v114', now());
+  const FIX = [
+    { no: 400, was: 'Strada Meșterul Manole 20 ( 3x dispozitive cu ultrasunet)', address: 'Strada Meșterul Manole 20', comment: '3x dispozitive cu ultrasunet', stage: '1/2' },
+    { no: 401, was: 'str.Varnița 18', address: 'str.Varnița 18, mun.Chișinău', company: '', comment: 'suna cu o ora preventiv' },
+    { no: 403, was: 'str. Columna', address: 'str. Columna 170', comment: 'Tractornii', stage: '1/2' },
+    { no: 404, was: 'str. Academician Andrei Saharov', address: 'str. Academician Andrei Saharov 6', comment: 'ceata rece\ncu cardul', rooms: 1, stage: '2/2', price: 1000 },
+    { no: 405, was: 'Franzeluta F/p nr.3 secția mecanică (ceata rece)+deratizare interior ia abtipildurile 66 606', address: 'Franzeluta F/p nr.3 secția mecanică', comment: 'Метод: RECE\nceata rece + deratizare interior, ia abtipildurile 66 606' },
+    { no: 409, was: 'str. Basarab 5/5, sc. 4, et. 5 ap. 63 (suna in apartamentul 64) suna cum termini', address: 'str. Basarab 5/5, sc. 4, et. 5 ap. 63', comment: 'suna in apartamentul 64\nsuna cum termini' },
+  ];
+  for (const f of FIX) {
+    const [t] = await db.query("SELECT * FROM tasks WHERE task_no = $1 AND address = $2 AND status IN ('new', 'pending', 'open', 'in_progress')", [f.no, f.was]);
+    if (!t) continue;
+    const set = { address: f.address, comment: f.comment };
+    if ('company' in f) set.company_name = f.company;
+    if (f.stage && !t.stage) set.stage = f.stage;
+    if (f.rooms && t.rooms == null) set.rooms = f.rooms;
+    if (f.price && t.price == null) set.price = f.price;
+    const keys = Object.keys(set);
+    await db.query(`UPDATE tasks SET ${keys.map((k, i) => `${k} = $${i + 1}`).join(', ')}, updated_at = $${keys.length + 1} WHERE id = $${keys.length + 2}`, [...keys.map((k) => set[k]), now(), t.id]);
+    if (t.visit_id) await db.query("UPDATE visits SET address = $1 WHERE id = $2 AND status = 'open'", [f.address, t.visit_id]).catch(() => {});
+    await audit(null, 'Заявка: адрес и комментарий разделены (v114)', `№${f.no}`, `${f.was} → ${f.address} | ${f.comment.replace(/\n/g, ' / ')}`);
+    await refreshTaskMsg(t.id).catch(() => {});
+    console.log(`fixTasksOnce: №${f.no}`);
+  }
+}
 
 /**
  * Render Free усыпляет сервис после 15 минут без входящих запросов — тогда не приходят заявки

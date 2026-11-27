@@ -303,7 +303,9 @@ export function splitNote(s0) {
     if (after && /\p{L}{3,}/u.test(after) && !CITY_RE.test(after.replace(/[,;.\s]+$/, '')) && !REGION_LINE.test(after)) { notes.push(after); s = s.slice(0, end); }
   }
   // v113: «улица + номер дома», дальше — комментарий (кроме sc./et./ap./bl., города и района)
-  const street = s.match(STREET_MARK);
+  // «Columna 170 Tractornii» без «str.» — слова и сразу номер дома в начале тоже улица (но не «nr. 3», «№ 3»)
+  const bare = !STREET_MARK.test(s) && s.match(/^\s*\p{L}[\p{L}'’.-]*(?:\s+\p{L}[\p{L}'’.-]*){0,4}\s+(?=\d)/u);
+  const street = s.match(STREET_MARK) || (bare && !/(^|\s)(nr|№|n)\.?\s+$/iu.test(bare[0]) ? Object.assign([''], { index: 0 }) : null);
   if (street) {
     const NUM = /(?<![\p{L}\d.])(\d{1,4}\p{L}?(?:\s*[/-]\s*\d{1,4}\p{L}?)?)(?!\d)/gu;
     NUM.lastIndex = street.index + street[0].length;
@@ -311,7 +313,8 @@ export function splitNote(s0) {
     while ((m = NUM.exec(s))) {
       const end = m.index + m[0].length;
       const rest = s.slice(end);
-      const restNoApt = rest.replace(APT_PART, ' ');
+      // «… Tractornii 1/2» — этап в конце после слова не считается номером дома
+      const restNoApt = rest.replace(APT_PART, ' ').replace(/(\p{L}{2,}[\s,]+)(?:\d{1,2}\s+)?([1-9])\s*\/\s*([1-9])\s*$/u, (x, w, a1, b1) => (Number(a1) <= Number(b1) ? w : x));
       if (/\d/.test(restNoApt)) continue; // «str. 31 August 1989 12» — дом дальше
       const parts = rest.split(/,/);
       let keep = '';
@@ -342,8 +345,10 @@ function joinHouseNumber(text) {
     const st = m[1].match(/^(\d)\s*\/\s*(\d)$/);
     if (st && Number(st[1]) <= Number(st[2])) continue; // «1/2» — этап, не дом
     if (/^\d{1,2}[.:]\d{2}/.test(L[i + 1].trim())) continue; // время/дата
-    L[i] = `${L[i].replace(/[,\s]+$/, '')} ${m[1].replace(/\s+/g, '')}`;
-    L[i + 1] = L[i + 1].slice(m[0].length).replace(/^[\s,]+/, '');
+    // v114: вся строка с номером дома — к улице («str. Columna» ↵ «170 Tractornii 61074117 …»): хвост потом уйдёт в комментарий
+    const r = L[i + 1].slice(m[0].length).replace(/^\s+/, '');
+    L[i] = `${L[i].replace(/[,\s]+$/, '')} ${m[1].replace(/\s+/g, '')}${r.startsWith(',') ? '' : ' '}${r}`.trim();
+    L[i + 1] = '';
   }
   return L.filter((l, i) => l.trim() || i === 0).join('\n');
 }
