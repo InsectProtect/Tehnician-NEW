@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode, type InputHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type InputHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
 import { isTelegram } from '../telegram';
 
@@ -182,8 +182,19 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement> & { icon?: Re
   );
 }
 
+/** v110: поле растёт вместе с текстом — длинный комментарий виден целиком (до ~60% экрана, дальше прокрутка). */
 export function TextArea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea rows={3} {...props} className={cx(fieldCls, 'resize-none py-3', props.className)} />;
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const fit = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const max = Math.round(window.innerHeight * 0.6);
+    el.style.height = `${Math.min(el.scrollHeight + 2, max)}px`;
+    el.style.overflowY = el.scrollHeight + 2 > max ? 'auto' : 'hidden';
+  };
+  useLayoutEffect(fit, [props.value]);
+  return <textarea rows={3} {...props} ref={ref} onInput={(e) => { fit(); props.onInput?.(e); }} className={cx(fieldCls, 'resize-none py-3', props.className)} />;
 }
 
 const chipCls = (on: boolean) => cx(
