@@ -7579,8 +7579,36 @@ server.listen(PORT, async () => {
   startKeepAlive(base);
   fixTasksOnce().catch((e) => console.error('fixTasksOnce:', e.message));
   fixTask402().catch((e) => console.error('fixTask402:', e.message));
+  annNightOnce().catch((e) => console.error('annNightOnce:', e.message));
 });
 
+/** v117: разовое объявление владельца дезинсекторам и специалистам (setting `ann_night_v117`). */
+async function annNightOnce() {
+  if (await getSetting('ann_night_v117', null)) return;
+  await setSetting('ann_night_v117', now());
+  const [owner] = await db.query("SELECT tg_id, name FROM users WHERE role = 'admin' AND status = 'active' ORDER BY created_at LIMIT 1");
+  const title = 'Аппараты и химия на ночь — на склад';
+  const body = '📦 После последнего выезда каждый день завозите на склад:\n'
+    + '• 🔧 аппараты — генераторы тумана, опрыскиватели;\n'
+    + '• 🧪 всю химию — препараты, гели, приманки, концентраты.\n\n'
+    + '🚫 Оставлять на ночь в машине нельзя — замёрзнет.\n\n'
+    + '✅ Утром забираете со склада всё необходимое перед первым выездом.';
+  const author = owner?.name || 'Руководство';
+  for (const audience of ['tech', 'specialist']) {
+    const id = uid();
+    await db.query('INSERT INTO announcements (id, title, body, color, audience, author_id, author_name, expires_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id, title, body, 'alert', audience, owner?.tg_id || '', author, null, now()]);
+    const html = `❗️ <b>${escHtml(title)}</b>\n\n${escHtml(body)}\n\n— ${escHtml(author)}`;
+    for (const u of await audienceUsers(audience)) {
+      if (/^test$/i.test(String(u.name || '').trim())) continue;
+      addNotification(u.tg_id, 'ann', `❗️ ${title} — ${body}`, {}).catch(() => {});
+      if (botEnabled && /^\d+$/.test(u.tg_id)) await sendMessage(u.tg_id, html, { replyMarkup: { inline_keyboard: [[{ text: '👍 Понятно', callback_data: `annok:${id}` }]] } })
+        .then(() => console.log(`annNightOnce: → ${u.name}`))
+        .catch((e) => botSendFailed(u.tg_id, e, { about: 'объявление' }).catch(() => {}));
+    }
+  }
+  await audit({ id: owner?.tg_id || '', name: author }, 'Объявление', title, 'дезинсекторы и специалисты (v117)');
+}
 /** v115: №402 — пометка «(suna la 12:00)» потеряла время при разборе. */
 async function fixTask402() {
   if (await getSetting('fix_tasks_v115', null)) return;
