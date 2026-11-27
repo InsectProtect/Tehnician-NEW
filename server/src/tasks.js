@@ -274,6 +274,11 @@ export function extractDeal(text) {
 // v111: адрес ≠ комментарий. Слова-пометки («suna…», «(3x dispozitive…)», «+deratizare…»), всё после «ap. 63»
 // и скобки с текстом уходят из адреса/клиента в комментарий.
 const NOTE_WORD = /(^|[\s,(+])(sun[aăi]\S*|telefon\S*|preventiv|interfon|domofon|cod(ul)?|c[aâ]in[ei]?|dispozitiv\S*|ultrasunet|cea[țt]a|deratiz\S*|dezinsec\S*|dezinf\S*|abtipild\S*|chei[ae]?|звон\S*|позвон\S*|домофон\S*|код|предупред\S*|ключ\S*|собак\S*|ждать|ожида\S*)(?=[\s,.:;)!]|$)/iu;
+// v113: «Контакт:» — только если слово похоже на имя; иначе это просто комментарий («Macon», «Tractornii»)
+const FIRST_NAMES = new Set('ion ivan ioan vasile victor vitalie vlad vladimir valeriu valentina valentin alexandru alexandr alexei aleksei andrei artiom artur anatol anatolie alina ana anna angela adriana aurelia boris constantin cristina cristian corina diana dmitri dumitru denis doina elena eugen eugenia evgheni gheorghe grigore igor irina iurie iulia inna ina lilia liliana ludmila lucia maria marina mihai mihail maxim nadejda natalia nicolae nina oleg olga octavian pavel petru radu roman ruslan sergiu serghei sergei silvia stela svetlana sorin tatiana tudor vera veronica viorica vadim valeria zinaida ольга ирина наталья наталия елена мария анна татьяна светлана людмила галина нина вера надежда марина юлия алина виктория иван сергей андрей александр алексей дмитрий виктор владимир николай михаил игорь олег юрий павел максим роман денис вадим'.split(' '));
+const contactLine = (w) => (FIRST_NAMES.has(norm(w)) ? `Контакт: ${w}` : w);
+const STREET_MARK = /(^|[\s,(])(ул\.?|улица|пр-т|просп\.?|проспект|бул\.?|бульвар|пер\.?|переулок|str\.?|strada|stradela|bd\.?|bul\.?|bulevardul|bd-ul|pia[țţt]a|[șşs]os\.?|[șşs]oseaua|aleea|calea)(?=[\s.]|\p{Lu})/iu;
+const APT_PART = /(?:ap|apt|sc|et|bl|bloc|etaj|scara|corp|кв|под|подъезд|эт|этаж|корп)\.?\s*\d+\p{L}?/giu;
 const ADDR_PAREN = /^\s*(bl|sc|et|ap|apt|bloc|corp|кв|под|эт|корп)\.?\s*\d/iu;
 export function splitNote(s0) {
   let s = String(s0 || '');
@@ -296,6 +301,33 @@ export function splitNote(s0) {
     const end = ap.index + ap[0].length;
     const after = s.slice(end).replace(/^[\s,;.]+/, '').trim();
     if (after && /\p{L}{3,}/u.test(after) && !CITY_RE.test(after.replace(/[,;.\s]+$/, '')) && !REGION_LINE.test(after)) { notes.push(after); s = s.slice(0, end); }
+  }
+  // v113: «улица + номер дома», дальше — комментарий (кроме sc./et./ap./bl., города и района)
+  const street = s.match(STREET_MARK);
+  if (street) {
+    const NUM = /(?<![\p{L}\d.])(\d{1,4}\p{L}?(?:\s*[/-]\s*\d{1,4}\p{L}?)?)(?!\d)/gu;
+    NUM.lastIndex = street.index + street[0].length;
+    let m;
+    while ((m = NUM.exec(s))) {
+      const end = m.index + m[0].length;
+      const rest = s.slice(end);
+      const restNoApt = rest.replace(APT_PART, ' ');
+      if (/\d/.test(restNoApt)) continue; // «str. 31 August 1989 12» — дом дальше
+      const parts = rest.split(/,/);
+      let keep = '';
+      let i = 0;
+      for (; i < parts.length; i++) {
+        const p = parts[i].trim().replace(/[.;\s]+$/, '');
+        if (!p) { keep += i ? ',' : ''; continue; }
+        if (APT_LINE.test(p) || CITY_RE.test(p) || REGION_LINE.test(p)) { keep += (i ? ',' : '') + parts[i]; continue; }
+        const ah = p.match(new RegExp(`^((?:${APT_PART.source})[\\s,;]*)+`, 'iu'));
+        if (ah) { keep += (i ? ',' : '') + ' ' + ah[0]; parts[i] = p.slice(ah[0].length); }
+        break;
+      }
+      const note = parts.slice(i).join(',').replace(/^[\s,;:.-]+/, '').trim();
+      if (note && /\p{L}{2,}/u.test(note)) { notes.push(note); s = s.slice(0, end) + keep; }
+      break;
+    }
   }
   s = s.replace(/\s{2,}/g, ' ').replace(/^[,\s]+|[,\s;:]+$/g, '').trim();
   return { text: s, notes: notes.map((n) => n.replace(/^[,\s;:]+|[,\s;:]+$/g, '').trim()).filter(Boolean) };
@@ -452,10 +484,10 @@ export function parseTask(text, now = new Date(), opts = {}) {
       let before = line.slice(0, phAt)
         .replace(/(^|[\s,])\d{1,2}\.\d{1,2}(\.\d{2,4})?(?=[\s,]|$)|\b\d{1,2}:\d{2}\b/g, ' ').replace(/\s{2,}/g, ' ').trim();
       const after = stripPests(line.slice(phAt + out.phone.length).trim());
-      const nm = before.match(/[\s,]+(\p{Lu}\p{Ll}{2,})$/u);
+      const nm = before.match(/(?<=\d\p{L}?)[\s,]+(\p{Lu}\p{Ll}{2,})$/u);
       if (nm && !ADDRESS_MARK.test(` ${nm[1]} `)) before = before.slice(0, nm.index).trim();
       out.address = stripPests(before).replace(/[,\s]+$/, '') || before;
-      if (nm) tail.push(`Контакт: ${nm[1]}`);
+      if (nm) tail.push(contactLine(nm[1]));
       if (after) tail.push(after);
     } else if (!out.address && ADDRESS_MARK.test(` ${line}`)) out.address = clean || line;
     else if (out.address && REGION_LINE.test(clean || line)) out.address = `${out.address}, ${clean || line}`; // «rl. Ialoveni» отдельной строкой
@@ -481,7 +513,7 @@ export function parseTask(text, now = new Date(), opts = {}) {
   const nameTail = out.address.match(/(\d+[\p{L}]?(?:[/-]\d+)?)\s+(\p{Lu}\p{Ll}{2,})$/u);
   if (nameTail && !ADDRESS_MARK.test(` ${nameTail[2]} `) && !/Контакт:/.test(out.comment + tail.join(' '))) {
     out.address = out.address.slice(0, out.address.length - nameTail[2].length).trim();
-    tail.unshift(`Контакт: ${nameTail[2]}`);
+    tail.unshift(contactLine(nameTail[2]));
   }
   // «DOUBLE BEER PUB Cuza Vodă 18/2», «Strada Columna 105 COMVALANSA» — название капслоком в начале/конце адреса
   if (!out.company && out.address) {
@@ -508,7 +540,7 @@ export function parseTask(text, now = new Date(), opts = {}) {
   out.address = out.address.replace(/\s+(r-?l\.?|raionul|р-н)\s/giu, ', $1 ').replace(/,\s*,/g, ',');
   { const a = splitNote(out.address); out.address = a.text; const c = splitNote(out.company); out.company = c.text;
     if (out.company && CITY_RE.test(out.company.replace(/[,;.\s]+$/, ''))) { if (!norm(out.address).includes(norm(out.company).replace(/^(or|mun|г|s|sat|com)\.?\s*/, ''))) out.address = [out.address, out.company].filter(Boolean).join(', '); out.company = ''; }
-    tail.push(...a.notes, ...c.notes); }
+    tail.unshift(...a.notes, ...c.notes); }
   const methodLine = cut.methods.length ? `Метод: ${[...new Set(cut.methods)].join(' ')}` : '';
   if (rest.length || tail.length || methodLine) out.comment = [methodLine, out.comment, ...rest, ...tail].filter(Boolean).join('\n');
   out.comment = out.comment.replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
