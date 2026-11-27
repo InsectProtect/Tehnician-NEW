@@ -11,6 +11,7 @@ import { NewTaskSheet } from './Jobs';
  * v108: вместо графика-полосок — «Во сколько удобно клиенту?»: день → часть дня → часы, в каждом
  * часе зелёные кнопки свободных техников. Тап — заявка с техником, датой и временем. Ниже — расписание
  * каждого техника списком (занято / свободно).
+ * v116: блок «Когда свободны» (утро/день/вечер) убран — окна видны у каждого техника.
  * ================================================================================================ */
 
 const toMin = (s: string) => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
@@ -18,12 +19,6 @@ const fmt = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:$
 const dur = (min: number) => (min >= 60 ? `${String(Math.round(min / 6) / 10).replace('.', ',')} ч` : `${min} мин`);
 const first = (n: string) => n.split(' ')[0];
 const visits = (n: number) => `${n} ${n === 1 ? 'выезд' : n < 5 ? 'выезда' : 'выездов'}`;
-
-const PARTS = [
-  { id: 'morning', label: 'Утро', from: 0, to: 12 * 60 },
-  { id: 'day', label: 'День', from: 12 * 60, to: 16 * 60 },
-  { id: 'evening', label: 'Вечер', from: 16 * 60, to: 24 * 60 },
-];
 
 type Opt = { tech: FreeTech; at: number; until: number };
 type Pick = Opt & { day: FreeDay };
@@ -52,7 +47,6 @@ export function FreeTimeCard() {
   const toast = useToast();
   const [d, setD] = useState<FreeTimeRes | null>(null);
   const [di, setDi] = useState(0);
-  const [opened, setOpened] = useState<Record<string, boolean>>({});
   const [openTech, setOpenTech] = useState<string | null>(null);
   const [pick, setPick] = useState<Pick | null>(null);
   const [create, setCreate] = useState<{ tech: string; date: string; time: string } | null>(null);
@@ -63,15 +57,6 @@ export function FreeTimeCard() {
   const perDay = useMemo(() => (d ? d.days.map((x) => (x.off ? [] : hoursOf(x, d.cfg))) : []), [d]);
   if (!d) return <div data-panel className="mt-4 flex justify-center rounded-[22px] bg-card p-6"><Spinner /></div>;
   const day = d.days[di];
-  const nowMin = toMin(d.now);
-  const groups = PARTS.map((P) => {
-    const hours = (perDay[di] || []).filter((x) => x.h >= P.from && x.h < P.to && (di > 0 || x.h + 60 > nowMin));
-    const free = [...new Set(hours.flatMap((x) => x.opts.map((o) => first(o.tech.name))))];
-    return { ...P, hours, free };
-  }).filter((g) => g.hours.length);
-  const autoOpen = groups.find((g) => g.free.length)?.id;
-  const isOpen = (id: string) => opened[`${di}:${id}`] ?? id === autoOpen;
-  const toggle = (id: string) => setOpened((o) => ({ ...o, [`${di}:${id}`]: !isOpen(id) }));
   const freeHours = (i: number) => (perDay[i] || []).filter((x) => x.opts.length).length;
   const choose = (o: Opt, D: FreeDay = day) => { haptic.tap(); setPick({ ...o, day: D }); };
   const best = d.best[0];
@@ -171,46 +156,6 @@ export function FreeTimeCard() {
             })}
           </div>
 
-          <div className="mt-5 text-[13px] font-semibold uppercase tracking-wide text-muted">Когда свободны</div>
-          <div className="mt-2 flex flex-col gap-2">
-            {groups.length === 0 && <div className="rounded-2xl bg-fill p-4 text-center text-[14px] text-muted">{di === 0 ? 'Рабочий день уже закончился' : 'Нет рабочих часов'}</div>}
-            {groups.length > 0 && !groups.some((g) => g.free.length) && (
-              <div className="rounded-2xl bg-[#FF9500]/12 p-3.5 text-center text-[14px] text-[#C26A00] dark:text-[#FFB340]">В этот день все заняты — посмотрите другой день</div>
-            )}
-            {groups.map((g) => {
-              const open = isOpen(g.id);
-              return (
-                <div key={g.id} className="rounded-2xl bg-fill">
-                  <button onClick={() => { haptic.tap(); toggle(g.id); }} className="flex w-full items-center gap-3 px-3.5 py-3 text-left">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[16px] font-semibold">{g.label} <span className="text-[13px] font-medium text-muted">{fmt(g.hours[0].h).slice(0, 2)}–{fmt(g.hours[g.hours.length - 1].h + 60).slice(0, 2)} ч</span></div>
-                      <div className={cx('truncate text-[13px] font-medium', g.free.length ? 'text-[#1F7A35] dark:text-[#5FE08A]' : 'text-muted')}>
-                        {g.free.length ? `свободны: ${g.free.join(', ')}` : 'все заняты'}
-                      </div>
-                    </div>
-                    <ChevronDown size={18} className={cx('shrink-0 text-muted transition-transform', open && 'rotate-180')} />
-                  </button>
-                  {open && (
-                    <div className="flex flex-col gap-1 border-t border-line px-2 py-2">
-                      {g.hours.map(({ h, opts }) => (
-                        <div key={h} className={cx('flex items-start gap-3 rounded-xl px-1.5 py-1', !opts.length && 'opacity-45')}>
-                          <div className="w-[52px] shrink-0 pt-[7px] text-[17px] font-semibold tabular-nums">{fmt(h)}</div>
-                          <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-                            {opts.length ? opts.map((o) => (
-                              <button key={o.tech.tg} data-chip onClick={() => choose(o)}
-                                className="rounded-xl bg-[#34C759]/15 px-3 py-[7px] text-[14.5px] font-semibold text-[#1F7A35] active:opacity-60 dark:text-[#5FE08A]">
-                                {first(o.tech.name)}{o.at !== h && <span className="ml-1 text-[12px] font-medium opacity-75">с {fmt(o.at)}</span>}
-                              </button>
-                            )) : <span className="pt-[7px] text-[13.5px] text-muted">все заняты</span>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
           <div className="mt-3 text-[12px] leading-snug text-muted">
             Выезд ~{dur(d.cfg.dur)} (большой объект +{dur(d.cfg.big_add)}), дорога между заявками {d.cfg.road} мин — уже учтены.
           </div>
