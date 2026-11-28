@@ -14,6 +14,8 @@ export const FREE_DEFAULTS = {
   road: 30, // дорога между выездами, мин
   min_slot: 60, // окна короче — не показываем
   days: 7,
+  geo_on: true, // v118: подсказка «Кто ближе» под новой заявкой
+  geo_min_km: 5, // …если экономия от N км
 };
 const hm = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '')); return m && +m[1] < 24 && +m[2] < 60 ? +m[1] * 60 + +m[2] : null; };
 const fmt = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
@@ -33,6 +35,8 @@ export function normFree(x = {}, cur = FREE_DEFAULTS) {
     road: clamp(Math.round(num(x.road, cur.road)), 0, 240),
     min_slot: clamp(Math.round(num(x.min_slot, cur.min_slot)), 15, 480),
     days: clamp(Math.round(num(x.days, cur.days)), 1, 14),
+    geo_on: typeof x.geo_on === 'boolean' ? x.geo_on : cur.geo_on !== false,
+    geo_min_km: clamp(Math.round(num(x.geo_min_km, cur.geo_min_km ?? 5)), 1, 100),
   };
 }
 

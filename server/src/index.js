@@ -24,6 +24,7 @@ import { initCash } from './cash.js';
 import { initPlans, sameAddress } from './plans.js';
 import { initFree } from './freetime.js';
 import { initAttend } from './attend.js';
+import { initGeoAssign } from './geoassign.js';
 import { PREMISES, REENTRY, reentryDefault } from './premises.js';
 import { reverseGeocode, forwardGeocode } from './geo.js';
 import { qrSvg } from './qr.js';
@@ -2777,19 +2778,23 @@ route('POST', '/api/tasks/:id/assign', async ({ params, body, user }) => {
   must(u, 400, 'Сотрудник не найден');
   must(!['admin', 'manager'].includes(u.role), 400, 'Заявки назначаются только специалистам — у администраторов выездов нет');
   if (u.tg_id === t.tech_tg_id) return { ok: true };
+  await assignTaskTo(t, u, user);
+  return { ok: true };
+}, { access: 'admin' });
+/** Передать заявку другому сотруднику (офис или подсказка «Кто ближе», v118). */
+async function assignTaskTo(t, u, user) {
   if (t.alert_msg_id) deleteMessage(t.tech_tg_id, t.alert_msg_id).catch(() => {});
   await db.query('UPDATE tasks SET tech_tg_id = $1, ack_at = NULL, alert_msg_id = NULL, alert_count = 0, updated_at = $2 WHERE id = $3', [u.tg_id, now(), t.id]);
   const [nt] = await db.query('SELECT * FROM tasks WHERE id = $1', [t.id]);
   await audit(user, 'Заявка переназначена', `№ ${t.task_no}`, `→ ${u.name}`);
   addNotification(u.tg_id, 'task_new', `Заявка № ${t.task_no} · ${t.company_name || 'Физлицо'} · ${t.address}`, { task_id: t.id }).catch(() => {});
-  await sendTaskAlert(nt);
+  if (nt.status !== 'pending') await sendTaskAlert(nt);
   await boostCongrats(nt);
   if (t.confirm_id) {
-    editMessage(t.chat_id, t.confirm_id, `${taskSummary(nt, u.name)}\n\n✅ Отправлено технику (назначил ${escHtml(user.name)}).`,
-      taskKb(t)).catch(() => {});
+    editMessage(t.chat_id, t.confirm_id, `${taskSummary(nt, u.name)}\n\n${nt.status === 'pending' ? '⏳ Ждёт подтверждения администратора.' : `✅ Отправлено технику (назначил ${escHtml(user.name)}).`}`,
+      nt.status === 'pending' ? { inline_keyboard: [[{ text: '✅ Подтвердить', callback_data: `tok:${t.id}` }, { text: '❌ Отменить', callback_data: `cancel:${t.id}` }]] } : taskKb(nt)).catch(() => {});
   }
-  return { ok: true };
-}, { access: 'admin' });
+}
 
 // Перед обработкой: «Позвонил клиенту» / «Звонок не требуется» и «Еду к клиенту»
 route('POST', '/api/tasks/:id/progress', async ({ params, body, user }) => {
@@ -5035,6 +5040,7 @@ function distM(a, b) {
 }
 // v89: пунктуальность менеджеров (отметка прихода по геопозиции офиса)
 initFree({ db, route, must, getSetting, setSetting, audit, TZN });
+const geoAssign = initGeoAssign({ db, taskDest: (t) => taskDest(t), dayOf, getSetting, botEnabled, sendMessage, editMessage, escHtml, audit, assignTaskTo: (t, u, who) => assignTaskTo(t, u, who), notifyTech, TZN });
 const attend = initAttend({ db, route, must, str, uid, now, getSetting, setSetting, audit, awardXp, notifyTech, publicBase, TZN, questsCfg, distM });
 /** «Утренний кофе в офисе»: точка рядом с офисом в утреннем окне → квест засчитан (один раз в день). */
 async function checkCoffee(tgId, lat, lon, { notify = false } = {}) {
@@ -6565,6 +6571,7 @@ async function createTask({ parsed, tech, chatId, threadId, messageId, author, a
     const kb = { inline_keyboard: [[{ text: '✅ Подтвердить', callback_data: `tok:${t.id}` }, { text: '❌ Отменить', callback_data: `cancel:${t.id}` }]] };
     if (messageId) { const [ct] = await db.query('SELECT * FROM tasks WHERE id = $1', [t.id]); askPrice(ct).catch(() => {}); }
     if (botEnabled) for (const aid of await adminIds(db)) sendMessage(aid, `🟠 <b>Новая заявка ждёт подтверждения</b>\n${taskSummary(t, u.name)}\nНаписал: ${escHtml(author || '—')}`, { replyMarkup: kb }).catch(() => {});
+    geoAssign.onTaskCreated(t.id).catch((e) => console.error('geo assign:', e.message));
     return { ...t, tech_name: u.name };
   }
   try {
@@ -6579,6 +6586,7 @@ async function createTask({ parsed, tech, chatId, threadId, messageId, author, a
   await sendTaskAlert(t);
   await boostCongrats(t);
   await notifyTeam(t, u.name);
+  geoAssign.onTaskCreated(t.id).catch((e) => console.error('geo assign:', e.message));
   return { ...t, tech_name: u.name };
 }
 
@@ -7040,6 +7048,13 @@ async function handleCallback(q) {
   if (data.startsWith('tclaim:')) {
     const r = await claimTask(data.slice(7), q.from?.id);
     return answerCallback(q.id, r.error || 'Заявка ваша!');
+  }
+  if (data.startsWith('gasg:') || data.startsWith('gasn:')) {
+    const [actor] = await db.query("SELECT * FROM users WHERE tg_id = $1 AND status = 'active'", [String(q.from?.id)]);
+    if (!actor || !['admin', 'manager'].includes(actor.role)) return answerCallback(q.id, 'Только менеджер или администратор');
+    let r;
+    try { r = await geoAssign.onCallback(data, { ...actor, id: actor.tg_id }, q.message); } catch (e) { r = e.message; }
+    return answerCallback(q.id, r);
   }
   if (data.startsWith('attok:')) {
     const [actor] = await db.query("SELECT * FROM users WHERE tg_id = $1 AND status = 'active'", [String(q.from?.id)]);

@@ -643,7 +643,7 @@ export interface AttendAdmin {
 }
 
 /* ---------- v107: свободное время техников ---------- */
-export type FreeCfg = { from: string; to: string; off: number[]; dur: number; big_m2: number; big_add: number; road: number; min_slot: number; days: number };
+export type FreeCfg = { from: string; to: string; off: number[]; dur: number; big_m2: number; big_add: number; road: number; min_slot: number; days: number; geo_on?: boolean; geo_min_km?: number };
 export type FreeSlot = { from: string; to: string; min: number; prev: string };
 export type FreeTech = { tg: string; name: string; count: number; no_time: number; busy_min: number; busy: { from: string; to: string; label: string; task_no: number }[]; free: FreeSlot[] };
 export type FreeDay = { day: string; wd: number; label: string; date: string; off: boolean; techs: FreeTech[] };

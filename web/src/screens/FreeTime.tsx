@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarClock, ChevronDown, ChevronRight, RefreshCw, Zap } from 'lucide-react';
 import { api } from '../api';
 import { haptic } from '../telegram';
-import { Button, Field, Input, Spinner, cx, useToast } from '../components/ui';
+import { Button, Field, Input, Spinner, Toggle, cx, useToast } from '../components/ui';
 import type { FreeCfg, FreeDay, FreeTech, FreeTimeRes } from '../types';
 import { NewTaskSheet } from './Jobs';
 
@@ -230,6 +230,11 @@ export function FreeSettingsPanel() {
         {numF('…добавить, мин', s.big_add, (x) => setS({ ...s, big_add: x }))}
         {numF('Самое короткое окно, мин', s.min_slot, (x) => setS({ ...s, min_slot: x }))}
         {numF('Дней вперёд', s.days, (x) => setS({ ...s, days: x }))}
+      </div>
+      <div className="flex flex-col gap-2">
+        <Toggle label="💡 Подсказка «Кто ближе»" checked={s.geo_on !== false} onChange={(v) => setS({ ...s, geo_on: v })} />
+        <div className="px-1 text-[12.5px] leading-snug text-muted">Под новой заявкой в группе бот подсказывает, кому из дезинсекторов ближе по маршруту (время не меняется), и предупреждает, если адрес не нашёлся на карте.</div>
+        {s.geo_on !== false && numF('Подсказывать, если экономия от, км', s.geo_min_km ?? 5, (x) => setS({ ...s, geo_min_km: x }))}
       </div>
       <Button variant="secondary" loading={busy} onClick={save}>Сохранить</Button>
     </div>
